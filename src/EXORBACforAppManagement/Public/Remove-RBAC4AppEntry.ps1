@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-Safely removes the Exchange Online RBAC scoping that New-RBACforAppEntry creates for an Entra
+Safely removes the Exchange Online RBAC scoping that New-RBAC4AppEntry creates for an Entra
 application.
 
 .DESCRIPTION
-Remove-RBACforAppEntry is the teardown counterpart to New-RBACforAppEntry. It resolves an Entra
+Remove-RBAC4AppEntry is the teardown counterpart to New-RBAC4AppEntry. It resolves an Entra
 application / service principal (by display name, AppId, or service principal object id), derives the
-scoped Unified Group name the same way New-RBACforAppEntry does ("{GroupPrefix}-{DisplayName}",
+scoped Unified Group name the same way New-RBAC4AppEntry does ("{GroupPrefix}-{DisplayName}",
 sanitized via Get-SafeName), and removes:
 
   1. the Exchange Online management role assignments scoped to that group that belong to this
@@ -41,20 +41,30 @@ Object id of the target service principal. GUID-validated.
 
 .PARAMETER GroupPrefix
 Prefix used when building the Unified Group name. Defaults to 'Um365RAo1' (matching
-New-RBACforAppEntry).
+New-RBAC4AppEntry).
+
+.PARAMETER AccessGroupName
+Explicit scope group name to tear down instead of generating one from GroupPrefix and the
+resolved display name. Required when -AccessGroupType is MailEnabledSecurityGroup.
+
+.PARAMETER AccessGroupType
+Kind of group that backs the RBAC scope (M365Group, DistributionList, or
+MailEnabledSecurityGroup). Defaults to M365Group. A MailEnabledSecurityGroup is
+on-prem/hybrid-synced and is NEVER deleted by this function - only this application's role
+assignments are detached; a DistributionList is removed with Remove-DistributionGroup.
 
 .PARAMETER BootstrapMember
 Bootstrap placeholder member to ignore when deciding whether the group has real members. Defaults to
-'GraphAPI-Dummy' (matching New-RBACforAppEntry).
+'GraphAPI-Dummy' (matching New-RBAC4AppEntry).
 
 .EXAMPLE
-Remove-RBACforAppEntry -RegisteredAppName 'Contoso Mail App' -WhatIf -Verbose
+Remove-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -WhatIf -Verbose
 
 Shows the role assignments and Unified Group that would be removed for the resolved application,
 without making changes.
 
 .EXAMPLE
-Remove-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555'
+Remove-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555'
 
 Removes this application's role assignments and the scoped Unified Group, but only if no foreign
 assignments and no real members are present.
@@ -70,10 +80,10 @@ refused or skipped, and any Warnings/Errors.
 .NOTES
 Requires a connected Microsoft Graph session (Get-MgServicePrincipal, Get-MgContext) and a connected
 Exchange Online session (Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-ManagementRoleAssignment,
-Remove-ManagementRoleAssignment, Remove-UnifiedGroup). Inverse of New-RBACforAppEntry; the safe
-companion to Test-RBACforAppEntry.
+Remove-ManagementRoleAssignment, Remove-UnifiedGroup). Inverse of New-RBAC4AppEntry; the safe
+companion to Test-RBAC4AppEntry.
 #>
-function Remove-RBACforAppEntry {
+function Remove-RBAC4AppEntry {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByName')]
     [OutputType([pscustomobject])]
     param(
@@ -98,6 +108,14 @@ function Remove-RBACforAppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
+        [string] $AccessGroupName,
+
+        [Parameter()]
+        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'M365Group',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
         [string] $BootstrapMember = 'GraphAPI-Dummy'
     )
 
@@ -115,6 +133,7 @@ function Remove-RBACforAppEntry {
             AppId               = $null
             SpObjectId          = $null
             TenantId            = $tenantid
+            AccessGroupType     = $AccessGroupType
             UnifiedGroupName    = $null
             UnifiedGroupExisted = $false
             AssignmentsScoped   = @()
@@ -159,11 +178,23 @@ function Remove-RBACforAppEntry {
             $result.AppId           = $sp.AppId
             $result.SpObjectId      = $sp.Id
 
-            # --- Unified Group name (same rule as New-RBACforAppEntry).
-            $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+            # --- Scope group name (same rule as New-RBAC4AppEntry; read cmdlet per type).
+            if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
+                $umGroupName = $AccessGroupName
+            }
+            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+            }
+            else {
+                $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+            }
             $result.UnifiedGroupName = $umGroupName
 
-            $group = Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue
+            $group = switch ($AccessGroupType) {
+                'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
+                default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+            }
             $result.UnifiedGroupExisted = [bool]$group
 
             # --- Assignments scoped to the group (client-side filter: no -App on the EXO cmdlet).
@@ -174,7 +205,7 @@ function Remove-RBACforAppEntry {
             }
             $result.AssignmentsScoped = @($scoped | ForEach-Object { [string]$_.Name })
 
-            # --- Partition own vs foreign by assignee (same needle set as Get-RBACforAppEntry).
+            # --- Partition own vs foreign by assignee (same needle set as Get-RBAC4AppEntry).
             $needles = @($sp.DisplayName, ("{0}_SP" -f $sp.DisplayName), $sp.AppId, $sp.Id) | Where-Object { $_ }
             $own = @()
             $foreign = @()
@@ -192,7 +223,12 @@ function Remove-RBACforAppEntry {
             # --- Real members (ignore the bootstrap placeholder).
             $realMembers = @()
             if ($group) {
-                $links = @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+                $links = if ($AccessGroupType -eq 'M365Group') {
+                    @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+                }
+                else {
+                    @(Get-DistributionGroupMember -Identity $umGroupName -ErrorAction SilentlyContinue)
+                }
                 foreach ($l in $links) {
                     if (-not $l) { continue }
                     $smtp = [string]$l.PrimarySmtpAddress
@@ -202,6 +238,33 @@ function Remove-RBACforAppEntry {
                 }
             }
             $result.RealMembers = @($realMembers)
+
+            # --- MailEnabledSecurityGroup: never delete the group (it is on-prem/hybrid-synced and
+            # mastered on-premises). Detach only this app's own role assignments and leave the group
+            # in place; the foreign-assignment / real-member safety gate does not apply because no
+            # group deletion is attempted.
+            if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                $removedAny = $false
+                foreach ($a in $own) {
+                    $name = [string]$a.Name
+                    if ($PSCmdlet.ShouldProcess($name, 'Remove-ManagementRoleAssignment')) {
+                        try {
+                            Remove-ManagementRoleAssignment -Identity $name -Confirm:$false -ErrorAction Stop
+                            $result.AssignmentsRemoved += $name
+                            $removedAny = $true
+                        }
+                        catch {
+                            $result.Errors += "Failed to remove role assignment '$name': $($_.Exception.Message)"
+                        }
+                    }
+                }
+                $result.Reason = "MailEnabledSecurityGroup '$umGroupName' is on-prem/hybrid-synced and was left in place; only this application's role assignments were detached."
+                $result.IsRemoved = ($result.Errors.Count -eq 0) -and $removedAny
+                if (-not $result.IsRemoved -and $WhatIfPreference) {
+                    $result.Reason = 'WhatIf: no changes were made.'
+                }
+                return [pscustomobject]$result
+            }
 
             # --- Safety gate: abort (remove nothing) when the group is still in use.
             if ($foreign.Count -gt 0 -or $realMembers.Count -gt 0) {
@@ -214,7 +277,7 @@ function Remove-RBACforAppEntry {
                 return [pscustomobject]$result
             }
 
-            # --- Safe path: remove this app's assignments, then the group.
+            # --- Safe path: remove this app's assignments, then the group (remove cmdlet per type).
             $removedAny = $false
             foreach ($a in $own) {
                 $name = [string]$a.Name
@@ -230,17 +293,23 @@ function Remove-RBACforAppEntry {
                 }
             }
 
+            $groupRemoveAction = if ($AccessGroupType -eq 'DistributionList') { 'Remove-DistributionGroup' } else { 'Remove-UnifiedGroup' }
             if (-not $group) {
-                $result.Warnings += "Unified Group '$umGroupName' did not exist; only role assignments (if any) were processed."
+                $result.Warnings += "$AccessGroupType '$umGroupName' did not exist; only role assignments (if any) were processed."
             }
-            elseif ($PSCmdlet.ShouldProcess($umGroupName, 'Remove-UnifiedGroup')) {
+            elseif ($PSCmdlet.ShouldProcess($umGroupName, $groupRemoveAction)) {
                 try {
-                    Remove-UnifiedGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
+                    if ($AccessGroupType -eq 'DistributionList') {
+                        Remove-DistributionGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
+                    }
+                    else {
+                        Remove-UnifiedGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
+                    }
                     $result.GroupRemoved = $true
                     $removedAny = $true
                 }
                 catch {
-                    $result.Errors += "Failed to remove Unified Group '$umGroupName': $($_.Exception.Message)"
+                    $result.Errors += "Failed to remove $AccessGroupType '$umGroupName': $($_.Exception.Message)"
                 }
             }
 

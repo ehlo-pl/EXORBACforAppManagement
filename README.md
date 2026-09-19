@@ -13,13 +13,14 @@ The three functions form a **create → assign → read** flow and share the sam
 | Function | Step | What it does |
 | --- | --- | --- |
 | [`New-RegisteredApp`](#new-registeredapp) | create | Creates an Entra app registration and (by default) its service principal. NOTE: required high privledges, I use it only in testing environment - as on production it's covered by separation of duty and done by 3rd party to my team pipeline |
-| [`New-RBACforAppEntry`](#new-rbacforappentry) | assign | Creates a scoped Unified Group, ensures the EXO service principal, and assigns EXO Application roles scoped to that group. |
-| [`Get-RBACforAppEntry`](#get-rbacforappentry) | read | Lists the EXO Application-role assignments. |
+| [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Creates a scoped Unified Group, ensures the EXO service principal, and assigns EXO Application roles scoped to that group. |
+| [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read | Lists the EXO Application-role assignments. |
 | [`Get-RegisteredAppWithPermission`](#get-registeredappwithpermission) | inventory | Lists distinct registered applications that currently hold supported EXO Application roles. |
-| [`Test-RBACforAppEntry`](#test-rbacforappentry) | validate | Checks an application has every component `New-RBACforAppEntry` creates (SP, Unified Group, EXO service principal, role assignments) and returns an `IsValid` summary. |
-| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate | Migrates legacy Application Access Policies to RBAC for Applications, delegating to `New-RBACforAppEntry`. |
-| [`New-RBACforAppUnifiedGroup`](#new-rbacforappunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBACforAppEntry`). |
-| [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | helper | Creates the EXO service principal pointer for an Entra app (used by `New-RBACforAppEntry`). |
+| [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, Unified Group, EXO service principal, role assignments) and returns an `IsValid` summary. |
+| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate | Migrates legacy Application Access Policies to RBAC for Applications, delegating to `New-RBAC4AppEntry`. |
+| [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry`). |
+| `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only distribution list (used by `New-RBAC4AppEntry` when `-AccessGroupType DistributionList`). |
+| [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | helper | Creates the EXO service principal pointer for an Entra app (used by `New-RBAC4AppEntry`). |
 
 > Background: [Microsoft Learn — Role Based Access Control for Applications in Exchange Online](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac).
 
@@ -51,7 +52,7 @@ Connect-MgGraph -Scopes 'Application.ReadWrite.All'
 Connect-ExchangeOnline
 ```
 
-> **Always preview with `-WhatIf` first.** `New-RBACforAppEntry` (`ConfirmImpact='High'`) and
+> **Always preview with `-WhatIf` first.** `New-RBAC4AppEntry` (`ConfirmImpact='High'`) and
 > `New-RegisteredApp` (`ConfirmImpact='Medium'`) gate every mutating step behind `ShouldProcess`.
 
 ## Usage
@@ -61,10 +62,10 @@ Connect-ExchangeOnline
 ```powershell
 # 1. Register the app + service principal, then 2. scope EXO RBAC for it (pipeline):
 New-RegisteredApp -DisplayName 'Contoso Mail App' |
-    New-RBACforAppEntry -Members 'shared@contoso.com' -Role 'Mail.Send' -WhatIf -Verbose
+    New-RBAC4AppEntry -Members 'shared@contoso.com' -Role 'Mail.Send' -WhatIf -Verbose
 
 # 3. Read the resulting assignments:
-Get-RBACforAppEntry -RegisteredAppName 'Contoso Mail App'
+Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App'
 
 # Inventory distinct registered applications that already hold supported EXO app permissions:
 Get-RegisteredAppWithPermission
@@ -73,7 +74,7 @@ Get-RegisteredAppWithPermission
 ### New-RegisteredApp
 
 Creates an Entra application registration and, unless `-SkipServicePrincipal`, its service
-principal. Emits `AppId` / `ServicePrincipalId` so it can pipe into `New-RBACforAppEntry`.
+principal. Emits `AppId` / `ServicePrincipalId` so it can pipe into `New-RBAC4AppEntry`.
 
 NOTE: required high privledges, I use it only in testing environment - as on production it's covered by separation of duty and done by 3rd party to my team pipeline
 
@@ -81,7 +82,7 @@ NOTE: required high privledges, I use it only in testing environment - as on pro
 New-RegisteredApp -DisplayName 'Contoso Mail App' -WhatIf -Verbose
 ```
 
-### New-RBACforAppEntry
+### New-RBAC4AppEntry
 
 Resolves the service principal (by name, AppId, or SP object id), creates a scoped Unified Group
 named `"{GroupPrefix}-{DisplayName}"`, adds members, ensures the EXO service principal, and creates
@@ -90,26 +91,53 @@ names such as `Mail.Send` are normalized to `Application Mail.Send`.
 
 ```powershell
 # By AppId, assigning a single role to a shared mailbox:
-New-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' `
+New-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' `
     -Members 'sharedmailbox@contoso.com' -Role 'Mail.Send' -Verbose
 
 # By SP object id, multiple roles, custom group prefix:
-New-RBACforAppEntry -SpObjectId '11111111-2222-3333-4444-555555555555' `
+New-RBAC4AppEntry -SpObjectId '11111111-2222-3333-4444-555555555555' `
     -Role 'Application Calendars.Read','Application Contacts.Read' -GroupPrefix 'Um365Prod'
 ```
+
+#### Choosing the scope group type (`-AccessGroupType`)
+
+By default the scope is a freshly-created Microsoft 365 group. `-AccessGroupType` selects a
+different group kind — Exchange Online RBAC supports Microsoft 365 groups, mail-enabled security
+groups, and distribution lists (direct membership only, nested members are out of scope):
+
+| `-AccessGroupType` | Lifecycle | `-AccessGroupName` | `-Members` |
+| --- | --- | --- | --- |
+| `M365Group` (default) | Creates/configures a Unified Group | optional (generated from `GroupPrefix`) | added to the group |
+| `DistributionList` | Creates/configures an EXO-only distribution list | optional (generated from `GroupPrefix`) | added to the group |
+| `MailEnabledSecurityGroup` | References an **existing** on-prem/hybrid-synced group (never created) | **required** | ignored (membership is managed on-premises) |
+
+```powershell
+# EXO-only distribution list as the scope:
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType DistributionList `
+    -Members 'shared@contoso.com' -Role 'Mail.Send'
+
+# Reference an existing on-prem/hybrid-synced mail-enabled security group (not created; members untouched):
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType MailEnabledSecurityGroup `
+    -AccessGroupName 'OnPrem-MailApp-Scope' -Role 'Mail.Send'
+```
+
+`Set-`, `Test-`, and `Remove-RBAC4AppEntry` (and `Convert-ApplicationAccessPolicyToRBAC`) accept
+the same `-AccessGroupType`. `Remove-RBAC4AppEntry` never deletes a `MailEnabledSecurityGroup`
+(it only detaches this app's role assignments) and uses `Remove-DistributionGroup` for a
+`DistributionList`.
 
 Returns a summary `[pscustomobject]` (resolved identity, group name, normalized roles, assignment
 names, `Warnings`, `Errors`) and also exports it to `$env:TEMP\<name>_<timestamp>.clixml`.
 
-### Get-RBACforAppEntry
+### Get-RBAC4AppEntry
 
 Returns EXO management role assignments for Application roles (`Application *`). With no arguments
 it returns all of them; filter by application and/or role, plus optional `-Enabled`.
 
 ```powershell
-Get-RBACforAppEntry                                            # every application-role assignment
-Get-RBACforAppEntry -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send'
-Get-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' | Format-Table Name,Role,Scope
+Get-RBAC4AppEntry                                            # every application-role assignment
+Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send'
+Get-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' | Format-Table Name,Role,Scope
 ```
 
 > `Get-ManagementRoleAssignment` has no `-App` parameter, so role filtering uses native `-Role`
@@ -120,47 +148,47 @@ Get-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' | Format-Table
 
 Returns one row per distinct registered application that already holds one or more Exchange Online
 Application-role assignments. By default it inventories the full set of roles supported by
-`New-RBACforAppEntry`; you can narrow it with `-Role`.
+`New-RBAC4AppEntry`; you can narrow it with `-Role`.
 
 ```powershell
 Get-RegisteredAppWithPermission
 Get-RegisteredAppWithPermission -Role 'Mail.Send'
 ```
 
-### Test-RBACforAppEntry
+### Test-RBAC4AppEntry
 
-Read-only check that an application has every component `New-RBACforAppEntry` provisions: the
+Read-only check that an application has every component `New-RBAC4AppEntry` provisions: the
 resolvable service principal, the scoped Unified Group, the Exchange Online service principal
 pointer, and one role assignment per role (looked up by the deterministic assignment name). It
-mirrors `New-RBACforAppEntry`'s `-Role` / `-GroupPrefix` defaults and optionally verifies `-Members`
+mirrors `New-RBAC4AppEntry`'s `-Role` / `-GroupPrefix` defaults and optionally verifies `-Members`
 against the group's membership. Returns a summary `[pscustomobject]` with per-component flags
 (`ServicePrincipalExists`, `UnifiedGroupExists`, `ExoServicePrincipalExists`), the
 expected/found/missing role assignments, a `Missing` list, and an overall `IsValid`.
 
 ```powershell
-Test-RBACforAppEntry -RegisteredAppName 'Contoso Mail App'
-Test-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Send','Calendars.Read' -Members 'shared@contoso.com'
+Test-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App'
+Test-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Send','Calendars.Read' -Members 'shared@contoso.com'
 ```
 
 ### Convert-ApplicationAccessPolicyToRBAC
 
 Migrates legacy Exchange Online Application Access Policies to RBAC for Applications: derives the
 roles from the app's granted Microsoft Graph application permissions, copies the original scope
-group's members, and delegates to `New-RBACforAppEntry`. `DenyAccess` policies are skipped.
+group's members, and delegates to `New-RBAC4AppEntry`. `DenyAccess` policies are skipped.
 
 ```powershell
 Convert-ApplicationAccessPolicyToRBAC -WhatIf -Verbose
 ```
 
-### New-RBACforAppUnifiedGroup
+### New-RBAC4AppUnifiedGroup
 
 Ensures the scoped, private/hidden Unified Group exists and is configured (subscription, address
 list, connectors disabled). Returns a summary object (`OwnerRequested`, `OwnerAdded`,
-`AlreadyExisted`, and the underlying `Group`). `New-RBACforAppEntry` delegates to it, but it can be
+`AlreadyExisted`, and the underlying `Group`). `New-RBAC4AppEntry` delegates to it, but it can be
 used on its own.
 
 ```powershell
-New-RBACforAppUnifiedGroup -Name 'Um365RAo1-ContosoMailApp' -WhatIf -Verbose
+New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-ContosoMailApp' -WhatIf -Verbose
 ```
 
 ### Register-EXOServicePrincipal
@@ -223,7 +251,7 @@ the module zip attached.
 
 Work on feature branches and open a PR into `main`; CI must be green. When adding a role, update
 both role tables (`$roleMap` in `Private/Get-NormalizeRole.ps1` and `$shortRoleMap` in
-`Public/New-RBACforAppEntry.ps1`). See [`AGENTS.md`](AGENTS.md) for deeper architecture notes.
+`Public/New-RBAC4AppEntry.ps1`). See [`AGENTS.md`](AGENTS.md) for deeper architecture notes.
 
 ## License
 

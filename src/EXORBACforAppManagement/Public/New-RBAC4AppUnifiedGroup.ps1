@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Ensures the scoped Microsoft 365 Unified Group used by New-RBACforAppEntry exists and is configured.
+Ensures the scoped Microsoft 365 Unified Group used by New-RBAC4AppEntry exists and is configured.
 
 .DESCRIPTION
-New-RBACforAppUnifiedGroup creates a private, hidden Unified Group (when it does not already exist)
+New-RBAC4AppUnifiedGroup creates a private, hidden Unified Group (when it does not already exist)
 to act as the recipient scope for Exchange Online application RBAC. The group is first created with
 the smallest set of essential attributes (DisplayName/Name/Alias, AccessType Private, and the owner/bootstrap member); the remaining settings
 (member edit, auto-subscribe, calendar subscribe, language, subscription, address-list visibility,
@@ -14,7 +14,7 @@ The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
 .PARAMETER Name
 Name and Alias of the Unified Group. Expected to already be a safe value (<= 63 chars,
-alphanumeric/dash); callers such as New-RBACforAppEntry sanitize it with Get-SafeName first.
+alphanumeric/dash); callers such as New-RBAC4AppEntry sanitize it with Get-SafeName first.
 
 .PARAMETER DisplayName
 Display name for the group. Defaults to "{Name} - RBAC for APP".
@@ -26,7 +26,7 @@ Recipient assigned as the group owner. Defaults to the GraphAPI-Dummy-owner plac
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
 
 .EXAMPLE
-New-RBACforAppUnifiedGroup -Name 'Um365RAo1-ContosoMailApp' -WhatIf -Verbose
+New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-ContosoMailApp' -WhatIf -Verbose
 
 Shows the planned Unified Group creation without making changes.
 
@@ -40,9 +40,9 @@ Online Unified Group object, existing or newly created).
 .NOTES
 Requires a connected Exchange Online session (Get-UnifiedGroup, New-UnifiedGroup, Set-UnifiedGroup,
 Get-Recipient) and a connected Microsoft Graph session for the debug calling-context snapshot.
-Companion to New-RBACforAppEntry.
+Companion to New-RBAC4AppEntry.
 #>
-function New-RBACforAppUnifiedGroup {
+function New-RBAC4AppUnifiedGroup {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
     [OutputType([object])]
     param(

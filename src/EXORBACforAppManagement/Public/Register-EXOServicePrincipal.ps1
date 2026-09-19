@@ -29,7 +29,7 @@ The object returned by New-ServicePrincipal (when created).
 
 .NOTES
 Requires a connected Exchange Online session (New-ServicePrincipal). Companion to
-New-RBACforAppEntry.
+New-RBAC4AppEntry.
 #>
 function Register-EXOServicePrincipal {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]

@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
 Validates that a registered application has all the Exchange Online RBAC components that
-New-RBACforAppEntry creates.
+New-RBAC4AppEntry creates.
 
 .DESCRIPTION
-Test-RBACforAppEntry resolves an Entra application / service principal (by display name, AppId, or
-service principal object id) and checks that every component New-RBACforAppEntry provisions is in
+Test-RBAC4AppEntry resolves an Entra application / service principal (by display name, AppId, or
+service principal object id) and checks that every component New-RBAC4AppEntry provisions is in
 place:
 
   1. the Entra service principal is resolvable (Microsoft Graph),
@@ -13,14 +13,14 @@ place:
      rule) exists,
   3. the Exchange Online service principal pointer "{DisplayName}_SP" exists, and
   4. one Exchange Online management role assignment exists per requested role, named the same way
-     New-RBACforAppEntry names them ("{ShortRoleToken}-{DisplayName}") and bound to the expected
+     New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}") and bound to the expected
      role.
 
 When -Members is supplied, the requested recipients are also verified against the Unified Group's
 membership. The function is read-only: it makes no changes and does not support -WhatIf.
 
-The defaults for -Role and -GroupPrefix mirror New-RBACforAppEntry, so a plain
-"Test-RBACforAppEntry -RegisteredAppName <app>" validates the default creation.
+The defaults for -Role and -GroupPrefix mirror New-RBAC4AppEntry, so a plain
+"Test-RBAC4AppEntry -RegisteredAppName <app>" validates the default creation.
 
 .PARAMETER RegisteredAppName
 Display name of the registered application or service principal. Default parameter set; must resolve
@@ -34,7 +34,7 @@ Object id of the target service principal. GUID-validated.
 
 .PARAMETER Role
 Exchange Online application roles expected to be assigned. Short names such as Mail.Send are
-normalized to Application Mail.Send. Defaults to 'Application Mail.Send' (matching New-RBACforAppEntry).
+normalized to Application Mail.Send. Defaults to 'Application Mail.Send' (matching New-RBAC4AppEntry).
 
 .PARAMETER Members
 Optional recipients expected to be members of the Unified Group scope. When supplied, each is
@@ -43,22 +43,31 @@ membership check.
 
 .PARAMETER GroupPrefix
 Prefix used when building the Unified Group name. Defaults to 'Um365RAo1' (matching
-New-RBACforAppEntry).
+New-RBAC4AppEntry).
+
+.PARAMETER AccessGroupName
+Explicit scope group name to check instead of generating one from GroupPrefix and the
+resolved display name. Required when -AccessGroupType is MailEnabledSecurityGroup.
+
+.PARAMETER AccessGroupType
+Kind of group that backs the RBAC scope (M365Group, DistributionList, or
+MailEnabledSecurityGroup). Defaults to M365Group. Controls which cmdlets are used to read
+the group and its membership.
 
 .EXAMPLE
-Test-RBACforAppEntry -RegisteredAppName 'Contoso Mail App'
+Test-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App'
 
 Validates the default Application Mail.Send setup for the resolved application and returns a summary
 with an IsValid flag.
 
 .EXAMPLE
-Test-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Send','Calendars.Read' -Members 'shared@contoso.com'
+Test-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Send','Calendars.Read' -Members 'shared@contoso.com'
 
 Checks the service principal, Unified Group, Exchange Online service principal, both role
 assignments, and that shared@contoso.com is a group member.
 
 .EXAMPLE
-New-RBACforAppEntry -RegisteredAppName 'Contoso' -WhatIf; Test-RBACforAppEntry -RegisteredAppName 'Contoso'
+New-RBAC4AppEntry -RegisteredAppName 'Contoso' -WhatIf; Test-RBAC4AppEntry -RegisteredAppName 'Contoso'
 
 Reports which components are still missing before/after a run.
 
@@ -74,9 +83,9 @@ Warnings/Errors.
 Requires a connected Microsoft Graph session (Get-MgServicePrincipal, Get-MgContext) and a connected
 Exchange Online session (Get-UnifiedGroup, Get-ServicePrincipal, Get-ManagementRoleAssignment, and,
 when -Members is supplied, Get-Recipient and Get-UnifiedGroupLinks). Read-only companion to
-New-RBACforAppEntry.
+New-RBAC4AppEntry.
 #>
-function Test-RBACforAppEntry {
+function Test-RBAC4AppEntry {
     [CmdletBinding(DefaultParameterSetName = 'ByName')]
     [OutputType([pscustomobject])]
     param(
@@ -104,7 +113,15 @@ function Test-RBACforAppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $GroupPrefix = 'Um365RAo1'
+        [string] $GroupPrefix = 'Um365RAo1',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $AccessGroupName,
+
+        [Parameter()]
+        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'M365Group'
     )
 
     begin {
@@ -123,6 +140,7 @@ function Test-RBACforAppEntry {
             AppId                   = $null
             SpObjectId              = $null
             TenantId                = $tenantid
+            AccessGroupType         = $AccessGroupType
             ServicePrincipalExists  = $false
             UnifiedGroupName        = $null
             UnifiedGroupExists      = $false
@@ -172,15 +190,27 @@ function Test-RBACforAppEntry {
             $result.AppId                  = $sp.AppId
             $result.SpObjectId             = $sp.Id
 
-            # --- Unified Group existence (same name rule as New-RBACforAppEntry).
-            $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+            # --- Scope group existence (same name rule as New-RBAC4AppEntry; read cmdlet per type).
+            if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
+                $umGroupName = $AccessGroupName
+            }
+            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+            }
+            else {
+                $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+            }
             $result.UnifiedGroupName = $umGroupName
-            $group = Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue
+            $group = switch ($AccessGroupType) {
+                'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
+                default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+            }
             if ($group) {
                 $result.UnifiedGroupExists = $true
             }
             else {
-                $result.Missing += "Unified Group '$umGroupName'"
+                $result.Missing += "$AccessGroupType '$umGroupName'"
             }
 
             # --- Exchange Online service principal pointer existence (matched by AppId, then name).
@@ -196,7 +226,7 @@ function Test-RBACforAppEntry {
                 $result.Missing += "Exchange Online service principal '$exoSpDisplay'"
             }
 
-            # --- Role assignment existence, by the deterministic name New-RBACforAppEntry builds.
+            # --- Role assignment existence, by the deterministic name New-RBAC4AppEntry builds.
             $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }
             $result.RolesExpected = @($rolesNormalized)
 
@@ -226,7 +256,12 @@ function Test-RBACforAppEntry {
                 $result.MembersExpected = $requested
 
                 if ($result.UnifiedGroupExists) {
-                    $links = @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+                    $links = if ($AccessGroupType -eq 'M365Group') {
+                        @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+                    }
+                    else {
+                        @(Get-DistributionGroupMember -Identity $umGroupName -ErrorAction SilentlyContinue)
+                    }
                     $linkAddresses = @($links | ForEach-Object { [string]$_.PrimarySmtpAddress; [string]$_.Name } | Where-Object { $_ })
 
                     foreach ($member in $requested) {

@@ -5,8 +5,8 @@ Lists registered applications that hold Exchange Online application RBAC permiss
 .DESCRIPTION
 Get-RegisteredAppWithPermission returns one object per distinct Entra service principal
 that has one or more Exchange Online management role assignments for application roles.
-It is the app-centric (one row per application) inventory counterpart to Get-RBACforAppEntry,
-which is assignment-centric. Unlike the New-/Get-RBACforAppEntry functions it has no
+It is the app-centric (one row per application) inventory counterpart to Get-RBAC4AppEntry,
+which is assignment-centric. Unlike the New-/Get-RBAC4AppEntry functions it has no
 ByName/ByAppId/BySpObjectId parameter sets: it performs a tenant-wide sweep rather than a
 single-application lookup.
 
@@ -14,7 +14,7 @@ Processing steps:
 
   1. Decide which roles to query. With -Role, the supplied short names (e.g. Mail.Send) are
      normalized to their full names (Application Mail.Send) via Get-NormalizeRole and deduped.
-     Without -Role, every role supported by New-RBACforAppEntry is queried (the keys of the
+     Without -Role, every role supported by New-RBAC4AppEntry is queried (the keys of the
      shared Get-AppRoleMap table).
   2. Query Exchange Online once per role via Get-ManagementRoleAssignment -Role (EXO does the
      role filtering). Roles with no assignments simply contribute nothing.
@@ -35,7 +35,7 @@ Processing steps:
 .PARAMETER Role
 One or more application roles to query. Short names such as Mail.Send are accepted and
 normalized to Application Mail.Send. When omitted, every role supported by
-New-RBACforAppEntry is queried.
+New-RBAC4AppEntry is queried.
 
 .PARAMETER Enabled
 Return only enabled ($true) or only disabled ($false) assignments. Omit to return both.
@@ -76,7 +76,7 @@ Performance / behavior notes:
   are grouped client-side.
 - Graph reverse-resolution is by display name (not AppId), which is why duplicate display names
   produce the ambiguity error and why the "_SP"-stripped variant is also tried.
-- Unlike Get-RBACforAppEntry, this function does not filter on recipient scope: any
+- Unlike Get-RBAC4AppEntry, this function does not filter on recipient scope: any
   'Application *' assignment to a service principal is counted.
 #>
 function Get-RegisteredAppWithPermission {

@@ -3,12 +3,12 @@
 Creates or updates Exchange Online RBAC scoping for an Entra application service principal.
 
 .DESCRIPTION
-New-RBACforAppEntry resolves an Entra service principal by display name, AppId, or
+New-RBAC4AppEntry resolves an Entra service principal by display name, AppId, or
 service principal object id, creates the scoped Unified Group when needed, adds
 requested members, ensures the Exchange Online service principal exists, and creates
 Exchange Online RBAC role assignments for the application.
 
-Unified Group creation/configuration is delegated to New-RBACforAppUnifiedGroup and the
+Unified Group creation/configuration is delegated to New-RBAC4AppUnifiedGroup and the
 Exchange Online service principal step to Register-EXOServicePrincipal.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
@@ -38,36 +38,57 @@ Recipient that will be assigned as the Unified Group owner.
 Prefix used when building the Unified Group name.
 
 .PARAMETER AccessGroupName
-Explicit Unified Group name to use for RBAC scoping instead of generating a name from
+Explicit scope group name to use for RBAC scoping instead of generating a name from
 GroupPrefix and the resolved service principal display name. Cannot be combined with
-an explicit GroupPrefix value.
+an explicit GroupPrefix value. Required when -AccessGroupType is MailEnabledSecurityGroup
+(on-prem/hybrid-synced groups already have their own name and are never generated).
+
+.PARAMETER AccessGroupType
+Kind of group that backs the RBAC scope. One of:
+  - M365Group (default): create/configure a Microsoft 365 Unified Group.
+  - DistributionList: create/configure an Exchange-Online-only distribution list.
+  - MailEnabledSecurityGroup: reference an existing on-prem/hybrid-synced mail-enabled
+    security group. The group is never created (it is mastered on-premises), -AccessGroupName
+    is required, and -Members is ignored (membership is managed on-premises).
 
 .PARAMETER BootstrapMember
 Optional initial member passed during Unified Group creation.
 
 .EXAMPLE
-New-RBACforAppEntry -RegisteredAppName 'Contoso Mail App' -Verbose -WhatIf
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Verbose -WhatIf
 
 Shows the planned service principal resolution, Unified Group creation, and RBAC
 assignment actions without making changes.
 
 .EXAMPLE
-New-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' -Members 'sharedmailbox@contoso.com' -Role 'Mail.Send' -Verbose
+New-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -Members 'sharedmailbox@contoso.com' -Role 'Mail.Send' -Verbose
 
 Resolves the application by AppId, ensures the scoped Unified Group exists, adds the
 recipient, and creates the Application Mail.Send role assignment.
 
 .EXAMPLE
-New-RBACforAppEntry -SpObjectId '11111111-2222-3333-4444-555555555555' -Role 'Application Calendars.Read','Application Contacts.Read' -GroupPrefix 'Um365Prod'
+New-RBAC4AppEntry -SpObjectId '11111111-2222-3333-4444-555555555555' -Role 'Application Calendars.Read','Application Contacts.Read' -GroupPrefix 'Um365Prod'
 
 Uses the service principal object id directly and creates multiple application role
 assignments scoped to the generated Unified Group.
 
 .EXAMPLE
-New-RBACforAppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupName 'RBAC-AppScope-ContosoMail' -Role 'Mail.Send'
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupName 'RBAC-AppScope-ContosoMail' -Role 'Mail.Send'
 
 Uses an explicit Unified Group name for scoping and assigns the requested RBAC role to
 the application against that group.
+
+.EXAMPLE
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType DistributionList -Members 'shared@contoso.com' -Role 'Mail.Send'
+
+Creates an Exchange-Online-only distribution list as the scope group, adds the member, and
+assigns the role scoped to that list.
+
+.EXAMPLE
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-MailApp-Scope' -Role 'Mail.Send'
+
+Scopes the role assignment to an existing on-prem/hybrid-synced mail-enabled security group.
+The group is not created and its membership (managed on-premises) is left untouched.
 
 .OUTPUTS
 PSCustomObject
@@ -80,7 +101,7 @@ Requires Microsoft Graph and Exchange Online cmdlets used by Get-MgServicePrinci
 New-ServicePrincipal, Get-UnifiedGroup, Set-UnifiedGroup, Add-UnifiedGroupLinks, and
 New-ManagementRoleAssignment.
 #>
-function New-RBACforAppEntry {
+function New-RBAC4AppEntry {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByName')]
     param(
         # Default: resolve by displayName (can be non-unique; will error if ambiguous)
@@ -120,6 +141,10 @@ function New-RBACforAppEntry {
         [ValidateNotNullOrEmpty()]
         [string] $AccessGroupName,
 
+        [Parameter()]
+        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'M365Group',
+
         # Optional placeholder member (dont validate as email)
         [Parameter()]
         [string] $BootstrapMember = "GraphAPI-Dummy"
@@ -143,6 +168,7 @@ function New-RBACforAppEntry {
             AppId             = $null
             SpObjectId        = $null
             TenantId          = $tenantid
+            AccessGroupType   = $AccessGroupType
             UnifiedGroupName  = $null
             OwnerRequested    = $ManagedBy
             OwnerAdded        = $null
@@ -188,9 +214,13 @@ function New-RBACforAppEntry {
             $result.AppId           = $sp.AppId
             $result.SpObjectId      = $sp.Id
 
-            # --- Ensure Unified Group for scoping (delegated to New-RBACforAppUnifiedGroup)
+            # --- Resolve the scope group name. A MailEnabledSecurityGroup is on-prem/hybrid-synced:
+            # it already has its own name and is never generated, so -AccessGroupName is required.
             if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
                 $umGroupName = $AccessGroupName
+            }
+            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup; on-prem/hybrid-synced groups are referenced by their existing name, not generated."
             }
             else {
                 $umGroupName = "{0}-{1}" -f $GroupPrefix, $sp.DisplayName
@@ -198,8 +228,9 @@ function New-RBACforAppEntry {
             }
             $result.UnifiedGroupName = $umGroupName
 
-            Write-Verbose -Message ("Checking Unified Group '{0}' for service principal '{1}' ({2})." -f $umGroupName, $sp.DisplayName, $sp.Id)
-            $ugResult = New-RBACforAppUnifiedGroup -Name $umGroupName -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+            # --- Ensure the scope group (delegated to New-RBAC4AppScopeGroup, which dispatches on type).
+            Write-Verbose -Message ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $sp.DisplayName, $sp.Id)
+            $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $umGroupName -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
             foreach ($w in $ugWarnings) {
                 if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
             }
@@ -208,38 +239,52 @@ function New-RBACforAppEntry {
                 $result.OwnerAdded    = $ugResult.OwnerAdded
             }
 
-            # --- Add members
-            $currentUserUpn = $null
-            try {
-                $connectionInfo = Get-MgContext -ErrorAction Stop
-                $currentUserUpn = $connectionInfo.Account
+            # --- Add members. Skipped for MailEnabledSecurityGroup: on-prem/hybrid-synced membership
+            # is mastered on-premises and cannot be edited in the cloud.
+            if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                if ($PSBoundParameters.ContainsKey('Members')) {
+                    $skipMembersMsg = "Membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; -Members was ignored."
+                    $result.Warnings += $skipMembersMsg
+                    Write-Warning -Message $skipMembersMsg
+                }
             }
-            catch {
-                $result.Warnings += "Could not retrieve current connection user via get-mgContext; connection user filtering will be skipped. Error: $($_.Exception.Message)"
-                Write-Warning -Message "Could not retrieve current connection user via get-mgContext; connection user filtering will be skipped."
-            }
-
-            foreach ($member in $Members) {
-                if (-not $member) { continue }
-
-                $rec = Get-Recipient -Identity $member -ErrorAction SilentlyContinue
-                if (-not $rec) {
-                    $result.Warnings += "Recipient not found for '$member' (skipped)."
-                    continue
+            else {
+                $currentUserUpn = $null
+                try {
+                    $connectionInfo = Get-MgContext -ErrorAction Stop
+                    $currentUserUpn = $connectionInfo.Account
                 }
-                if ($currentUserUpn -and ($member -ieq $currentUserUpn)) {
-                # if ($currentUserUpn -and ($rec.PrimarySmtpAddress -ieq $currentUserUpn -or $member -ieq $currentUserUpn)) {
-                    $result.FilteredMembers += [string]$rec.PrimarySmtpAddress
-                    $filterWarning = "Current connection user '$currentUserUpn' was found in the members list and has been filtered out."
-                    $result.Warnings += $filterWarning
-                    Write-Warning -Message $filterWarning
-                    continue
+                catch {
+                    $result.Warnings += "Could not retrieve current connection user via get-mgContext; connection user filtering will be skipped. Error: $($_.Exception.Message)"
+                    Write-Warning -Message "Could not retrieve current connection user via get-mgContext; connection user filtering will be skipped."
                 }
 
-                if ($PSCmdlet.ShouldProcess("UnifiedGroup $umGroupName", "Add member $($rec.PrimarySmtpAddress)")) {
-                    Add-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -Links $rec.PrimarySmtpAddress -ErrorAction Stop
+                foreach ($member in $Members) {
+                    if (-not $member) { continue }
+
+                    $rec = Get-Recipient -Identity $member -ErrorAction SilentlyContinue
+                    if (-not $rec) {
+                        $result.Warnings += "Recipient not found for '$member' (skipped)."
+                        continue
+                    }
+                    if ($currentUserUpn -and ($member -ieq $currentUserUpn)) {
+                        $result.FilteredMembers += [string]$rec.PrimarySmtpAddress
+                        $filterWarning = "Current connection user '$currentUserUpn' was found in the members list and has been filtered out."
+                        $result.Warnings += $filterWarning
+                        Write-Warning -Message $filterWarning
+                        continue
+                    }
+
+                    if ($PSCmdlet.ShouldProcess("$AccessGroupType $umGroupName", "Add member $($rec.PrimarySmtpAddress)")) {
+                        if ($AccessGroupType -eq 'DistributionList') {
+                            Add-DistributionGroupMember -Identity $umGroupName -Member $rec.PrimarySmtpAddress -ErrorAction Stop
+                        }
+                        else {
+                            Add-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -Links $rec.PrimarySmtpAddress -ErrorAction Stop
+                        }
+                    }
+                    $result.MembersAdded += [string]$rec.PrimarySmtpAddress
                 }
-                $result.MembersAdded += [string]$rec.PrimarySmtpAddress
             }
 
             # --- Ensure EXO ServicePrincipal extension (delegated to Register-EXOServicePrincipal)

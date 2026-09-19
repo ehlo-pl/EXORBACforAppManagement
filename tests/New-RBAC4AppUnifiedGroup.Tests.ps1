@@ -18,7 +18,7 @@ AfterAll {
     }
 }
 
-Describe 'New-RBACforAppUnifiedGroup' {
+Describe 'New-RBAC4AppUnifiedGroup' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
@@ -29,7 +29,7 @@ Describe 'New-RBACforAppUnifiedGroup' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { } # not found, then configured lookup
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
 
-        $res = New-RBACforAppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1
         $res.AlreadyExisted | Should -BeFalse
@@ -42,7 +42,7 @@ Describe 'New-RBACforAppUnifiedGroup' {
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { }
 
         $warn = $null
-        $res = New-RBACforAppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false -WarningVariable warn
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false -WarningVariable warn
         ($warn.Message -join ';') | Should -Match 'already exists'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
         $res.AlreadyExisted | Should -BeTrue
@@ -54,7 +54,7 @@ Describe 'New-RBACforAppUnifiedGroup' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { }
 
-        $null = New-RBACforAppUnifiedGroup -Name 'Um365RAo1-Contoso' -WhatIf
+        $null = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -WhatIf
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
     }
 }
