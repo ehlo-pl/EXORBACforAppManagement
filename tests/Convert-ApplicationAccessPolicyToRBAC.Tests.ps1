@@ -66,12 +66,12 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
             )
         }
 
-        Mock -ModuleName EXORBACforAppManagement New-RBACforAppEntry {
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppEntry {
             [pscustomobject]@{ Warnings = @(); Errors = @() }
         }
     }
 
-    It 'derives RBAC roles from the app grants and delegates to New-RBACforAppEntry' {
+    It 'derives RBAC roles from the app grants and delegates to New-RBAC4AppEntry' {
         $r = Convert-ApplicationAccessPolicyToRBAC -Confirm:$false
 
         $r.AppId | Should -Be '11111111-1111-1111-1111-111111111111'
@@ -79,9 +79,21 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         $r.DerivedRoles | Should -Contain 'Application Mail.Read'
         $r.MembersCopied | Should -Be @('user1@contoso.com', 'user2@contoso.com')
 
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBACforAppEntry -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 1 -ParameterFilter {
             ($Role -contains 'Application Mail.Read') -and ($Members -contains 'user1@contoso.com')
         }
+    }
+
+    It 'forwards -AccessGroupType to New-RBAC4AppEntry' {
+        $null = Convert-ApplicationAccessPolicyToRBAC -AccessGroupType DistributionList -Confirm:$false
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 1 -ParameterFilter {
+            $AccessGroupType -eq 'DistributionList'
+        }
+    }
+
+    It 'rejects MailEnabledSecurityGroup (not a valid conversion target)' {
+        { Convert-ApplicationAccessPolicyToRBAC -AccessGroupType MailEnabledSecurityGroup -Confirm:$false } |
+            Should -Throw '*MailEnabledSecurityGroup*'
     }
 
     It 'maps the legacy EWS scope full_access_as_app to Application EWS.AccessAsApp' {
@@ -103,7 +115,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         $r = Convert-ApplicationAccessPolicyToRBAC -WarningAction SilentlyContinue
 
         $r.Warnings | Should -Not -BeNullOrEmpty
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBACforAppEntry -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 0
     }
 
     It 'uses an explicit -Role override instead of deriving from grants' {
@@ -111,14 +123,14 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
 
         $r.DerivedRoles | Should -Be @('Application Mail.Send')
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipalAppRoleAssignment -Times 0
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBACforAppEntry -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 1 -ParameterFilter {
             $Role -contains 'Application Mail.Send'
         }
     }
 
     It 'does not delegate when -WhatIf is supplied' {
         $null = Convert-ApplicationAccessPolicyToRBAC -WhatIf
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBACforAppEntry -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 0
     }
 }
 

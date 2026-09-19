@@ -5,18 +5,18 @@ Migrates legacy Exchange Online Application Access Policies to RBAC for Applicat
 .DESCRIPTION
 Convert-ApplicationAccessPolicyToRBAC reads existing Application Access Policy entries
 (via Get-ApplicationAccessPolicy) and recreates the equivalent access as RBAC for
-Applications assignments by delegating to New-RBACforAppEntry.
+Applications assignments by delegating to New-RBAC4AppEntry.
 
 For each RestrictAccess policy it resolves the Entra service principal, derives the
 Exchange Online application roles from the app's granted Microsoft Graph application
 permissions (filtered to the set that Application Access Policies supported and mapped to
 their App RBAC role names via the private Get-LegacyScopeRoleMap), copies the members of
-the original policy scope group, and calls New-RBACforAppEntry to create a new scoped
+the original policy scope group, and calls New-RBAC4AppEntry to create a new scoped
 Unified Group and the matching role assignments. DenyAccess policies have no additive RBAC
 equivalent and are skipped with a warning.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess; -WhatIf
-propagates into the delegated New-RBACforAppEntry call.
+propagates into the delegated New-RBAC4AppEntry call.
 
 .PARAMETER AppId
 Application (client) id. When supplied, only Application Access Policies for that app are
@@ -34,10 +34,16 @@ from the app's Graph permissions is skipped.
 
 .PARAMETER ManagedBy
 Recipient that will be assigned as the new Unified Group owner. Passed through to
-New-RBACforAppEntry.
+New-RBAC4AppEntry.
 
 .PARAMETER GroupPrefix
-Prefix used when building the new Unified Group name. Passed through to New-RBACforAppEntry.
+Prefix used when building the new Unified Group name. Passed through to New-RBAC4AppEntry.
+
+.PARAMETER AccessGroupType
+Kind of group to create for the new RBAC scope. Passed through to New-RBAC4AppEntry
+(M365Group or DistributionList). Defaults to M365Group. MailEnabledSecurityGroup is not
+offered here: conversion mints a new scope group per policy, whereas a MailEnabledSecurityGroup
+references a single pre-existing on-prem/hybrid-synced group by name.
 
 .EXAMPLE
 Convert-ApplicationAccessPolicyToRBAC -WhatIf -Verbose
@@ -59,13 +65,13 @@ instead of deriving roles from the app's Graph permission grants.
 PSCustomObject
 
 Returns one summary object per processed policy with the resolved identity, access right,
-scope group, derived roles, skipped permissions, copied members, the New-RBACforAppEntry
+scope group, derived roles, skipped permissions, copied members, the New-RBAC4AppEntry
 result, warnings, and errors.
 
 .NOTES
 Requires connected Microsoft Graph (Get-MgServicePrincipal,
 Get-MgServicePrincipalAppRoleAssignment) and Exchange Online
-(Get-ApplicationAccessPolicy, plus the cmdlets used by New-RBACforAppEntry) sessions.
+(Get-ApplicationAccessPolicy, plus the cmdlets used by New-RBAC4AppEntry) sessions.
 #>
 function Convert-ApplicationAccessPolicyToRBAC {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'All')]
@@ -89,7 +95,11 @@ function Convert-ApplicationAccessPolicyToRBAC {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $GroupPrefix = 'Um365RAo1'
+        [string] $GroupPrefix = 'Um365RAo1',
+
+        [Parameter()]
+        [ValidateSet('M365Group', 'DistributionList')]
+        [string] $AccessGroupType = 'M365Group'
     )
 
     begin {
@@ -215,21 +225,22 @@ function Convert-ApplicationAccessPolicyToRBAC {
                 }
                 $result.MembersCopied = @($members)
 
-                # --- Delegate to New-RBACforAppEntry (-WhatIf propagates)
+                # --- Delegate to New-RBAC4AppEntry (-WhatIf propagates)
                 if ($PSCmdlet.ShouldProcess(
                         "AppId $polAppId ($($sp.DisplayName))",
                         "Convert Application Access Policy to RBAC roles: $($rolesNormalized -join ', ')")) {
 
                     $rbacParams = @{
-                        AppId       = $polAppId
-                        Role        = $rolesNormalized
-                        ManagedBy   = $ManagedBy
-                        GroupPrefix = $GroupPrefix
-                        ErrorAction = 'Stop'
+                        AppId           = $polAppId
+                        Role            = $rolesNormalized
+                        ManagedBy       = $ManagedBy
+                        GroupPrefix     = $GroupPrefix
+                        AccessGroupType = $AccessGroupType
+                        ErrorAction     = 'Stop'
                     }
                     if ($members.Count -gt 0) { $rbacParams['Members'] = $members }
 
-                    $result.RBACResult = New-RBACforAppEntry @rbacParams
+                    $result.RBACResult = New-RBAC4AppEntry @rbacParams
                     foreach ($w in @($result.RBACResult.Warnings)) { $result.Warnings += $w }
                     foreach ($e in @($result.RBACResult.Errors))   { $result.Errors   += $e }
                 }

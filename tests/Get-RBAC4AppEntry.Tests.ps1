@@ -26,13 +26,13 @@ AfterAll {
     }
 }
 
-Describe 'Get-RBACforAppEntry (no filter)' {
+Describe 'Get-RBAC4AppEntry (no filter)' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { $script:Assignments }
     }
 
     It 'returns only ServicePrincipal application-role assignments by default' {
-        $r = Get-RBACforAppEntry
+        $r = Get-RBAC4AppEntry
         $r.Count | Should -Be 3
         ($r.Role | Sort-Object -Unique) | Should -Be @('Application Calendars.Read', 'Application Mail.Send', 'Application MailboxSettings.Read')
         ($r.RoleAssigneeType | Sort-Object -Unique) | Should -Be @('ServicePrincipal')
@@ -40,56 +40,56 @@ Describe 'Get-RBACforAppEntry (no filter)' {
     }
 
     It 'excludes application assignments outside group or custom recipient scopes' {
-        $r = Get-RBACforAppEntry
+        $r = Get-RBAC4AppEntry
         $r.Name | Should -Not -Contain 'AppMailWide-Northwind'
         $r.RecipientScope | Should -Not -Contain 'Organization'
     }
 
     It 'projects the expected shape' {
-        $r = Get-RBACforAppEntry | Select-Object -First 1
+        $r = Get-RBAC4AppEntry | Select-Object -First 1
         $r.PSObject.Properties.Name | Should -Be @('Name','Role','RoleAssigneeName','RoleAssigneeType','Scope','RecipientScope','Enabled','Guid','Identity')
     }
 }
 
-Describe 'Get-RBACforAppEntry -Role' {
+Describe 'Get-RBAC4AppEntry -Role' {
     It 'normalizes a short role and queries EXO with the full role name' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             $script:Assignments | Where-Object { $_.Role -eq $Role }
         } -ParameterFilter { $Role -eq 'Application Mail.Send' }
 
-        $r = Get-RBACforAppEntry -Role 'Mail.Send'
+        $r = Get-RBAC4AppEntry -Role 'Mail.Send'
         $r.Role | Should -Be 'Application Mail.Send'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 1 -ParameterFilter { $Role -eq 'Application Mail.Send' }
     }
 }
 
-Describe 'Get-RBACforAppEntry -RoleAssigneeType' {
+Describe 'Get-RBAC4AppEntry -RoleAssigneeType' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { $script:Assignments }
     }
 
     It 'returns every assignee type with -RoleAssigneeType All' {
-        $r = Get-RBACforAppEntry -RoleAssigneeType All
+        $r = Get-RBAC4AppEntry -RoleAssigneeType All
         $r.Count | Should -Be 4
         ($r.RoleAssigneeType | Sort-Object -Unique) | Should -Be @('RoleGroup', 'ServicePrincipal')
         ($r.RecipientScope | Sort-Object -Unique) | Should -Be @('CustomRecipientScope', 'Group')
     }
 
     It 'filters to a specific assignee type' {
-        $r = Get-RBACforAppEntry -RoleAssigneeType RoleGroup
+        $r = Get-RBAC4AppEntry -RoleAssigneeType RoleGroup
         $r.Count | Should -Be 1
         $r.RoleAssigneeName | Should -Be 'Helpdesk'
     }
 }
 
-Describe 'Get-RBACforAppEntry application filter' {
+Describe 'Get-RBAC4AppEntry application filter' {
     It 'keeps only assignments matching the resolved service principal' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ DisplayName = 'Contoso'; AppId = '11111111-1111-1111-1111-111111111111'; Id = '22222222-2222-2222-2222-222222222222' }
         }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { $script:Assignments }
 
-        $r = Get-RBACforAppEntry -RegisteredAppName 'Contoso'
+        $r = Get-RBAC4AppEntry -RegisteredAppName 'Contoso'
         $r.Count | Should -Be 1
         $r.RoleAssigneeName | Should -Be 'Contoso_SP'
     }

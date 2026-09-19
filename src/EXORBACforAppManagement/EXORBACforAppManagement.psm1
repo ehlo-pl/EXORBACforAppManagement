@@ -15,4 +15,18 @@ foreach ($file in @($private + $public)) {
     }
 }
 
-Export-ModuleMember -Function $public.BaseName
+# Backward-compatible aliases: the pre-0.6.0 RBACforApp names map to the RBAC4App functions.
+$aliasMap = [ordered]@{
+    'New-RBACforAppEntry'             = 'New-RBAC4AppEntry'
+    'Get-RBACforAppEntry'             = 'Get-RBAC4AppEntry'
+    'Set-RBACforAppEntry'             = 'Set-RBAC4AppEntry'
+    'Test-RBACforAppEntry'            = 'Test-RBAC4AppEntry'
+    'Remove-RBACforAppEntry'          = 'Remove-RBAC4AppEntry'
+    'New-RBACforAppUnifiedGroup'      = 'New-RBAC4AppUnifiedGroup'
+    'New-RBACforAppDistributionGroup' = 'New-RBAC4AppDistributionGroup'
+}
+foreach ($aliasName in $aliasMap.Keys) {
+    Set-Alias -Name $aliasName -Value $aliasMap[$aliasName]
+}
+
+Export-ModuleMember -Function $public.BaseName -Alias @($aliasMap.Keys)

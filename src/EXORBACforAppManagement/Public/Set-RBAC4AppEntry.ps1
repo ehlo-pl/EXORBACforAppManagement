@@ -5,25 +5,25 @@ missing components, tops up the Unified Group membership, and can move the role 
 different scoping group.
 
 .DESCRIPTION
-Set-RBACforAppEntry is the "make it so" companion to Test-RBACforAppEntry (which only reports) and
-New-RBACforAppEntry (which creates everything from scratch). It resolves an Entra application /
+Set-RBAC4AppEntry is the "make it so" companion to Test-RBAC4AppEntry (which only reports) and
+New-RBAC4AppEntry (which creates everything from scratch). It resolves an Entra application /
 service principal (by display name, AppId, or service principal object id) and brings the components
-New-RBACforAppEntry provisions into the desired state, changing only what is needed:
+New-RBAC4AppEntry provisions into the desired state, changing only what is needed:
 
   1. the scoped Unified Group ("{GroupPrefix}-{DisplayName}", sanitized via Get-SafeName) is created
-     if it is missing (delegated to New-RBACforAppUnifiedGroup),
+     if it is missing (delegated to New-RBAC4AppUnifiedGroup),
   2. the Exchange Online service principal pointer ("{DisplayName}_SP") is created if it is missing
      (delegated to Register-EXOServicePrincipal),
   3. the requested -Members are added to the group if they are not already members (additive only -
      existing members are never removed), and
   4. one Exchange Online management role assignment exists per requested role, named the same way
-     New-RBACforAppEntry names them ("{ShortRoleToken}-{DisplayName}") and scoped to the target group.
+     New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}") and scoped to the target group.
      A missing assignment is created; an assignment that exists but is scoped to a different group is
      re-scoped (removed and recreated with the same name) - this is how the scoping group is changed.
 
 Changing the scoping group: supply -NewGroupName (an explicit group name) or -NewGroupPrefix (builds
 "{NewGroupPrefix}-{DisplayName}"). The target group is ensured to exist and the role assignments are
-re-scoped onto it. The old group is left in place (use Remove-RBACforAppEntry to tear it down once it
+re-scoped onto it. The old group is left in place (use Remove-RBAC4AppEntry to tear it down once it
 is no longer in use); members are not migrated.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess (ConfirmImpact High), so each
@@ -42,7 +42,7 @@ Object id of the target service principal. GUID-validated.
 
 .PARAMETER Role
 Exchange Online application roles to ensure are assigned. Short names such as Mail.Send are normalized
-to Application Mail.Send. Defaults to 'Application Mail.Send' (matching New-RBACforAppEntry).
+to Application Mail.Send. Defaults to 'Application Mail.Send' (matching New-RBAC4AppEntry).
 
 .PARAMETER Members
 Optional recipients to ensure are members of the scoped Unified Group. Each is resolved through
@@ -51,14 +51,24 @@ nothing is removed.
 
 .PARAMETER ManagedBy
 Recipient assigned as the Unified Group owner when the group must be created. Defaults to
-'GraphAPI-Dummy-owner' (matching New-RBACforAppEntry).
+'GraphAPI-Dummy-owner' (matching New-RBAC4AppEntry).
 
 .PARAMETER GroupPrefix
 Prefix used when building the current Unified Group name. Defaults to 'Um365RAo1' (matching
-New-RBACforAppEntry).
+New-RBAC4AppEntry).
+
+.PARAMETER AccessGroupName
+Explicit current scope group name to reconcile instead of generating one from GroupPrefix and
+the resolved display name. Required when -AccessGroupType is MailEnabledSecurityGroup.
+
+.PARAMETER AccessGroupType
+Kind of group that backs the RBAC scope (M365Group, DistributionList, or
+MailEnabledSecurityGroup). Defaults to M365Group. A MailEnabledSecurityGroup is
+on-prem/hybrid-synced: it is never created, and its membership is left untouched
+(managed on-premises).
 
 .PARAMETER BootstrapMember
-Optional initial member passed to New-RBACforAppUnifiedGroup when the group must be created. Defaults
+Optional initial member passed to New-RBAC4AppUnifiedGroup when the group must be created. Defaults
 to 'GraphAPI-Dummy'.
 
 .PARAMETER NewGroupPrefix
@@ -70,19 +80,19 @@ Optional. Switch the role assignments to this explicit group name (sanitized via
 precedence over -NewGroupPrefix.
 
 .EXAMPLE
-Set-RBACforAppEntry -RegisteredAppName 'Contoso Mail App' -WhatIf -Verbose
+Set-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -WhatIf -Verbose
 
 Shows which missing components would be (re)created for the default Application Mail.Send setup,
 without making changes.
 
 .EXAMPLE
-Set-RBACforAppEntry -RegisteredAppName 'Contoso Mail App' -Members 'shared@contoso.com'
+Set-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Members 'shared@contoso.com'
 
 Ensures every component exists and adds shared@contoso.com to the scoped group if it is not already a
 member.
 
 .EXAMPLE
-Set-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' -NewGroupPrefix 'Um365Prod'
+Set-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -NewGroupPrefix 'Um365Prod'
 
 Re-scopes the application's role assignments onto the 'Um365Prod-...' group (creating it if needed).
 
@@ -97,10 +107,10 @@ created / re-scoped / unchanged, an overall IsValid flag, and any Warnings/Error
 Requires a connected Microsoft Graph session (Get-MgServicePrincipal, Get-MgContext) and a connected
 Exchange Online session (Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-ServicePrincipal, Get-Recipient,
 Get-ManagementRoleAssignment, New-ManagementRoleAssignment, Remove-ManagementRoleAssignment, plus the
-cmdlets used by the delegated New-RBACforAppUnifiedGroup / Register-EXOServicePrincipal). Reconcile
-companion to Test-RBACforAppEntry and New-RBACforAppEntry.
+cmdlets used by the delegated New-RBAC4AppUnifiedGroup / Register-EXOServicePrincipal). Reconcile
+companion to Test-RBAC4AppEntry and New-RBAC4AppEntry.
 #>
-function Set-RBACforAppEntry {
+function Set-RBAC4AppEntry {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByName')]
     [OutputType([pscustomobject])]
     param(
@@ -135,6 +145,14 @@ function Set-RBACforAppEntry {
         [string] $GroupPrefix = 'Um365RAo1',
 
         [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $AccessGroupName,
+
+        [Parameter()]
+        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'M365Group',
+
+        [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy',
 
         [Parameter()]
@@ -162,6 +180,7 @@ function Set-RBACforAppEntry {
             AppId                     = $null
             SpObjectId                = $null
             TenantId                  = $tenantid
+            AccessGroupType           = $AccessGroupType
             CurrentGroupName          = $null
             TargetGroupName           = $null
             GroupChanged              = $false
@@ -213,12 +232,25 @@ function Set-RBACforAppEntry {
             $result.AppId           = $sp.AppId
             $result.SpObjectId      = $sp.Id
 
-            # --- Determine the current and target Unified Group names (same name rule as New-RBACforAppEntry).
-            $currentGroup = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+            # --- Determine the current and target scope group names (same name rule as New-RBAC4AppEntry).
+            # A MailEnabledSecurityGroup is on-prem/hybrid-synced: its name is referenced, never generated.
+            if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
+                $currentGroup = $AccessGroupName
+            }
+            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+            }
+            else {
+                $currentGroup = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+            }
+
             if ($PSBoundParameters.ContainsKey('NewGroupName')) {
-                $targetGroup = Get-SafeName -s $NewGroupName
+                $targetGroup = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $NewGroupName } else { Get-SafeName -s $NewGroupName }
             }
             elseif ($PSBoundParameters.ContainsKey('NewGroupPrefix')) {
+                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    throw "-NewGroupPrefix cannot be used with -AccessGroupType MailEnabledSecurityGroup; on-prem/hybrid-synced group names are referenced, not generated. Use -NewGroupName with an existing group."
+                }
                 $targetGroup = Get-SafeName -s ("{0}-{1}" -f $NewGroupPrefix, $sp.DisplayName)
             }
             else {
@@ -228,12 +260,20 @@ function Set-RBACforAppEntry {
             $result.TargetGroupName  = $targetGroup
             $result.GroupChanged     = ($targetGroup -ne $currentGroup)
 
-            # --- Ensure the target Unified Group exists (delegated to New-RBACforAppUnifiedGroup).
-            $group = Get-UnifiedGroup -Identity $targetGroup -ErrorAction SilentlyContinue
+            # --- Ensure the target scope group exists (delegated to New-RBAC4AppScopeGroup; read per type).
+            $group = switch ($AccessGroupType) {
+                'DistributionList'         { Get-DistributionGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
+                'MailEnabledSecurityGroup' { Get-Recipient -Identity $targetGroup -ErrorAction SilentlyContinue }
+                default                    { Get-UnifiedGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
+            }
             $result.UnifiedGroupExisted = [bool]$group
             if (-not $group) {
-                if ($PSCmdlet.ShouldProcess($targetGroup, 'Create Unified Group')) {
-                    $ugResult = New-RBACforAppUnifiedGroup -Name $targetGroup -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    # On-prem/hybrid-synced groups cannot be created in the cloud.
+                    $result.Errors += "MailEnabledSecurityGroup '$targetGroup' does not exist and cannot be created (it is mastered on-premises)."
+                }
+                elseif ($PSCmdlet.ShouldProcess($targetGroup, "Create $AccessGroupType")) {
+                    $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $targetGroup -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
                     foreach ($w in $ugWarnings) {
                         if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
                     }
@@ -259,7 +299,14 @@ function Set-RBACforAppEntry {
             }
 
             # --- Members (additive): add any requested member not already in the target group.
-            if ($PSBoundParameters.ContainsKey('Members')) {
+            # Skipped for MailEnabledSecurityGroup: membership is mastered on-premises.
+            if ($PSBoundParameters.ContainsKey('Members') -and $AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                $result.MembersRequested = @($Members | Where-Object { $_ })
+                $skipMembersMsg = "Membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -Members was ignored."
+                $result.Warnings += $skipMembersMsg
+                Write-Warning -Message $skipMembersMsg
+            }
+            elseif ($PSBoundParameters.ContainsKey('Members')) {
                 $requested = @($Members | Where-Object { $_ })
                 $result.MembersRequested = $requested
 
@@ -269,7 +316,12 @@ function Set-RBACforAppEntry {
                     $result.Warnings += "Could not retrieve current connection user via Get-MgContext; connection user filtering will be skipped. Error: $($_.Exception.Message)"
                 }
 
-                $links = @(Get-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -ErrorAction SilentlyContinue)
+                $links = if ($AccessGroupType -eq 'M365Group') {
+                    @(Get-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -ErrorAction SilentlyContinue)
+                }
+                else {
+                    @(Get-DistributionGroupMember -Identity $targetGroup -ErrorAction SilentlyContinue)
+                }
                 $linkAddresses = @($links | ForEach-Object { [string]$_.PrimarySmtpAddress; [string]$_.Name } | Where-Object { $_ })
 
                 foreach ($member in $requested) {
@@ -293,8 +345,13 @@ function Set-RBACforAppEntry {
                         continue
                     }
 
-                    if ($PSCmdlet.ShouldProcess("UnifiedGroup $targetGroup", "Add member $needle")) {
-                        Add-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -Links $needle -ErrorAction Stop
+                    if ($PSCmdlet.ShouldProcess("$AccessGroupType $targetGroup", "Add member $needle")) {
+                        if ($AccessGroupType -eq 'DistributionList') {
+                            Add-DistributionGroupMember -Identity $targetGroup -Member $needle -ErrorAction Stop
+                        }
+                        else {
+                            Add-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -Links $needle -ErrorAction Stop
+                        }
                         $result.MembersAdded += $needle
                     }
                 }

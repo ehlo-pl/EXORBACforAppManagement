@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
 Gets Exchange Online RBAC role assignments for application roles (the roles that
-New-RBACforAppEntry creates).
+New-RBAC4AppEntry creates).
 
 .DESCRIPTION
-Get-RBACforAppEntry retrieves Exchange Online management role assignments whose role
+Get-RBAC4AppEntry retrieves Exchange Online management role assignments whose role
 is an application role (named "Application <permission>", e.g. "Application Mail.Send").
 It returns only assignments scoped the way this module creates them: group-scoped or
-custom-recipient-scoped entries. These are the assignments produced by New-RBACforAppEntry.
+custom-recipient-scoped entries. These are the assignments produced by New-RBAC4AppEntry.
 
 By default service-principal application role assignments are returned, limited to
 RecipientWriteScope values of Group or CustomRecipientScope. You can narrow the results
@@ -39,24 +39,24 @@ assignments). Use 'All' to return every assignee type within the supported Group
 CustomRecipientScope recipient scopes, or pass a specific type to narrow.
 
 .EXAMPLE
-Get-RBACforAppEntry
+Get-RBAC4AppEntry
 
 Returns service-principal application role assignments that are group-scoped or use a
 custom recipient scope (the default behavior).
 
 .EXAMPLE
-Get-RBACforAppEntry -RoleAssigneeType All
+Get-RBAC4AppEntry -RoleAssigneeType All
 
 Returns application role assignments regardless of assignee type, still limited to
 Group / CustomRecipientScope recipient scopes.
 
 .EXAMPLE
-Get-RBACforAppEntry -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send'
+Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send'
 
 Returns the Application Mail.Send assignments scoped to the resolved Contoso Mail App.
 
 .EXAMPLE
-Get-RBACforAppEntry -AppId '11111111-2222-3333-4444-555555555555' | Format-Table Name,Role,Scope
+Get-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' | Format-Table Name,Role,Scope
 
 Filters by AppId and formats the key columns.
 
@@ -70,9 +70,9 @@ and identity fields.
 Requires a connected Exchange Online session (Connect-ExchangeOnline) for
 Get-ManagementRoleAssignment. When an application filter is supplied, a connected
 Microsoft Graph session (Connect-MgGraph) is also required to resolve the service
-principal. Companion to New-RBACforAppEntry.
+principal. Companion to New-RBAC4AppEntry.
 #>
-function Get-RBACforAppEntry {
+function Get-RBAC4AppEntry {
     [CmdletBinding(DefaultParameterSetName = 'All')]
     [OutputType([pscustomobject])]
     param(

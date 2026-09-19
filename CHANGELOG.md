@@ -6,9 +6,30 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- Renamed the RBAC-for-App functions from the `RBACforApp` form to `RBAC4App`:
+  `New-RBAC4AppEntry`, `Get-RBAC4AppEntry`, `Set-RBAC4AppEntry`, `Test-RBAC4AppEntry`,
+  `Remove-RBAC4AppEntry`, `New-RBAC4AppUnifiedGroup`, and `New-RBAC4AppDistributionGroup`
+  (and the private helper `New-RBAC4AppScopeGroup`). The previous `RBACforApp` names remain
+  exported as **aliases**, so existing scripts and pipelines keep working. The module name
+  (`EXORBACforAppManagement`) is unchanged. Functions without `RBACforApp` in their name
+  (`New-RegisteredApp`, `Get-RegisteredAppWithPermission`, `Register-EXOServicePrincipal`,
+  `Convert-ApplicationAccessPolicyToRBAC`) are unchanged.
+
 ### Added
-- `Set-RBACforAppEntry` — reconcile/"make it so" companion to `Test-RBACforAppEntry` and
-  `New-RBACforAppEntry`. Resolves the application and brings its Exchange Online RBAC components to the
+- `-AccessGroupType` scope selector on `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry` and
+  `Convert-ApplicationAccessPolicyToRBAC`: `M365Group` (default, unchanged behavior), `DistributionList`
+  (an Exchange-Online-only distribution list), or `MailEnabledSecurityGroup` (references an existing
+  on-prem/hybrid-synced group — never created, `-AccessGroupName` required, membership left
+  on-premises). The EXO role-assignment step is identical for all three; only group
+  provisioning/read/membership/teardown differ. `Remove-RBAC4AppEntry` never deletes a
+  `MailEnabledSecurityGroup` (it only detaches this app's role assignments) and uses
+  `Remove-DistributionGroup` for a `DistributionList`.
+- `New-RBAC4AppDistributionGroup` — public helper that ensures/creates and configures the scoped
+  Exchange-Online-only distribution list (the `DistributionList` counterpart to
+  `New-RBAC4AppUnifiedGroup`), routed to by the private `New-RBAC4AppScopeGroup` dispatcher.
+- `Set-RBAC4AppEntry` — reconcile/"make it so" companion to `Test-RBAC4AppEntry` and
+  `New-RBAC4AppEntry`. Resolves the application and brings its Exchange Online RBAC components to the
   desired state, changing only what is needed: creates the scoped Unified Group and the Exchange
   Online service principal pointer if missing, adds any requested `-Members` not already in the group
   (additive — never removes members), and ensures one role assignment per role scoped to the target
@@ -19,17 +40,17 @@ All notable changes to this project are documented here. The format is based on
   Returns a `[pscustomobject]` with the current/target group names, a `GroupChanged` flag, which
   components were created, members added/already-present, role assignments created/re-scoped/unchanged,
   and an overall `IsValid` flag.
-- `Remove-RBACforAppEntry` — safe teardown counterpart to `New-RBACforAppEntry`. Resolves the
+- `Remove-RBAC4AppEntry` — safe teardown counterpart to `New-RBAC4AppEntry`. Resolves the
   application, derives the scoped Unified Group name, and removes this app's Exchange Online role
   assignments and the Unified Group — but only after confirming the group is no longer in use (no
   foreign role assignments scoped to it and no members beyond the `-BootstrapMember` placeholder). On
   an unsafe condition it aborts and removes nothing, returning a `[pscustomobject]` summary with a
   `Reason`, the offending foreign assignments / real members, and an `IsRemoved` flag. Leaves the
   shared Exchange Online service principal pointer in place and supports `-WhatIf`/`-Confirm`.
-- `Test-RBACforAppEntry` — read-only validator that confirms a registered application has every
-  component `New-RBACforAppEntry` creates: the resolvable service principal, the scoped Unified
+- `Test-RBAC4AppEntry` — read-only validator that confirms a registered application has every
+  component `New-RBAC4AppEntry` creates: the resolvable service principal, the scoped Unified
   Group, the Exchange Online service principal pointer, and one role assignment per role (matched by
-  the deterministic assignment name). Mirrors `New-RBACforAppEntry`'s `-Role`/`-GroupPrefix` defaults
+  the deterministic assignment name). Mirrors `New-RBAC4AppEntry`'s `-Role`/`-GroupPrefix` defaults
   and optionally verifies `-Members` against the group. Returns a `[pscustomobject]` with
   per-component flags, a `Missing` list, and an overall `IsValid`.
 

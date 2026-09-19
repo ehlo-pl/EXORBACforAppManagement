@@ -6,7 +6,7 @@ Creates an Entra (Azure AD) application registration and, by default, its servic
 New-RegisteredApp creates an application registration via Microsoft Graph
 (New-MgApplication) and, unless -SkipServicePrincipal is supplied, the matching
 enterprise application / service principal (New-MgServicePrincipal). It is intended
-as a companion to New-RBACforAppEntry: the emitted object exposes AppId and
+as a companion to New-RBAC4AppEntry: the emitted object exposes AppId and
 ServicePrincipalId so the new application can be piped straight into that function.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
@@ -36,10 +36,10 @@ New-RegisteredApp -DisplayName 'Contoso Mail App' -Verbose -WhatIf
 Shows the planned application and service principal creation without making changes.
 
 .EXAMPLE
-New-RegisteredApp -DisplayName 'Contoso Mail App' | New-RBACforAppEntry -Members 'shared@contoso.com' -Role 'Mail.Send'
+New-RegisteredApp -DisplayName 'Contoso Mail App' | New-RBAC4AppEntry -Members 'shared@contoso.com' -Role 'Mail.Send'
 
 Creates the application and service principal, then pipes the new AppId into
-New-RBACforAppEntry to scope Exchange Online RBAC for it.
+New-RBAC4AppEntry to scope Exchange Online RBAC for it.
 
 .OUTPUTS
 PSCustomObject
