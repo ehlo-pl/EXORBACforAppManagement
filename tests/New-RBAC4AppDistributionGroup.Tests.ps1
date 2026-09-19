@@ -55,4 +55,24 @@ Describe 'New-RBAC4AppDistributionGroup' {
         $null = New-RBAC4AppDistributionGroup -Name 'Um365RAo1-Contoso' -WhatIf
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 0
     }
+
+    It 'derives name from -AppName using default prefix UDLRAo1' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+
+        $res = New-RBAC4AppDistributionGroup -AppName 'Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+        $res.Name | Should -Be 'UDLRAo1-Contoso'
+        $res.AlreadyExisted | Should -BeFalse
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1
+    }
+
+    It 'derives name from -AppName and explicit -Prefix' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+
+        $res = New-RBAC4AppDistributionGroup -AppName 'Contoso' -Prefix 'MYORG' -ManagedBy 'owner@contoso.com' -Confirm:$false
+        $res.Name | Should -Be 'MYORG-Contoso'
+        $res.AlreadyExisted | Should -BeFalse
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1
+    }
 }

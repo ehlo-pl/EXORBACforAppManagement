@@ -36,6 +36,22 @@ The three functions form a **create → assign → read** flow and share the sam
     (used by `Get-UnifiedGroup`, `New-UnifiedGroup`, `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`,
     `New-ServicePrincipal`, `Get-Recipient`, `New-ManagementRoleAssignment`, `Get-ManagementRoleAssignment`).
 
+### Per-function module requirements
+
+| Function | Microsoft.Graph | ExchangeOnlineManagement |
+| --- | --- | --- |
+| `New-RegisteredApp` | `New-MgApplication` `New-MgServicePrincipal` `Get-MgContext` | — |
+| `New-RBAC4AppUnifiedGroup` | `Get-MgContext` *(debug trace only)* | `Get-UnifiedGroup` `New-UnifiedGroup` `Set-UnifiedGroup` `Get-Recipient` |
+| `New-RBAC4AppDistributionGroup` | — | `Get-DistributionGroup` `New-DistributionGroup` `Set-DistributionGroup` `Get-Recipient` |
+| `Register-EXOServicePrincipal` | — | `New-ServicePrincipal` |
+| `New-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-Recipient` `Add-DistributionGroupMember` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
+| `Set-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ServicePrincipal` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` |
+| `Test-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-Recipient` |
+| `Remove-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
+| `Get-RBAC4AppEntry` | `Get-MgServicePrincipal` *(only when an app filter is supplied)* | `Get-ManagementRoleAssignment` |
+| `Get-RegisteredAppWithPermission` | `Get-MgServicePrincipal` | `Get-ManagementRoleAssignment` |
+| `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(+ all EXO cmdlets used by `New-RBAC4AppEntry`)* |
+
 ## Install / import
 
 The module is run from source (it is not published to the PowerShell Gallery):
@@ -51,6 +67,17 @@ Then connect your sessions:
 Connect-MgGraph -Scopes 'Application.ReadWrite.All'
 Connect-ExchangeOnline
 ```
+
+> **Graph/Exchange connection caveat:** Microsoft.Graph and ExchangeOnlineManagement can conflict
+> when both authenticate in the same PowerShell process because they load shared MSAL/WAM identity
+> assemblies. Symptoms include `RuntimeBroker` / WAM `NullReferenceException` from
+> `Connect-ExchangeOnline` after `Connect-MgGraph`, or `Method not found: ...WithLogging(...)` from
+> `Connect-MgGraph` after Exchange Online is loaded. If this happens, use separate `pwsh` processes
+> for Graph and Exchange work. `Connect-M365Tenant -Workload MicrosoftGraph` and
+> `Connect-M365Tenant -Workload ExchangeOnline` from MSCloudLoginAssistant are wrappers around
+> `Connect-MgGraph` and `Connect-ExchangeOnline`; they may help in app-only/access-token scenarios,
+> but they do **not** isolate the modules or guarantee a fix for interactive WAM/MSAL collisions in a
+> single process.
 
 > **Always preview with `-WhatIf` first.** `New-RBAC4AppEntry` (`ConfirmImpact='High'`) and
 > `New-RegisteredApp` (`ConfirmImpact='Medium'`) gate every mutating step behind `ShouldProcess`.
