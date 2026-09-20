@@ -6,6 +6,73 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **RBAC4App YAML config schema bumped to `SchemaVersion: "2.0"`.** Scope-group settings
+  (`AccessGroupType`, `GroupPrefix`, `AccessGroupName`, `Members`, `ManagedBy`, `BootstrapMember`)
+  moved out of `Rbac:` into their own `RbacScope:` section; `Rbac:` now holds only `Roles`. `New-`/
+  `Invoke-RBAC4AppConfig` and the private `ConvertTo-`/`ConvertFrom-RBAC4AppYaml` helpers were
+  updated accordingly. **Breaking change:** `Invoke-RBAC4AppConfig` now refuses a config whose
+  `SchemaVersion` isn't `"2.0"` (including old `"1.0"` files) with an error pointing back at
+  `New-RBAC4AppConfig` to regenerate it, rather than silently reading stale/misplaced values.
+
+### Added
+- `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig` now return `MembersFinal`:
+  the scope group's complete membership (pre-existing members plus any added this run), alongside
+  the existing `MembersAdded`/`MembersRequested`. Populated for all `-AccessGroupType` values,
+  including `MailEnabledSecurityGroup` (read-only, informational).
+- `Get-RegisteredAppWithPermission` now returns `ScopeGroupNames` (the recipient scope group each
+  app's assignments are bound to) and `ScopeGroupMembers` (that group's resolved membership).
+  Resolution tries `Get-UnifiedGroup`/`Get-UnifiedGroupLinks` first (M365Group), then
+  `Get-DistributionGroup`/`Get-DistributionGroupMember` (DistributionList or
+  MailEnabledSecurityGroup); an unresolvable scope group is skipped with a warning. Scope groups
+  are cached per call, so one shared by multiple applications is only read once.
+
+### Fixed
+- `Get-RegisteredAppWithPermission`'s `ScopeGroupNames`/`ScopeGroupMembers` (added above) were
+  coming back empty on a real tenant: for the `Group` recipient write-scope (what
+  `-RecipientGroupScope` actually produces, i.e. every assignment this module creates),
+  `CustomRecipientWriteScope` is empty - the scope group name has to be recovered from
+  `CustomResourceScope` instead, the name of an auto-created `ManagementScope` object that follows
+  the pattern `"<GroupName>_<GUID>"` (confirmed against a real tenant). Added the shared private
+  helper `Resolve-RBAC4AppScopeGroupName`, which strips the GUID suffix to recover the group name
+  directly (no extra EXO call needed), and wired it into `Get-RegisteredAppWithPermission`,
+  `New-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig`.
+  **Note:** the remaining direct wrong-field reads (`CustomRecipientWriteScope` for a
+  `Group`-scoped assignment) are `Get-RBAC4AppEntry`'s `Scope` column plus the scope-matching
+  logic of `Set-`/`Remove-RBAC4AppEntry`; see `TODO.md`.
+- `Get-RegisteredAppWithPermission` no longer fails with "Authentication needed. Please call
+  Connect-MgGraph." when run in an Exchange-Online-only session. Microsoft Graph is now optional:
+  without a connected session (or if connectivity is lost partway through), the function writes a
+  warning and returns Exchange-Online-only details (`DisplayName`/`AppId`/`ServicePrincipalId`
+  unresolved) for the affected applications instead of throwing.
+- `Register-EXOServicePrincipal` now checks whether a matching EXO service principal already
+  exists (by AppId, then DisplayName) before calling `New-ServicePrincipal`, skipping creation and
+  returning the existing object with a warning when one is found. It is now safe to call
+  unconditionally, matching how `New-RBAC4AppUnifiedGroup`/`New-RBAC4AppDistributionGroup` already
+  check before creating; previously it always attempted creation and relied on its callers to check
+  first.
+- `New-RBAC4AppEntry` and `Invoke-RBAC4AppConfig` now check whether a role assignment with the
+  deterministic name already exists (via `Get-ManagementRoleAssignment`) before calling
+  `New-ManagementRoleAssignment`, so re-running against an already-provisioned application no
+  longer throws. An assignment already scoped to the target group is left alone (a warning notes
+  it was skipped); one scoped to a different group is also left alone, with a warning pointing at
+  `Set-RBAC4AppEntry` to re-scope it. Requested members are still added to the group either way.
+
+## [0.6.4] - 2026-09-20
+
+### Changed
+- Renamed output properties across `New-RBAC4AppEntry`, `Remove-RBAC4AppEntry`,
+  `Test-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig` for consistency with the
+  generalized `-AccessGroupType` (a scope group is not always an M365 Unified Group):
+  `UnifiedGroupName` → `ScopeGroupName`, `UnifiedGroupExists`/`UnifiedGroupExisted` →
+  `ScopeGroupExists`/`ScopeGroupExisted`, `UnifiedGroupCreated` → `ScopeGroupCreated`. **Breaking
+  change** for any script consuming these result objects by the old property names.
+- `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig` now warn (and record the
+  warning in `Warnings`) whenever `-ManagedBy` or `-BootstrapMember` is set to a non-default value
+  for a `MailEnabledSecurityGroup` scope, matching the existing `-Members`-ignored warning — since
+  on-prem/hybrid-synced groups are never created or modified by this module, all three
+  group-modifying parameters are silently ignored otherwise.
+
 ## [0.6.1] - 2026-09-20
 
 ### Added

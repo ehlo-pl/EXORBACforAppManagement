@@ -230,13 +230,21 @@ function Convert-ApplicationAccessPolicyToRBAC {
                         "AppId $polAppId ($($sp.DisplayName))",
                         "Convert Application Access Policy to RBAC roles: $($rolesNormalized -join ', ')")) {
 
+                    # AppId, SpObjectId, and RegisteredAppName (as DisplayName) are all passed
+                    # through: New-RBAC4AppEntry resolves the application against Exchange
+                    # Online's own service principal pointer and no longer touches Microsoft
+                    # Graph itself, so for an app that has never been registered in Exchange
+                    # Online it needs all three identifiers - which Convert-ApplicationAccessPolicyToRBAC
+                    # already has from its own Graph-based resolution above - to bootstrap it.
                     $rbacParams = @{
-                        AppId           = $polAppId
-                        Role            = $rolesNormalized
-                        ManagedBy       = $ManagedBy
-                        GroupPrefix     = $GroupPrefix
-                        AccessGroupType = $AccessGroupType
-                        ErrorAction     = 'Stop'
+                        AppId              = $polAppId
+                        SpObjectId         = $sp.Id
+                        RegisteredAppName  = $sp.DisplayName
+                        Role               = $rolesNormalized
+                        ManagedBy          = $ManagedBy
+                        GroupPrefix        = $GroupPrefix
+                        AccessGroupType    = $AccessGroupType
+                        ErrorAction        = 'Stop'
                     }
                     if ($members.Count -gt 0) { $rbacParams['Members'] = $members }
 

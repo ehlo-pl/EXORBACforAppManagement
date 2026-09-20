@@ -4,7 +4,7 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
-    function global:Get-MgContext { }
+    function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
     function global:New-UnifiedGroup { }
     function global:Set-UnifiedGroup { }
@@ -13,14 +13,14 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-UnifiedGroup','New-UnifiedGroup','Set-UnifiedGroup','Get-Recipient') {
+    foreach ($n in 'Get-ConnectionInformation','Get-UnifiedGroup','New-UnifiedGroup','Set-UnifiedGroup','Get-Recipient') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
 
 Describe 'New-RBAC4AppUnifiedGroup' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'owner@contoso.com' } }
     }

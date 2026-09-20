@@ -4,10 +4,11 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
     # Global stubs so the module scope can resolve them and Pester can mock them on CI
-    # (where Microsoft.Graph / ExchangeOnlineManagement are not installed). Parameters the
-    # code passes must be declared so the mock can bind and filter on them.
-    function global:Get-MgContext { [CmdletBinding()] param() }
-    function global:Get-MgServicePrincipal { [CmdletBinding()] param([string]$Filter, [string]$ServicePrincipalId) }
+    # (where ExchangeOnlineManagement is not installed). Parameters the code passes must be
+    # declared so the mock can bind and filter on them. No Microsoft Graph stubs are needed: SP
+    # resolution goes through Get-ServicePrincipal (EXO) only.
+    function global:Get-ConnectionInformation { [CmdletBinding()] param() }
+    function global:Get-ServicePrincipal { [CmdletBinding()] param([string]$Identity) }
     function global:Get-UnifiedGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
     function global:Get-UnifiedGroupLinks { [CmdletBinding()] param([string]$Identity, [string]$LinkType) }
@@ -18,20 +19,20 @@ BeforeAll {
     function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
     function global:Remove-DistributionGroup { [CmdletBinding(SupportsShouldProcess)] param([string]$Identity) }
 
-    $script:Sp = [pscustomobject]@{ DisplayName = 'Contoso'; AppId = '11111111-1111-1111-1111-111111111111'; Id = '22222222-2222-2222-2222-222222222222' }
+    $script:ExoSp = [pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111'; ObjectId = '22222222-2222-2222-2222-222222222222' }
 }
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-UnifiedGroup','Get-ManagementRoleAssignment','Get-UnifiedGroupLinks','Remove-ManagementRoleAssignment','Remove-UnifiedGroup','Get-Recipient','Get-DistributionGroup','Get-DistributionGroupMember','Remove-DistributionGroup') {
+    foreach ($n in 'Get-ConnectionInformation','Get-ServicePrincipal','Get-UnifiedGroup','Get-ManagementRoleAssignment','Get-UnifiedGroupLinks','Remove-ManagementRoleAssignment','Remove-UnifiedGroup','Get-Recipient','Get-DistributionGroup','Get-DistributionGroupMember','Remove-DistributionGroup') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
 
 Describe 'Remove-RBAC4AppEntry' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { $script:Sp }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso' } }
         # One own assignment scoped to the group.
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
@@ -53,7 +54,7 @@ Describe 'Remove-RBAC4AppEntry' {
         $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
 
         $r.IsRemoved | Should -BeTrue
-        $r.UnifiedGroupName | Should -Be 'Um365RAo1-Contoso'
+        $r.ScopeGroupName | Should -Be 'Um365RAo1-Contoso'
         $r.OwnAssignments | Should -Be @('AppMailSend-Contoso')
         $r.ForeignAssignments | Should -BeNullOrEmpty
         $r.AssignmentsRemoved | Should -Be @('AppMailSend-Contoso')
@@ -110,17 +111,17 @@ Describe 'Remove-RBAC4AppEntry' {
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
     }
 
-    It 'reports UnifiedGroupExisted false when the group is already gone' {
+    It 'reports ScopeGroupExisted false when the group is already gone' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
 
         $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
 
-        $r.UnifiedGroupExisted | Should -BeFalse
+        $r.ScopeGroupExisted | Should -BeFalse
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
     }
 
     It 'records an error and is not removed when the service principal cannot be resolved' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { @() }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
 
         $r = Remove-RBAC4AppEntry -AppId '33333333-3333-3333-3333-333333333333' -Confirm:$false
 
@@ -131,8 +132,8 @@ Describe 'Remove-RBAC4AppEntry' {
 
 Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { $script:Sp }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             @([pscustomobject]@{
                 Name                      = 'AppMailSend-Contoso'

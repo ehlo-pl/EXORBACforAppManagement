@@ -13,6 +13,11 @@ This separates the two modules into distinct PowerShell sessions, avoiding the M
 assembly conflict that can occur when both Microsoft.Graph and ExchangeOnlineManagement are
 loaded in the same process.
 
+Every creation step is idempotent, matching New-RBAC4AppEntry: the scope group, the EXO service
+principal, and each role assignment are only created if a matching one does not already exist -
+a role assignment that already exists and is scoped to the same group is left alone (a warning
+notes it was skipped); requested members are still added to the group regardless.
+
 .PARAMETER Path
 Path to the YAML file produced by New-RBAC4AppConfig.
 
@@ -22,7 +27,8 @@ Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.yml
 
 .OUTPUTS
 PSCustomObject — same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
-UnifiedGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, Warnings, Errors, etc.).
+ScopeGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, MembersFinal, Warnings,
+Errors, etc.).
 #>
 function Invoke-RBAC4AppConfig {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -47,6 +53,10 @@ function Invoke-RBAC4AppConfig {
         $content = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
         $config  = ConvertFrom-RBAC4AppYaml -Content $content
 
+        if ($config.SchemaVersion -ne '2.0') {
+            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '2.0' (scope-group settings moved from Rbac: to their own RbacScope: section). Re-generate the config with New-RBAC4AppConfig."
+            return
+        }
         if (-not $config.Application.SpObjectId) {
             Write-Error "Config '$Path' is missing Application.SpObjectId. Re-generate with New-RBAC4AppConfig."
             return
@@ -64,12 +74,12 @@ function Invoke-RBAC4AppConfig {
         $spAppId       = $config.Application.AppId
         $spDisplayName = $config.Application.DisplayName
 
-        $AccessGroupType = $config.Rbac.AccessGroupType
-        $GroupPrefix     = $config.Rbac.GroupPrefix
-        $AccessGroupName = $config.Rbac.AccessGroupName
-        $Members         = @($config.Rbac.Members)
-        $ManagedBy       = $config.Rbac.ManagedBy
-        $BootstrapMember = $config.Rbac.BootstrapMember
+        $AccessGroupType = $config.RbacScope.AccessGroupType
+        $GroupPrefix     = $config.RbacScope.GroupPrefix
+        $AccessGroupName = $config.RbacScope.AccessGroupName
+        $Members         = @($config.RbacScope.Members)
+        $ManagedBy       = $config.RbacScope.ManagedBy
+        $BootstrapMember = $config.RbacScope.BootstrapMember
         $roles           = @($config.Rbac.Roles)
 
         $result = [ordered]@{
@@ -80,11 +90,12 @@ function Invoke-RBAC4AppConfig {
             SpObjectId          = $spId
             TenantId            = $config.TenantId
             AccessGroupType     = $AccessGroupType
-            UnifiedGroupName    = $null
+            ScopeGroupName      = $null
             OwnerRequested      = $ManagedBy
             OwnerAdded          = $null
             MembersRequested    = @($Members)
             MembersAdded        = @()
+            MembersFinal        = @()
             FilteredMembers     = @()
             RolesNormalized     = @()
             RoleAssignments     = @()
@@ -104,7 +115,7 @@ function Invoke-RBAC4AppConfig {
             else {
                 $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
             }
-            $result.UnifiedGroupName = $umGroupName
+            $result.ScopeGroupName = $umGroupName
 
             # --- Ensure scope group
             Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
@@ -117,12 +128,36 @@ function Invoke-RBAC4AppConfig {
                 $result.OwnerAdded     = $ugResult.OwnerAdded
             }
 
-            # --- Add members (MailEnabledSecurityGroup membership is on-prem only)
+            # --- Read the group's current membership once (all types, read-only): seeds MembersFinal
+            # below and is reused rather than re-queried after any additions (EXO reads can lag
+            # writes, so a fresh post-write read would not reliably reflect what was just added).
+            $existingLinks = if ($AccessGroupType -eq 'M365Group') {
+                @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+            }
+            else {
+                @(Get-DistributionGroupMember -Identity $umGroupName -ErrorAction SilentlyContinue)
+            }
+            $existingMemberIdentities = @($existingLinks | ForEach-Object {
+                    if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
+                } | Where-Object { $_ } | Select-Object -Unique)
+
+            # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
+            # here, so warn about any group-modifying config value that was ignored.
             if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                 if ($Members -and ($Members | Where-Object { $_ -and $_ -ne 'GraphAPI-Dummy' })) {
                     $skipMsg = "Membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; Members from config was ignored."
                     $result.Warnings += $skipMsg
                     Write-Warning $skipMsg
+                }
+                if ($ManagedBy -and $ManagedBy -ne 'GraphAPI-Dummy-owner') {
+                    $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; ManagedBy from config was ignored."
+                    $result.Warnings += $skipOwnerMsg
+                    Write-Warning $skipOwnerMsg
+                }
+                if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
+                    $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; BootstrapMember from config was ignored."
+                    $result.Warnings += $skipBootstrapMsg
+                    Write-Warning $skipBootstrapMsg
                 }
             }
             else {
@@ -145,6 +180,8 @@ function Invoke-RBAC4AppConfig {
                 }
             }
 
+            $result.MembersFinal = @($existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
+
             # --- Register EXO service principal
             $exoSpDisplay = '{0}_SP' -f $spDisplayName
             $null = Register-EXOServicePrincipal -AppId $spAppId -ObjectId $spId -DisplayName $exoSpDisplay
@@ -159,6 +196,31 @@ function Invoke-RBAC4AppConfig {
                 $rbacNameBase = Get-SafeName -s ('{0}-{1}' -f $shortName, $spDisplayName) -max 63
                 $result.RoleAssignmentsName += $rbacNameBase
 
+                # --- Skip creation if a role assignment with this deterministic name already
+                # exists, so re-running against an already-provisioned app is idempotent. Members
+                # were already added above regardless of this check.
+                $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
+                if ($existingAssignment) {
+                    $existingRole = Get-NormalizeRole ([string]$existingAssignment.Role)
+                    if ($existingRole -ne $roleItem) {
+                        $result.Errors += "Role assignment '$rbacNameBase' already exists but is bound to role '$existingRole', not '$roleItem'; leaving it unchanged."
+                        continue
+                    }
+                    $existingScopeGroup = Resolve-RBAC4AppScopeGroupName -Assignment $existingAssignment
+                    $scopedToTarget = [string]$existingScopeGroup -eq $umGroupName
+                    if ($scopedToTarget) {
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to '$umGroupName'; skipping creation."
+                    }
+                    else {
+                        $resolvedScope = if ($existingScopeGroup) { [string]$existingScopeGroup } else { '<unknown>' }
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$resolvedScope', not '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                    }
+                    $result.Warnings += $existsMsg
+                    Write-Warning -Message $existsMsg
+                    $result.RoleAssignments += $existingAssignment
+                    continue
+                }
+
                 if ($PSCmdlet.ShouldProcess('RBAC role assignment', "Assign '$roleItem' to App '$spDisplayName' scoped to '$umGroupName'")) {
                     $assignment = New-ManagementRoleAssignment `
                         -App $spId `
@@ -172,7 +234,8 @@ function Invoke-RBAC4AppConfig {
 
             [pscustomobject]$result
             if ($rbacNameBase) {
-                [pscustomobject]$result | Export-Clixml ('{0}/{1}_{2}.clixml' -f $env:TEMP, $rbacNameBase, (Get-Date -Format s).Replace(':', '')) -Verbose
+                $exportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("{0}_{1}.clixml" -f $rbacNameBase, (Get-Date -Format s).Replace(':', ''))
+                [pscustomobject]$result | Export-Clixml $exportPath -Verbose
             }
         }
         catch {

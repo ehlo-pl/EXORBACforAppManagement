@@ -6,7 +6,7 @@ BeforeAll {
     # Global stubs so the module scope can resolve them and Pester can mock them on CI
     # (where Microsoft.Graph / ExchangeOnlineManagement are not installed). Parameters the
     # code passes (e.g. -Role) must be declared so the mock can bind and filter on them.
-    function global:Get-MgServicePrincipal { [CmdletBinding()] param([string]$Filter, [string]$ServicePrincipalId) }
+    function global:Get-ServicePrincipal { [CmdletBinding()] param([string]$Identity) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
 
     $script:Assignments = @(
@@ -21,7 +21,7 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgServicePrincipal','Get-ManagementRoleAssignment') {
+    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -84,8 +84,8 @@ Describe 'Get-RBAC4AppEntry -RoleAssigneeType' {
 
 Describe 'Get-RBAC4AppEntry application filter' {
     It 'keeps only assignments matching the resolved service principal' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
-            [pscustomobject]@{ DisplayName = 'Contoso'; AppId = '11111111-1111-1111-1111-111111111111'; Id = '22222222-2222-2222-2222-222222222222' }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111'; ObjectId = '22222222-2222-2222-2222-222222222222' })
         }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { $script:Assignments }
 

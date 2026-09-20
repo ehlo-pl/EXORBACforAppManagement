@@ -38,9 +38,9 @@ OwnerAdded (the owner actually applied/in place), AlreadyExisted, and Group (the
 Online Unified Group object, existing or newly created).
 
 .NOTES
-Requires a connected Exchange Online session (Get-UnifiedGroup, New-UnifiedGroup, Set-UnifiedGroup,
-Get-Recipient) and a connected Microsoft Graph session for the debug calling-context snapshot.
-Companion to New-RBAC4AppEntry.
+Requires a connected Exchange Online session only (Get-UnifiedGroup, New-UnifiedGroup,
+Set-UnifiedGroup, Get-Recipient, Get-ConnectionInformation for the debug calling-context
+snapshot). No Microsoft Graph session is needed. Companion to New-RBAC4AppEntry.
 #>
 function New-RBAC4AppUnifiedGroup {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -109,7 +109,8 @@ function New-RBAC4AppUnifiedGroup {
         Write-Debug -Message ("  -AccessType      : Private")
         Write-Debug -Message ("  -ManagedBy       : '{0}' (requested: '{1}')" -f $resolvedOwner, $ManagedBy)
         Write-Debug -Message ("  -Members (count) : {0}  Values: [{1}]" -f $initialMembers.Count, (($initialMembers | Where-Object { $_ }) -join ', '))
-        Write-Debug -Message ("  Calling context  : TenantId='{0}'; CallerAccount='{1}'" -f (Get-MgContext | Select-Object -ExpandProperty TenantId), (Get-MgContext | Select-Object -ExpandProperty Account))
+        $connInfo = Get-ConnectionInformation -ErrorAction SilentlyContinue | Select-Object -First 1
+        Write-Debug -Message ("  Calling context  : TenantId='{0}'; CallerAccount='{1}'" -f $connInfo.TenantId, $connInfo.UserPrincipalName)
 
         if (-not $PSCmdlet.ShouldProcess($Name, 'Create')) { return }
 

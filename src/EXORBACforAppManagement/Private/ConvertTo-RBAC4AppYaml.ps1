@@ -21,15 +21,17 @@
     foreach ($role in @($Config.Rbac.Roles)) {
         $lines.Add("    - $role")
     }
-    $lines.Add("  AccessGroupType: $($Config.Rbac.AccessGroupType)")
-    $lines.Add("  GroupPrefix: $($Config.Rbac.GroupPrefix)")
-    $lines.Add("  AccessGroupName: `"$($Config.Rbac.AccessGroupName)`"")
+    $lines.Add('')
+    $lines.Add('RbacScope:')
+    $lines.Add("  AccessGroupType: $($Config.RbacScope.AccessGroupType)")
+    $lines.Add("  GroupPrefix: $($Config.RbacScope.GroupPrefix)")
+    $lines.Add("  AccessGroupName: `"$($Config.RbacScope.AccessGroupName)`"")
     $lines.Add('  Members:')
-    foreach ($member in @($Config.Rbac.Members)) {
+    foreach ($member in @($Config.RbacScope.Members)) {
         $lines.Add("    - $member")
     }
-    $lines.Add("  ManagedBy: $($Config.Rbac.ManagedBy)")
-    $lines.Add("  BootstrapMember: $($Config.Rbac.BootstrapMember)")
+    $lines.Add("  ManagedBy: $($Config.RbacScope.ManagedBy)")
+    $lines.Add("  BootstrapMember: $($Config.RbacScope.BootstrapMember)")
 
     return $lines -join [System.Environment]::NewLine
 }

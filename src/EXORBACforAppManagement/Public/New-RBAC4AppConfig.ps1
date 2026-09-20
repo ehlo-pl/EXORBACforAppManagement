@@ -28,7 +28,9 @@ normalised to Application Mail.Send. Defaults to @('Application Mail.Send').
 Kind of scope group: M365Group (default), DistributionList, or MailEnabledSecurityGroup.
 
 .PARAMETER GroupPrefix
-Prefix used when generating the scope group name. Defaults to 'Um365RAo1'.
+Prefix used when generating the scope group name. When omitted, defaults to
+'Um365RAo1P' (M365Group), 'UDLRAo1P' (DistributionList), or 'USRAo1P'
+(MailEnabledSecurityGroup) based on -AccessGroupType.
 
 .PARAMETER AccessGroupName
 Explicit scope group name. Required when -AccessGroupType is MailEnabledSecurityGroup.
@@ -81,8 +83,7 @@ function New-RBAC4AppConfig {
         [string] $AccessGroupType = 'M365Group',
 
         [Parameter()]
-        [ValidateNotNullOrEmpty()]
-        [string] $GroupPrefix = 'Um365RAo1',
+        [string] $GroupPrefix = $null,
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
@@ -105,6 +106,14 @@ function New-RBAC4AppConfig {
     process {
         if ($PSBoundParameters.ContainsKey('AccessGroupName') -and $PSBoundParameters.ContainsKey('GroupPrefix')) {
             throw 'Parameters -AccessGroupName and -GroupPrefix cannot be used together.'
+        }
+
+        if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
+            $GroupPrefix = switch ($AccessGroupType) {
+                'DistributionList'         { 'UDLRAo1P' }
+                'MailEnabledSecurityGroup' { 'USRAo1P' }
+                default                    { 'Um365RAo1P' }
+            }
         }
 
         if (-not $OutputPath) { $OutputPath = (Get-Location).Path }
@@ -152,7 +161,7 @@ function New-RBAC4AppConfig {
         $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) { $AccessGroupName } else { '' }
 
         $config = [pscustomobject]@{
-            SchemaVersion = '1.0'
+            SchemaVersion = '2.0'
             GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
             TenantId      = $tenantId
             Application   = [pscustomobject]@{
@@ -161,7 +170,9 @@ function New-RBAC4AppConfig {
                 DisplayName = [string]$sp.DisplayName
             }
             Rbac          = [pscustomobject]@{
-                Roles           = $normalizedRoles
+                Roles = $normalizedRoles
+            }
+            RbacScope     = [pscustomobject]@{
                 AccessGroupType = $AccessGroupType
                 GroupPrefix     = $GroupPrefix
                 AccessGroupName = $accessGroupNameValue
