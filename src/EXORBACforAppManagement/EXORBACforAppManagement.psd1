@@ -12,7 +12,7 @@
 RootModule = 'EXORBACforAppManagement.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.6.1'
+ModuleVersion = '0.6.2'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -102,7 +102,7 @@ PrivateData = @{
         # LicenseUri = ''
 
         # A URL to the main website for this project.
-        ProjectUri = 'https://github.com/ziembor/new-RBACforAppEntry'
+        ProjectUri = 'https://github.com/ehlo-pl/EXORBACforAppManagement'
 
         # A URL to an icon representing this module.
         # IconUri = ''
