@@ -130,7 +130,8 @@ function Invoke-Test {
 
 function Invoke-Build {
     Write-Host '==> Build' -ForegroundColor Cyan
-    $dest = Join-Path $OutputPath $ModuleName
+    $version = (Import-PowerShellDataFile $ManifestPath).ModuleVersion
+    $dest    = Join-Path $OutputPath $version $ModuleName
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item -Path (Join-Path $SrcPath '*') -Destination $dest -Recurse -Force
     $null = Test-ModuleManifest -Path (Join-Path $dest "$ModuleName.psd1")
@@ -143,7 +144,8 @@ function Invoke-Publish {
         throw "No API key supplied. Pass -NuGetApiKey or set `$env:PSGALLERY_API_KEY (https://www.powershellgallery.com/account/apikeys)."
     }
 
-    $dest = Join-Path $OutputPath $ModuleName
+    $version = (Import-PowerShellDataFile $ManifestPath).ModuleVersion
+    $dest    = Join-Path $OutputPath $version $ModuleName
     if (-not (Test-Path (Join-Path $dest "$ModuleName.psd1"))) {
         throw "Built module not found at $dest. Run './build.ps1 -Task Build' (or -Task All) first."
     }

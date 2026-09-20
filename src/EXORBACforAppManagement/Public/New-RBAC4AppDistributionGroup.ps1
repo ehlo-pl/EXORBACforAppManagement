@@ -14,9 +14,18 @@ New-RBAC4AppUnifiedGroup so the two helpers are interchangeable behind New-RBAC4
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
+.PARAMETER AppName
+Application name used to derive the group name. Combined with -Prefix as "{Prefix}-{AppName}".
+Mutually exclusive with -Name.
+
+.PARAMETER Prefix
+Prefix prepended to -AppName when deriving the group name. Defaults to 'UDLRAo1'.
+Only valid with -AppName.
+
 .PARAMETER Name
 Name and Alias of the distribution list. Expected to already be a safe value (<= 63 chars,
 alphanumeric/dash); callers such as New-RBAC4AppEntry sanitize it with Get-SafeName first.
+Mutually exclusive with -AppName / -Prefix.
 
 .PARAMETER DisplayName
 Display name for the group. Defaults to "{Name} - RBAC for APP".
@@ -28,9 +37,19 @@ Recipient assigned as the group owner. Defaults to the GraphAPI-Dummy-owner plac
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
 
 .EXAMPLE
+New-RBAC4AppDistributionGroup -AppName 'ContosoMailApp' -WhatIf -Verbose
+
+Shows the planned distribution list creation for 'UDLRAo1-ContosoMailApp' without making changes.
+
+.EXAMPLE
+New-RBAC4AppDistributionGroup -AppName 'ContosoMailApp' -Prefix 'MYORG' -WhatIf
+
+Shows the planned creation for 'MYORG-ContosoMailApp' without making changes.
+
+.EXAMPLE
 New-RBAC4AppDistributionGroup -Name 'Um365RAo1-ContosoMailApp' -WhatIf -Verbose
 
-Shows the planned distribution list creation without making changes.
+Shows the planned distribution list creation without making changes (explicit name).
 
 .OUTPUTS
 PSCustomObject
@@ -44,10 +63,18 @@ Requires a connected Exchange Online session (Get-DistributionGroup, New-Distrib
 Set-DistributionGroup, Get-Recipient). Companion to New-RBAC4AppUnifiedGroup and New-RBAC4AppEntry.
 #>
 function New-RBAC4AppDistributionGroup {
-    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByAppName')]
     [OutputType([object])]
     param(
-        [Parameter(Mandatory, Position = 0, ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'ByAppName')]
+        [ValidateNotNullOrEmpty()]
+        [string] $AppName,
+
+        [Parameter(ParameterSetName = 'ByAppName')]
+        [ValidateNotNullOrEmpty()]
+        [string] $Prefix = 'UDLRAo1',
+
+        [Parameter(Mandatory, Position = 0, ValueFromPipelineByPropertyName, ParameterSetName = 'ByName')]
         [ValidateNotNullOrEmpty()]
         [string] $Name,
 
@@ -64,6 +91,10 @@ function New-RBAC4AppDistributionGroup {
     )
 
     process {
+        if ($PSCmdlet.ParameterSetName -eq 'ByAppName') {
+            $Name = '{0}-{1}' -f $Prefix, $AppName
+        }
+
         if (-not $DisplayName) { $DisplayName = '{0} - RBAC for APP' -f $Name }
 
         Write-Verbose -Message ("Checking distribution list '{0}'." -f $Name)

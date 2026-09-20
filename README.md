@@ -21,6 +21,8 @@ The three functions form a **create → assign → read** flow and share the sam
 | [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry`). |
 | `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only distribution list (used by `New-RBAC4AppEntry` when `-AccessGroupType DistributionList`). |
 | [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | helper | Creates the EXO service principal pointer for an Entra app (used by `New-RBAC4AppEntry`). |
+| [`New-RBAC4AppConfig`](#new-rbac4appconfig) | **Graph session** | Resolves the Entra SP via `Get-MgServicePrincipal` and writes a YAML config file for `Invoke-RBAC4AppConfig`. No EXO calls. |
+| [`Invoke-RBAC4AppConfig`](#invoke-rbac4appconfig) | **EXO session** | Reads the YAML config and provisions scope group, EXO service principal, and role assignments. No Graph calls. |
 
 > Background: [Microsoft Learn — Role Based Access Control for Applications in Exchange Online](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac).
 
@@ -35,6 +37,99 @@ The three functions form a **create → assign → read** flow and share the sam
   - **Exchange Online** — `Connect-ExchangeOnline`
     (used by `Get-UnifiedGroup`, `New-UnifiedGroup`, `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`,
     `New-ServicePrincipal`, `Get-Recipient`, `New-ManagementRoleAssignment`, `Get-ManagementRoleAssignment`).
+
+### Per-function module requirements
+
+| Function | Microsoft.Graph | ExchangeOnlineManagement |
+| --- | --- | --- |
+| `New-RegisteredApp` | `New-MgApplication` `New-MgServicePrincipal` `Get-MgContext` | — |
+| `New-RBAC4AppUnifiedGroup` | `Get-MgContext` *(debug trace only)* | `Get-UnifiedGroup` `New-UnifiedGroup` `Set-UnifiedGroup` `Get-Recipient` |
+| `New-RBAC4AppDistributionGroup` | — | `Get-DistributionGroup` `New-DistributionGroup` `Set-DistributionGroup` `Get-Recipient` |
+| `Register-EXOServicePrincipal` | — | `New-ServicePrincipal` |
+| `New-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-Recipient` `Add-DistributionGroupMember` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
+| `Set-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ServicePrincipal` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` |
+| `Test-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-Recipient` |
+| `Remove-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
+| `Get-RBAC4AppEntry` | `Get-MgServicePrincipal` *(only when an app filter is supplied)* | `Get-ManagementRoleAssignment` |
+| `Get-RegisteredAppWithPermission` | `Get-MgServicePrincipal` | `Get-ManagementRoleAssignment` |
+| `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(+ all EXO cmdlets used by `New-RBAC4AppEntry`)* |
+
+## Two-session workflow
+
+Microsoft.Graph and ExchangeOnlineManagement share MSAL/WAM identity assemblies that can
+conflict when both are loaded in the same PowerShell process — symptoms range from
+`RuntimeBroker` / WAM `NullReferenceException` on `Connect-ExchangeOnline` to
+`Method not found` on `Connect-MgGraph`. The two-session split works around this entirely.
+
+### What to do in each session
+
+| | Session 1 — Microsoft Graph | Session 2 — ExchangeOnlineManagement |
+| --- | --- | --- |
+| **Connect** | `Connect-MgGraph -Scopes 'Application.ReadWrite.All'` | `Connect-ExchangeOnline` |
+| **App registration** | `New-RegisteredApp` | — |
+| **Plan RBAC config** | `New-RBAC4AppConfig` → writes `.yml` | — |
+| **Provision from config** | — | `Invoke-RBAC4AppConfig -Path .\config.yml` |
+| **EXO-only helpers** | — | `New-RBAC4AppUnifiedGroup` `New-RBAC4AppDistributionGroup` `Register-EXOServicePrincipal` |
+
+Functions that **need both modules** (`New-RBAC4AppEntry`, `Set-RBAC4AppEntry`,
+`Test-RBAC4AppEntry`, `Remove-RBAC4AppEntry`, `Get-RBAC4AppEntry`,
+`Get-RegisteredAppWithPermission`, `Convert-ApplicationAccessPolicyToRBAC`) remain available
+for environments where the conflict does not occur or where separate processes are not
+practical — they are **not deprecated**.
+
+### Typical two-session flow
+
+```powershell
+# ── Session 1: pwsh window with Microsoft.Graph connected ────────────────────
+Connect-MgGraph -Scopes 'Application.ReadWrite.All'
+
+# Optionally register the app (if not already registered):
+New-RegisteredApp -DisplayName 'Contoso Mail App' -WhatIf
+
+# Resolve the SP and write the handoff YAML:
+$yml = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
+           -Role 'Mail.Send' `
+           -Members 'shared@contoso.com' `
+           -OutputPath C:\rbac-configs
+# → writes C:\rbac-configs\rbac4app-ContosoMailApp-<timestamp>.yml
+
+# ── Session 2: separate pwsh window with ExchangeOnlineManagement connected ──
+Connect-ExchangeOnline
+
+# Preview first:
+Invoke-RBAC4AppConfig -Path C:\rbac-configs\rbac4app-ContosoMailApp-*.yml -WhatIf
+
+# Provision:
+Invoke-RBAC4AppConfig -Path C:\rbac-configs\rbac4app-ContosoMailApp-*.yml
+```
+
+The YAML file is a plain-text handoff — no secrets, safe to store alongside your runbooks.
+
+### YAML config schema
+
+```yaml
+# RBAC4App configuration — generated by New-RBAC4AppConfig
+# Feed to Invoke-RBAC4AppConfig in a session with only ExchangeOnlineManagement connected.
+SchemaVersion: "1.0"
+GeneratedAt: "2026-09-20T10:30:00Z"
+TenantId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+Application:
+  AppId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+  SpObjectId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+  DisplayName: "Contoso Mail App"
+
+Rbac:
+  Roles:
+    - Application Mail.Send
+  AccessGroupType: M365Group   # M365Group | DistributionList | MailEnabledSecurityGroup
+  GroupPrefix: Um365RAo1
+  AccessGroupName: ""          # required (and used instead of GroupPrefix) for MailEnabledSecurityGroup
+  Members:
+    - shared@contoso.com
+  ManagedBy: GraphAPI-Dummy-owner
+  BootstrapMember: GraphAPI-Dummy
+```
 
 ## Install / import
 
@@ -51,6 +146,17 @@ Then connect your sessions:
 Connect-MgGraph -Scopes 'Application.ReadWrite.All'
 Connect-ExchangeOnline
 ```
+
+> **Graph/Exchange connection caveat:** Microsoft.Graph and ExchangeOnlineManagement can conflict
+> when both authenticate in the same PowerShell process because they load shared MSAL/WAM identity
+> assemblies. Symptoms include `RuntimeBroker` / WAM `NullReferenceException` from
+> `Connect-ExchangeOnline` after `Connect-MgGraph`, or `Method not found: ...WithLogging(...)` from
+> `Connect-MgGraph` after Exchange Online is loaded. If this happens, use separate `pwsh` processes
+> for Graph and Exchange work. `Connect-M365Tenant -Workload MicrosoftGraph` and
+> `Connect-M365Tenant -Workload ExchangeOnline` from MSCloudLoginAssistant are wrappers around
+> `Connect-MgGraph` and `Connect-ExchangeOnline`; they may help in app-only/access-token scenarios,
+> but they do **not** isolate the modules or guarantee a fix for interactive WAM/MSAL collisions in a
+> single process.
 
 > **Always preview with `-WhatIf` first.** `New-RBAC4AppEntry` (`ConfirmImpact='High'`) and
 > `New-RegisteredApp` (`ConfirmImpact='Medium'`) gate every mutating step behind `ShouldProcess`.
@@ -200,14 +306,62 @@ can receive application RBAC assignments.
 Register-EXOServicePrincipal -AppId '1111...' -ObjectId '2222...' -DisplayName 'Contoso_SP' -WhatIf
 ```
 
+### New-RBAC4AppConfig
+
+**Run in the Microsoft Graph session.** Resolves the Entra service principal and writes a YAML
+config file that captures all parameters needed for provisioning. No Exchange Online cmdlets are
+called.
+
+```powershell
+# By display name:
+$yml = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
+           -Role 'Mail.Send' -Members 'shared@contoso.com' -OutputPath C:\rbac-configs
+
+# By AppId, distribution-list scope:
+$yml = New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' `
+           -Role 'Mail.Send','Calendars.Read' `
+           -AccessGroupType DistributionList `
+           -Members 'shared@contoso.com' -OutputPath C:\rbac-configs
+
+# By SP object id, referencing an existing on-prem group:
+$yml = New-RBAC4AppConfig -SpObjectId '11111111-2222-3333-4444-555555555555' `
+           -Role 'Mail.Send' -AccessGroupType MailEnabledSecurityGroup `
+           -AccessGroupName 'OnPrem-MailApp-Scope' -OutputPath C:\rbac-configs
+```
+
+Returns the path to the written `.yml` file. Pass `-WhatIf` to preview the output path and YAML
+content without writing the file.
+
+### Invoke-RBAC4AppConfig
+
+**Run in the ExchangeOnlineManagement session.** Reads the YAML file produced by
+`New-RBAC4AppConfig` and performs all Exchange Online provisioning steps — scope group creation,
+member addition, EXO service principal registration, and management role assignments — without
+calling any Microsoft Graph cmdlet.
+
+Returns the same summary object shape as `New-RBAC4AppEntry` (`ResolvedDisplay`, `AppId`,
+`SpObjectId`, `UnifiedGroupName`, `RolesNormalized`, `RoleAssignmentsName`, `MembersAdded`,
+`Warnings`, `Errors`).
+
+```powershell
+# Preview:
+Invoke-RBAC4AppConfig -Path C:\rbac-configs\rbac4app-ContosoMailApp-202609200830.yml -WhatIf
+
+# Provision:
+Invoke-RBAC4AppConfig -Path C:\rbac-configs\rbac4app-ContosoMailApp-202609200830.yml
+
+# Pipeline from a directory of configs:
+Get-ChildItem C:\rbac-configs\*.yml | Invoke-RBAC4AppConfig
+```
+
 ## Project layout
 
 ```
 src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
-  Public/                        # 8 exported functions (see table above)
-  Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole
+  Public/                        # 13 exported functions (see table above)
+  Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole, ConvertTo/From-RBAC4AppYaml
 tests/                           # Pester v5 tests
 build.ps1                        # Init / Clean / Analyze / Test / Build
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)

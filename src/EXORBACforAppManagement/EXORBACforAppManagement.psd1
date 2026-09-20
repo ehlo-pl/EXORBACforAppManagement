@@ -12,7 +12,7 @@
 RootModule = 'EXORBACforAppManagement.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.6.0'
+ModuleVersion = '0.6.1'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -69,7 +69,7 @@ PowerShellVersion = '5.1'
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = 'New-RBAC4AppEntry', 'New-RegisteredApp', 'Get-RBAC4AppEntry', 'Get-RegisteredAppWithPermission', 'New-RBAC4AppUnifiedGroup', 'New-RBAC4AppDistributionGroup', 'Register-EXOServicePrincipal', 'Convert-ApplicationAccessPolicyToRBAC', 'Test-RBAC4AppEntry', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry'
+FunctionsToExport = 'New-RBAC4AppEntry', 'New-RegisteredApp', 'Get-RBAC4AppEntry', 'Get-RegisteredAppWithPermission', 'New-RBAC4AppUnifiedGroup', 'New-RBAC4AppDistributionGroup', 'Register-EXOServicePrincipal', 'Convert-ApplicationAccessPolicyToRBAC', 'Test-RBAC4AppEntry', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry', 'New-RBAC4AppConfig', 'Invoke-RBAC4AppConfig'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()

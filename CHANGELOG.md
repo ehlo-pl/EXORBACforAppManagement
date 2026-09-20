@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-20
+
+### Added
+- **Two-session workflow** — workaround for the MSAL/WAM assembly conflict that prevents
+  `Microsoft.Graph` and `ExchangeOnlineManagement` from coexisting in a single PowerShell process.
+  - `New-RBAC4AppConfig` — Graph-session function. Resolves the Entra service principal
+    (`Get-MgServicePrincipal`) and writes a plain-text YAML handoff file containing the resolved
+    identity and all RBAC provisioning parameters. Accepts the same `ByName`/`ByAppId`/`BySpObjectId`
+    parameter sets as `New-RBAC4AppEntry`. Calls no EXO cmdlets.
+  - `Invoke-RBAC4AppConfig` — EXO-session function. Reads the YAML file produced by
+    `New-RBAC4AppConfig` and provisions scope group, EXO service principal, and role assignments
+    using only `ExchangeOnlineManagement` cmdlets. Returns the same summary object shape as
+    `New-RBAC4AppEntry`. Calls no Graph cmdlets.
+  - Private helpers `ConvertTo-RBAC4AppYaml` / `ConvertFrom-RBAC4AppYaml` — dependency-free
+    YAML serialiser/deserialiser for the fixed config schema (no `powershell-yaml` required).
+
+### Changed
+- `New-RBAC4AppDistributionGroup` — added `-AppName` (mandatory, new `ByAppName` default parameter
+  set) and `-Prefix` (default `UDLRAo1`) as an alternative to the existing `-Name` parameter. The
+  group name is derived as `"$Prefix-$AppName"`. The `-Name` parameter set (`ByName`) is unchanged
+  and is still used by the internal `New-RBAC4AppScopeGroup` dispatcher.
+- `build.ps1` — output directory now follows `output/<version>/<ModuleName>` (e.g.
+  `output/0.6.1/EXORBACforAppManagement`); version is read from the module manifest at build time
+  via `Import-PowerShellDataFile`. `Invoke-Publish` updated to match.
+
+## [0.6.0] - 2026-09-19
+
 ### Changed
 - Renamed the RBAC-for-App functions from the `RBACforApp` form to `RBAC4App`:
   `New-RBAC4AppEntry`, `Get-RBAC4AppEntry`, `Set-RBAC4AppEntry`, `Test-RBAC4AppEntry`,
