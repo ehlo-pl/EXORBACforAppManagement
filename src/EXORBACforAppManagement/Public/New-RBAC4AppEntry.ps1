@@ -9,7 +9,11 @@ requested members, ensures the Exchange Online service principal exists, and cre
 Exchange Online RBAC role assignments for the application.
 
 Unified Group creation/configuration is delegated to New-RBAC4AppUnifiedGroup and the
-Exchange Online service principal step to Register-EXOServicePrincipal.
+Exchange Online service principal step to Register-EXOServicePrincipal. Every creation step is
+idempotent: the scope group, the EXO service principal, and each role assignment are only created
+if a matching one does not already exist, so re-running against an already-provisioned application
+is safe - a role assignment that already exists and is scoped to the same group is left alone (a
+warning notes it was skipped); requested members are still added to the group regardless.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
@@ -100,7 +104,8 @@ assignment names, warnings, and errors.
 .NOTES
 Requires Microsoft Graph and Exchange Online cmdlets used by Get-MgServicePrincipal,
 New-ServicePrincipal, Get-UnifiedGroup, Set-UnifiedGroup, Add-UnifiedGroupLinks,
-Get-UnifiedGroupLinks, Get-DistributionGroupMember, and New-ManagementRoleAssignment.
+Get-UnifiedGroupLinks, Get-DistributionGroupMember, Get-ManagementRoleAssignment, and
+New-ManagementRoleAssignment.
 #>
 function New-RBAC4AppEntry {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByName')]
@@ -327,6 +332,25 @@ function New-RBAC4AppEntry {
 
                 $rbacNameBase = Get-SafeName -s ("{0}-{1}" -f $ShortRoleName,$sp.DisplayName) -max 63
                 $result.RoleAssignmentsName += $rbacNameBase
+
+                # --- Skip creation if a role assignment with this deterministic name already
+                # exists, so re-running against an already-provisioned app is idempotent. Members
+                # were already added above regardless of this check.
+                $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
+                if ($existingAssignment) {
+                    $scopedToTarget = ([string]$existingAssignment.RecipientWriteScope -in @('Group', 'CustomRecipientScope')) -and
+                        ([string]$existingAssignment.CustomRecipientWriteScope -eq $umGroupName)
+                    if ($scopedToTarget) {
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to '$umGroupName'; skipping creation."
+                    }
+                    else {
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$([string]$existingAssignment.CustomRecipientWriteScope)', not '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                    }
+                    $result.Warnings += $existsMsg
+                    Write-Warning -Message $existsMsg
+                    $result.RoleAssignments += $existingAssignment
+                    continue
+                }
 
                 if ($PSCmdlet.ShouldProcess("RBAC role assignment", "Assign '$roleItem' to App '$($sp.DisplayName)' scoped to '$umGroupName'")) {
                     $assignment = New-ManagementRoleAssignment `

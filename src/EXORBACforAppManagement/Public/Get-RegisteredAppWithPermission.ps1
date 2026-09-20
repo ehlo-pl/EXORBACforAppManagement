@@ -28,7 +28,13 @@ Processing steps:
      raw assignee and the "_SP"-stripped variant: exactly one Graph match wins; more than one
      match writes an error (re-run with a narrower role filter or resolve the Entra duplicates);
      no match falls through to the next candidate.
-  6. Emit one object per application. When Graph resolution fails the row is still returned with
+  6. Resolve each distinct scope group referenced by the app's assignments (from
+     RecipientWriteScope/CustomRecipientWriteScope on the raw assignment) back to its membership:
+     Get-UnifiedGroup is tried first (M365Group), then Get-DistributionGroup (DistributionList or
+     MailEnabledSecurityGroup); a scope group resolved by neither is skipped with a warning.
+     Resolved scope groups are cached per run so a group referenced by multiple applications is
+     only read once.
+  7. Emit one object per application. When Graph resolution fails the row is still returned with
      EXO-only details (DisplayName falls back to the assignee with "_SP" stripped; AppId and
      ServicePrincipalId are null) and a warning is written.
 
@@ -66,6 +72,13 @@ One object per distinct registered application, with the following properties:
   AppId                   - Application (client) id from Graph (null when unresolved).
   ServicePrincipalId      - Service principal object id from Graph (null when unresolved).
   ExoServicePrincipal     - The raw Exchange Online assignee name (e.g. Contoso_SP).
+  ScopeGroupNames         - Sorted, unique recipient scope group name(s) (CustomRecipientWriteScope)
+                            the app's assignments are scoped to. Empty when an assignment has no
+                            group scope (e.g. Organization-wide).
+  ScopeGroupMembers       - Sorted, unique members (PrimarySmtpAddress, falling back to Name) across
+                            every resolved scope group in ScopeGroupNames. A scope group that could
+                            not be resolved via Get-UnifiedGroup or Get-DistributionGroup contributes
+                            nothing here; a warning is written to the warning stream instead.
   Roles                   - Sorted, unique application roles the app holds.
   RoleAssignmentNames     - Sorted, unique management role assignment names.
   AssignmentCount         - Total matched assignments for the app.
@@ -73,9 +86,10 @@ One object per distinct registered application, with the following properties:
   DisabledAssignmentCount - Count of those that are disabled.
 
 .NOTES
-Requires a connected Exchange Online session (Get-ManagementRoleAssignment). A connected
-Microsoft Graph session (Get-MgContext, Get-MgServicePrincipal) is optional - without one, every
-row is returned with EXO-only details and a single warning is written instead of the call failing.
+Requires a connected Exchange Online session (Get-ManagementRoleAssignment, Get-UnifiedGroup,
+Get-UnifiedGroupLinks, Get-DistributionGroup, Get-DistributionGroupMember). A connected Microsoft
+Graph session (Get-MgContext, Get-MgServicePrincipal) is optional - without one, every row is
+returned with EXO-only details and a single warning is written instead of the call failing.
 
 Performance / behavior notes:
 - The function issues one Get-ManagementRoleAssignment query per role, so cost scales with the
@@ -85,6 +99,9 @@ Performance / behavior notes:
   produce the ambiguity error and why the "_SP"-stripped variant is also tried.
 - Unlike Get-RBAC4AppEntry, this function does not filter on recipient scope: any
   'Application *' assignment to a service principal is counted.
+- Scope group resolution adds up to two read calls (Get-UnifiedGroup/Get-DistributionGroup, then
+  Get-UnifiedGroupLinks/Get-DistributionGroupMember) per distinct scope group name, cached for the
+  duration of the call so a group shared by several applications is only read once.
 #>
 function Get-RegisteredAppWithPermission {
     [CmdletBinding()]
@@ -139,6 +156,10 @@ function Get-RegisteredAppWithPermission {
             Write-Warning -Message 'Microsoft Graph is not connected (Connect-MgGraph); returning Exchange-Online-only details (DisplayName/AppId/ServicePrincipalId unresolved) for every application.'
         }
 
+        # --- Scope groups are resolved and cached once per run: the same group can back more than
+        # one application's assignments, and re-reading it per application would be wasteful.
+        $scopeGroupMemberCache = @{}
+
         foreach ($assignmentGroup in ($assignments | Group-Object RoleAssigneeName | Sort-Object Name)) {
             $assigneeName = [string]$assignmentGroup.Name
             $resolvedSp = $null
@@ -176,11 +197,44 @@ function Get-RegisteredAppWithPermission {
             $rolesForApp = @($assignmentGroup.Group.Role | Sort-Object -Unique)
             $assignmentNames = @($assignmentGroup.Group.Name | Sort-Object -Unique)
 
+            # --- Scope group name(s): the recipient scope each assignment is bound to.
+            $scopeNames = @(
+                $assignmentGroup.Group |
+                    Where-Object { [string]$_.RecipientWriteScope -in @('Group', 'CustomRecipientScope') -and $_.CustomRecipientWriteScope } |
+                    ForEach-Object { [string]$_.CustomRecipientWriteScope } |
+                    Sort-Object -Unique
+            )
+
+            # --- Scope group content: resolve (and cache) each scope group's membership.
+            $scopeMembers = foreach ($scopeName in $scopeNames) {
+                if (-not $scopeGroupMemberCache.ContainsKey($scopeName)) {
+                    $links = $null
+                    if (Get-UnifiedGroup -Identity $scopeName -ErrorAction SilentlyContinue) {
+                        $links = @(Get-UnifiedGroupLinks -Identity $scopeName -LinkType Members -ErrorAction SilentlyContinue)
+                    }
+                    elseif (Get-DistributionGroup -Identity $scopeName -ErrorAction SilentlyContinue) {
+                        $links = @(Get-DistributionGroupMember -Identity $scopeName -ErrorAction SilentlyContinue)
+                    }
+                    else {
+                        Write-Warning -Message ("Could not resolve scope group '{0}' via Get-UnifiedGroup or Get-DistributionGroup; its membership will be omitted." -f $scopeName)
+                    }
+
+                    $scopeGroupMemberCache[$scopeName] = @($links | ForEach-Object {
+                            if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
+                        } | Where-Object { $_ } | Select-Object -Unique)
+                }
+
+                $scopeGroupMemberCache[$scopeName]
+            }
+            $scopeMembers = @($scopeMembers | Sort-Object -Unique)
+
             [pscustomobject][ordered]@{
                 DisplayName           = if ($resolvedSp) { $resolvedSp.DisplayName } else { ($assigneeName -replace '_SP$', '') }
                 AppId                 = if ($resolvedSp) { $resolvedSp.AppId } else { $null }
                 ServicePrincipalId    = if ($resolvedSp) { $resolvedSp.Id } else { $null }
                 ExoServicePrincipal   = $assigneeName
+                ScopeGroupNames       = $scopeNames
+                ScopeGroupMembers     = $scopeMembers
                 Roles                 = $rolesForApp
                 RoleAssignmentNames   = $assignmentNames
                 AssignmentCount       = $assignmentGroup.Count

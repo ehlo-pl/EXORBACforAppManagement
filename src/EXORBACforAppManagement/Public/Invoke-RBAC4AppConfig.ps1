@@ -13,6 +13,11 @@ This separates the two modules into distinct PowerShell sessions, avoiding the M
 assembly conflict that can occur when both Microsoft.Graph and ExchangeOnlineManagement are
 loaded in the same process.
 
+Every creation step is idempotent, matching New-RBAC4AppEntry: the scope group, the EXO service
+principal, and each role assignment are only created if a matching one does not already exist -
+a role assignment that already exists and is scoped to the same group is left alone (a warning
+notes it was skipped); requested members are still added to the group regardless.
+
 .PARAMETER Path
 Path to the YAML file produced by New-RBAC4AppConfig.
 
@@ -186,6 +191,25 @@ function Invoke-RBAC4AppConfig {
                 $shortName    = $shortRoleMap[$roleItem]
                 $rbacNameBase = Get-SafeName -s ('{0}-{1}' -f $shortName, $spDisplayName) -max 63
                 $result.RoleAssignmentsName += $rbacNameBase
+
+                # --- Skip creation if a role assignment with this deterministic name already
+                # exists, so re-running against an already-provisioned app is idempotent. Members
+                # were already added above regardless of this check.
+                $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
+                if ($existingAssignment) {
+                    $scopedToTarget = ([string]$existingAssignment.RecipientWriteScope -in @('Group', 'CustomRecipientScope')) -and
+                        ([string]$existingAssignment.CustomRecipientWriteScope -eq $umGroupName)
+                    if ($scopedToTarget) {
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to '$umGroupName'; skipping creation."
+                    }
+                    else {
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$([string]$existingAssignment.CustomRecipientWriteScope)', not '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                    }
+                    $result.Warnings += $existsMsg
+                    Write-Warning -Message $existsMsg
+                    $result.RoleAssignments += $existingAssignment
+                    continue
+                }
 
                 if ($PSCmdlet.ShouldProcess('RBAC role assignment', "Assign '$roleItem' to App '$spDisplayName' scoped to '$umGroupName'")) {
                     $assignment = New-ManagementRoleAssignment `

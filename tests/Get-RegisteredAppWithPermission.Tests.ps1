@@ -6,18 +6,22 @@ BeforeAll {
     function global:Get-MgContext { }
     function global:Get-MgServicePrincipal { [CmdletBinding()] param([string]$Filter, [string]$ServicePrincipalId) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
+    function global:Get-UnifiedGroup { [CmdletBinding()] param([string]$Identity) }
+    function global:Get-UnifiedGroupLinks { [CmdletBinding()] param([string]$Identity, [string]$LinkType) }
+    function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
+    function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
 
     $script:Assignments = @(
-        [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true }
-        [pscustomobject]@{ Name = 'AppCldR-Contoso'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true }
-        [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false }
+        [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
+        [pscustomobject]@{ Name = 'AppCldR-Contoso'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
+        [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam' }
         [pscustomobject]@{ Name = 'AppMailSend-Helpdesk'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; Enabled = $true }
     )
 }
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-ManagementRoleAssignment') {
+    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-ManagementRoleAssignment','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -53,6 +57,19 @@ Describe 'Get-RegisteredAppWithPermission' {
                 default { @() }
             }
         }
+
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
+            if ($Identity -eq 'Um365RAo1-Contoso') { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = $Identity } }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks {
+            @([pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' })
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            if ($Identity -eq 'UDLRAo1-Fabrikam') { [pscustomobject]@{ DisplayName = 'UDLRAo1-Fabrikam'; Identity = $Identity } }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember {
+            @([pscustomobject]@{ PrimarySmtpAddress = 'dl-member@fabrikam.com'; Name = 'dl-member' })
+        }
     }
 
     It 'returns one row per distinct registered application' {
@@ -61,6 +78,52 @@ Describe 'Get-RegisteredAppWithPermission' {
         $r.Count | Should -Be 2
         ($r.DisplayName | Sort-Object) | Should -Be @('Contoso', 'Fabrikam')
         ($r | Where-Object DisplayName -eq 'Contoso').Roles | Should -Be @('Application Calendars.Read', 'Application Mail.Send')
+    }
+
+    It 'resolves the scope group name and membership for an M365Group-scoped app' {
+        $r = Get-RegisteredAppWithPermission
+
+        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
+        $contoso.ScopeGroupNames | Should -Be @('Um365RAo1-Contoso')
+        $contoso.ScopeGroupMembers | Should -Contain 'shared@contoso.com'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroupLinks -Times 1 -ParameterFilter { $Identity -eq 'Um365RAo1-Contoso' }
+    }
+
+    It 'resolves the scope group name and membership for a DistributionList-scoped app' {
+        $r = Get-RegisteredAppWithPermission
+
+        $fabrikam = $r | Where-Object DisplayName -eq 'Fabrikam'
+        $fabrikam.ScopeGroupNames | Should -Be @('UDLRAo1-Fabrikam')
+        $fabrikam.ScopeGroupMembers | Should -Contain 'dl-member@fabrikam.com'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-DistributionGroupMember -Times 1
+    }
+
+    It 'caches scope group membership so a group shared by two applications is only read once' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @(
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Shared' }
+                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Shared' }
+            ) | Where-Object { -not $Role -or $_.Role -eq $Role }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Shared'; Identity = $Identity } }
+
+        $null = Get-RegisteredAppWithPermission
+
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroup -Times 1
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroupLinks -Times 1
+    }
+
+    It 'warns and leaves ScopeGroupMembers empty when the scope group cannot be resolved by any type' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+
+        $warnings = $null
+        $r = Get-RegisteredAppWithPermission -WarningVariable warnings -WarningAction SilentlyContinue
+
+        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
+        $contoso.ScopeGroupNames | Should -Be @('Um365RAo1-Contoso')
+        $contoso.ScopeGroupMembers | Should -BeNullOrEmpty
+        ($warnings -join ';') | Should -Match "Could not resolve scope group 'Um365RAo1-Contoso'"
     }
 
     It 'normalizes a short role filter before querying EXO' {
@@ -84,6 +147,8 @@ Describe 'Get-RegisteredAppWithPermission without a Graph session' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             $script:Assignments | Where-Object { -not $Role -or $_.Role -eq $Role }
         }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
     }
 
     It 'returns EXO-only rows and warns once when Get-MgContext returns nothing, without calling Get-MgServicePrincipal' {

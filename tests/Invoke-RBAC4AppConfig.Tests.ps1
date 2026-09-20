@@ -10,7 +10,9 @@ BeforeAll {
     function global:Add-UnifiedGroupLinks { }
     function global:Get-Recipient { }
     function global:New-ServicePrincipal { }
+    function global:Get-ServicePrincipal { }
     function global:New-ManagementRoleAssignment { }
+    function global:Get-ManagementRoleAssignment { }
     function global:Get-DistributionGroupMember { }
 
     $script:testYaml = @'
@@ -67,7 +69,7 @@ Rbac:
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
     foreach ($n in 'Get-UnifiedGroup', 'Get-UnifiedGroupLinks', 'New-UnifiedGroup', 'Set-UnifiedGroup', 'Add-UnifiedGroupLinks',
-                   'Get-Recipient', 'New-ServicePrincipal', 'New-ManagementRoleAssignment', 'Get-DistributionGroupMember') {
+                   'Get-Recipient', 'New-ServicePrincipal', 'Get-ServicePrincipal', 'New-ManagementRoleAssignment', 'Get-ManagementRoleAssignment', 'Get-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -81,8 +83,10 @@ Describe 'Invoke-RBAC4AppConfig' {
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
         Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { [pscustomobject]@{ DisplayName = 'Contoso_SP' } }
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { [pscustomobject]@{ Name = 'AppMailSend-Contoso' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
     }
 
     It 'provisions scope group, registers SP, and creates role assignment from YAML' {
@@ -114,6 +118,18 @@ Describe 'Invoke-RBAC4AppConfig' {
 
         $res.MembersFinal | Should -Contain 'existing@contoso.com'
         $res.MembersFinal | Should -Contain 'shared@contoso.com'
+    }
+
+    It 'skips creating a role assignment that already exists and is scoped to the target group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
+        }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+        $res.RoleAssignments | Should -HaveCount 1
+        ($res.Warnings -join ';') | Should -Match 'already exists and is scoped'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
     It 'does not call mutating commands under -WhatIf' {

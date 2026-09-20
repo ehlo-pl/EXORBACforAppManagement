@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format is based on
   the scope group's complete membership (pre-existing members plus any added this run), alongside
   the existing `MembersAdded`/`MembersRequested`. Populated for all `-AccessGroupType` values,
   including `MailEnabledSecurityGroup` (read-only, informational).
+- `Get-RegisteredAppWithPermission` now returns `ScopeGroupNames` (the recipient scope group each
+  app's assignments are bound to) and `ScopeGroupMembers` (that group's resolved membership).
+  Resolution tries `Get-UnifiedGroup`/`Get-UnifiedGroupLinks` first (M365Group), then
+  `Get-DistributionGroup`/`Get-DistributionGroupMember` (DistributionList or
+  MailEnabledSecurityGroup); an unresolvable scope group is skipped with a warning. Scope groups
+  are cached per call, so one shared by multiple applications is only read once.
 
 ### Fixed
 - `Get-RegisteredAppWithPermission` no longer fails with "Authentication needed. Please call
@@ -18,6 +24,18 @@ All notable changes to this project are documented here. The format is based on
   without a connected session (or if connectivity is lost partway through), the function writes a
   warning and returns Exchange-Online-only details (`DisplayName`/`AppId`/`ServicePrincipalId`
   unresolved) for the affected applications instead of throwing.
+- `Register-EXOServicePrincipal` now checks whether a matching EXO service principal already
+  exists (by AppId, then DisplayName) before calling `New-ServicePrincipal`, skipping creation and
+  returning the existing object with a warning when one is found. It is now safe to call
+  unconditionally, matching how `New-RBAC4AppUnifiedGroup`/`New-RBAC4AppDistributionGroup` already
+  check before creating; previously it always attempted creation and relied on its callers to check
+  first.
+- `New-RBAC4AppEntry` and `Invoke-RBAC4AppConfig` now check whether a role assignment with the
+  deterministic name already exists (via `Get-ManagementRoleAssignment`) before calling
+  `New-ManagementRoleAssignment`, so re-running against an already-provisioned application no
+  longer throws. An assignment already scoped to the target group is left alone (a warning notes
+  it was skipped); one scoped to a different group is also left alone, with a warning pointing at
+  `Set-RBAC4AppEntry` to re-scope it. Requested members are still added to the group either way.
 
 ## [0.6.4] - 2026-09-20
 

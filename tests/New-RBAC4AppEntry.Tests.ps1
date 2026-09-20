@@ -14,8 +14,10 @@ BeforeAll {
     function global:Set-UnifiedGroup { }
     function global:Add-UnifiedGroupLinks { }
     function global:New-ServicePrincipal { }
+    function global:Get-ServicePrincipal { }
     function global:Get-Recipient { }
     function global:New-ManagementRoleAssignment { }
+    function global:Get-ManagementRoleAssignment { }
     function global:Get-DistributionGroupMember { }
     function global:Add-DistributionGroupMember { }
 
@@ -28,7 +30,7 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-UnifiedGroup','Get-UnifiedGroupLinks','New-UnifiedGroup','Set-UnifiedGroup','Add-UnifiedGroupLinks','New-ServicePrincipal','Get-Recipient','New-ManagementRoleAssignment','Get-DistributionGroupMember','Add-DistributionGroupMember') {
+    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-UnifiedGroup','Get-UnifiedGroupLinks','New-UnifiedGroup','Set-UnifiedGroup','Add-UnifiedGroupLinks','New-ServicePrincipal','Get-ServicePrincipal','Get-Recipient','New-ManagementRoleAssignment','Get-ManagementRoleAssignment','Get-DistributionGroupMember','Add-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -66,7 +68,9 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
         Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
         Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
     }
 
@@ -114,6 +118,30 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         $r.MembersFinal | Should -Contain 'existing@contoso.com'
         $r.MembersFinal | Should -Contain 'shared@contoso.com'
     }
+
+    It 'skips creating a role assignment that already exists and is scoped to the target group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
+        }
+
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        $r.RoleAssignments | Should -HaveCount 1
+        ($r.Warnings -join ';') | Should -Match 'already exists and is scoped'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'warns instead of erroring when a same-named assignment exists but is scoped elsewhere' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'SomeOtherGroup' }
+        }
+
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        $r.Errors | Should -BeNullOrEmpty
+        ($r.Warnings -join ';') | Should -Match "scoped to 'SomeOtherGroup', not 'Um365RAo1-Contoso'"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
 }
 
 Describe 'New-RBAC4AppEntry -AccessGroupType' {
@@ -129,6 +157,7 @@ Describe 'New-RBAC4AppEntry -AccessGroupType' {
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
         Mock -ModuleName EXORBACforAppManagement Add-DistributionGroupMember { }
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
         Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
     }
 
