@@ -216,10 +216,12 @@ New-RegisteredApp -DisplayName 'Contoso Mail App' -WhatIf -Verbose
 
 ### New-RBAC4AppEntry
 
-Resolves the service principal (by name, AppId, or SP object id), creates a scoped Unified Group
-named `"{GroupPrefix}-{DisplayName}"`, adds members, ensures the EXO service principal, and creates
-one role assignment per role — each scoped to the group via `-RecipientGroupScope`. Short role
-names such as `Mail.Send` are normalized to `Application Mail.Send`.
+Resolves the application against the Exchange Online service principal pointer already registered
+for it (by `-RegisteredAppName`, `-AppId`, or `-SpObjectId` — no Microsoft Graph session needed),
+creates a scoped Unified Group named `"{GroupPrefix}-{DisplayName}"`, adds members, ensures the EXO
+service principal, and creates one role assignment per role — each scoped to the group via
+`-RecipientGroupScope`. Short role names such as `Mail.Send` are normalized to
+`Application Mail.Send`.
 
 ```powershell
 # By AppId, assigning a single role to a shared mailbox:
@@ -230,6 +232,24 @@ New-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' `
 New-RBAC4AppEntry -SpObjectId '11111111-2222-3333-4444-555555555555' `
     -Role 'Application Calendars.Read','Application Contacts.Read' -GroupPrefix 'Um365Prod'
 ```
+
+For an application that has **never been registered in Exchange Online** (no service principal
+pointer exists yet), none of `-RegisteredAppName`, `-AppId`, or `-SpObjectId` alone is enough to
+create that pointer — AppId and the SP object id can't be derived from each other without Graph.
+Supply all three together to bootstrap it in one call, entirely from an Exchange-Online-only
+session:
+
+```powershell
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' `
+    -AppId '11111111-2222-3333-4444-555555555555' `
+    -SpObjectId '66666666-7777-8888-9999-000000000000' `
+    -Role 'Mail.Send'
+```
+
+This works transparently when piped straight from `New-RegisteredApp` — its output's `DisplayName`
+/ `AppId` / `ServicePrincipalId` properties bind to all three by name. Otherwise, use
+`New-RBAC4AppConfig` + `Invoke-RBAC4AppConfig` (see [Two-session workflow](#two-session-workflow)).
+`Set-RBAC4AppEntry` accepts the same three-identifier bootstrap.
 
 #### Choosing the scope group type (`-AccessGroupType`)
 
