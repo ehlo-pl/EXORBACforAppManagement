@@ -151,7 +151,13 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
 
     It 'skips creating a role assignment that already exists and is scoped to the target group' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
+            [pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Mail.Send'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+            }
         }
 
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
@@ -163,7 +169,13 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
 
     It 'warns instead of erroring when a same-named assignment exists but is scoped elsewhere' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'SomeOtherGroup' }
+            [pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Mail.Send'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'SomeOtherGroup_20d5848c-4d61-4b82-a44f-205adc37321f'
+            }
         }
 
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false

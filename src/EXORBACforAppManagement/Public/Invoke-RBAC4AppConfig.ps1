@@ -201,13 +201,14 @@ function Invoke-RBAC4AppConfig {
                 # were already added above regardless of this check.
                 $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
                 if ($existingAssignment) {
-                    $scopedToTarget = ([string]$existingAssignment.RecipientWriteScope -in @('Group', 'CustomRecipientScope')) -and
-                        ([string]$existingAssignment.CustomRecipientWriteScope -eq $umGroupName)
+                    $existingScopeGroup = Resolve-RBAC4AppScopeGroupName -Assignment $existingAssignment
+                    $scopedToTarget = [string]$existingScopeGroup -eq $umGroupName
                     if ($scopedToTarget) {
                         $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to '$umGroupName'; skipping creation."
                     }
                     else {
-                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$([string]$existingAssignment.CustomRecipientWriteScope)', not '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                        $resolvedScope = if ($existingScopeGroup) { [string]$existingScopeGroup } else { '<unknown>' }
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$resolvedScope', not '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
                     }
                     $result.Warnings += $existsMsg
                     Write-Warning -Message $existsMsg
