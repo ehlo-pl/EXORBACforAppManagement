@@ -14,7 +14,9 @@ function ConvertFrom-RBAC4AppYaml {
             DisplayName = ''
         }
         Rbac          = [pscustomobject]@{
-            Roles           = [System.Collections.Generic.List[string]]::new()
+            Roles = [System.Collections.Generic.List[string]]::new()
+        }
+        RbacScope     = [pscustomobject]@{
             AccessGroupType = 'M365Group'
             GroupPrefix     = 'Um365RAo1'
             AccessGroupName = ''
@@ -30,7 +32,7 @@ function ConvertFrom-RBAC4AppYaml {
     foreach ($line in ($Content -split '\r?\n')) {
         if ($line -match '^\s*#' -or $line -match '^\s*$') { continue }
 
-        if ($line -match '^(Application|Rbac)\s*:') {
+        if ($line -match '^(Application|Rbac|RbacScope)\s*:') {
             $section = $Matches[1]
             $listKey = $null
             continue
@@ -40,8 +42,8 @@ function ConvertFrom-RBAC4AppYaml {
             $value = $Matches[1].Trim().Trim('"').Trim("'")
             if ($section -eq 'Rbac' -and $listKey -eq 'Roles') {
                 $config.Rbac.Roles.Add($value)
-            } elseif ($section -eq 'Rbac' -and $listKey -eq 'Members') {
-                $config.Rbac.Members.Add($value)
+            } elseif ($section -eq 'RbacScope' -and $listKey -eq 'Members') {
+                $config.RbacScope.Members.Add($value)
             }
             continue
         }
@@ -67,13 +69,17 @@ function ConvertFrom-RBAC4AppYaml {
             }
             elseif ($section -eq 'Rbac') {
                 switch ($key) {
-                    'Roles'           { $listKey = 'Roles' }
+                    'Roles' { $listKey = 'Roles' }
+                }
+            }
+            elseif ($section -eq 'RbacScope') {
+                switch ($key) {
                     'Members'         { $listKey = 'Members' }
-                    'AccessGroupType' { $config.Rbac.AccessGroupType = $value; $listKey = $null }
-                    'GroupPrefix'     { $config.Rbac.GroupPrefix     = $value; $listKey = $null }
-                    'AccessGroupName' { $config.Rbac.AccessGroupName = $value; $listKey = $null }
-                    'ManagedBy'       { $config.Rbac.ManagedBy       = $value; $listKey = $null }
-                    'BootstrapMember' { $config.Rbac.BootstrapMember = $value; $listKey = $null }
+                    'AccessGroupType' { $config.RbacScope.AccessGroupType = $value; $listKey = $null }
+                    'GroupPrefix'     { $config.RbacScope.GroupPrefix     = $value; $listKey = $null }
+                    'AccessGroupName' { $config.RbacScope.AccessGroupName = $value; $listKey = $null }
+                    'ManagedBy'       { $config.RbacScope.ManagedBy       = $value; $listKey = $null }
+                    'BootstrapMember' { $config.RbacScope.BootstrapMember = $value; $listKey = $null }
                 }
             }
         }

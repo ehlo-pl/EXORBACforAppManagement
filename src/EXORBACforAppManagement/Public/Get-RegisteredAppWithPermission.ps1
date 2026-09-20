@@ -28,12 +28,16 @@ Processing steps:
      raw assignee and the "_SP"-stripped variant: exactly one Graph match wins; more than one
      match writes an error (re-run with a narrower role filter or resolve the Entra duplicates);
      no match falls through to the next candidate.
-  6. Resolve each distinct scope group referenced by the app's assignments (from
-     RecipientWriteScope/CustomRecipientWriteScope on the raw assignment) back to its membership:
-     Get-UnifiedGroup is tried first (M365Group), then Get-DistributionGroup (DistributionList or
-     MailEnabledSecurityGroup); a scope group resolved by neither is skipped with a warning.
-     Resolved scope groups are cached per run so a group referenced by multiple applications is
-     only read once.
+  6. Resolve each distinct scope group referenced by the app's assignments and read its
+     membership. The scope group identity is NOT read directly off CustomRecipientWriteScope: for
+     the 'Group' write-scope that every assignment made by this module actually uses,
+     CustomRecipientWriteScope is empty on a real tenant, and the group name has to be recovered
+     from CustomResourceScope (the name of an auto-created ManagementScope object, which follows
+     the pattern "<GroupName>_<GUID>") - see the private Resolve-RBAC4AppScopeGroupName helper.
+     Once the group name is resolved, Get-UnifiedGroup is tried first (M365Group), then
+     Get-DistributionGroup (DistributionList or MailEnabledSecurityGroup); a scope group resolved
+     by neither is skipped with a warning. Resolved scope groups are cached per run so a group
+     referenced by multiple applications is only read once.
   7. Emit one object per application. When Graph resolution fails the row is still returned with
      EXO-only details (DisplayName falls back to the assignee with "_SP" stripped; AppId and
      ServicePrincipalId are null) and a warning is written.
@@ -72,9 +76,11 @@ One object per distinct registered application, with the following properties:
   AppId                   - Application (client) id from Graph (null when unresolved).
   ServicePrincipalId      - Service principal object id from Graph (null when unresolved).
   ExoServicePrincipal     - The raw Exchange Online assignee name (e.g. Contoso_SP).
-  ScopeGroupNames         - Sorted, unique recipient scope group name(s) (CustomRecipientWriteScope)
-                            the app's assignments are scoped to. Empty when an assignment has no
-                            group scope (e.g. Organization-wide).
+  ScopeGroupNames         - Sorted, unique recipient scope group name(s) the app's assignments are
+                            scoped to (resolved via the private Resolve-RBAC4AppScopeGroupName
+                            helper, not read directly off CustomRecipientWriteScope). Empty when an
+                            assignment has no group scope (e.g. Organization-wide) or its scope
+                            group could not be resolved.
   ScopeGroupMembers       - Sorted, unique members (PrimarySmtpAddress, falling back to Name) across
                             every resolved scope group in ScopeGroupNames. A scope group that could
                             not be resolved via Get-UnifiedGroup or Get-DistributionGroup contributes
@@ -156,8 +162,9 @@ function Get-RegisteredAppWithPermission {
             Write-Warning -Message 'Microsoft Graph is not connected (Connect-MgGraph); returning Exchange-Online-only details (DisplayName/AppId/ServicePrincipalId unresolved) for every application.'
         }
 
-        # --- Scope groups are resolved and cached once per run: the same group can back more than
-        # one application's assignments, and re-reading it per application would be wasteful.
+        # --- Scope group membership is cached once per run: the same group can back more than one
+        # application's assignments, and re-reading it per application would be wasteful. Scope
+        # group *names* aren't cached - resolving one is a pure string parse, no EXO round trip.
         $scopeGroupMemberCache = @{}
 
         foreach ($assignmentGroup in ($assignments | Group-Object RoleAssigneeName | Sort-Object Name)) {
@@ -197,11 +204,13 @@ function Get-RegisteredAppWithPermission {
             $rolesForApp = @($assignmentGroup.Group.Role | Sort-Object -Unique)
             $assignmentNames = @($assignmentGroup.Group.Name | Sort-Object -Unique)
 
-            # --- Scope group name(s): the recipient scope each assignment is bound to.
+            # --- Scope group name(s): the recipient scope each assignment is bound to. Resolved
+            # per-assignment via the shared helper (not read directly off CustomRecipientWriteScope,
+            # which is empty for the 'Group' write-scope every assignment here actually uses).
             $scopeNames = @(
                 $assignmentGroup.Group |
-                    Where-Object { [string]$_.RecipientWriteScope -in @('Group', 'CustomRecipientScope') -and $_.CustomRecipientWriteScope } |
-                    ForEach-Object { [string]$_.CustomRecipientWriteScope } |
+                    ForEach-Object { Resolve-RBAC4AppScopeGroupName -Assignment $_ } |
+                    Where-Object { $_ } |
                     Sort-Object -Unique
             )
 

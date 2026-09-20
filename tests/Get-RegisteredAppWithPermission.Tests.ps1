@@ -11,9 +11,15 @@ BeforeAll {
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
 
+    # Contoso's assignments use the real shape confirmed against a live tenant for the 'Group'
+    # write-scope (what -RecipientGroupScope actually produces): CustomRecipientWriteScope is
+    # EMPTY, and the scope group name has to be recovered from CustomResourceScope (the name of an
+    # auto-created ManagementScope object, format "<GroupName>_<GUID>"). Fabrikam uses the
+    # (unaffected, still-correct) CustomRecipientScope write-scope, where CustomRecipientWriteScope
+    # holds the group identity directly.
     $script:Assignments = @(
-        [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
-        [pscustomobject]@{ Name = 'AppCldR-Contoso'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
+        [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
+        [pscustomobject]@{ Name = 'AppCldR-Contoso'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
         [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam' }
         [pscustomobject]@{ Name = 'AppMailSend-Helpdesk'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; Enabled = $true }
     )
@@ -98,22 +104,36 @@ Describe 'Get-RegisteredAppWithPermission' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-DistributionGroupMember -Times 1
     }
 
+    It 'strips the GUID suffix from CustomResourceScope to recover the real group name' {
+        $r = Get-RegisteredAppWithPermission
+
+        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
+        $contoso.ScopeGroupNames | Should -Be @('Um365RAo1-Contoso')
+    }
+
     It 'caches scope group membership so a group shared by two applications is only read once' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Shared' }
-                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Shared' }
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_20d5848c-4d61-4b82-a44f-205adc37321f' }
+                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }
             ) | Where-Object { -not $Role -or $_.Role -eq $Role }
         }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Shared'; Identity = $Identity } }
 
         $null = Get-RegisteredAppWithPermission
 
+        # Two different assignments (different apps, different CustomResourceScope GUIDs) resolve
+        # to the SAME group name "Um365RAo1-Shared" - its membership is still only read once.
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroup -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroupLinks -Times 1
     }
 
-    It 'warns and leaves ScopeGroupMembers empty when the scope group cannot be resolved by any type' {
+    It 'falls back to the raw CustomResourceScope value when it does not match the GroupName-underscore-GUID pattern, and warns when that cannot be resolved either' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @(
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'SomeCustomScopeNoGuidSuffix' }
+            ) | Where-Object { -not $Role -or $_.Role -eq $Role }
+        }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
 
@@ -121,9 +141,9 @@ Describe 'Get-RegisteredAppWithPermission' {
         $r = Get-RegisteredAppWithPermission -WarningVariable warnings -WarningAction SilentlyContinue
 
         $contoso = $r | Where-Object DisplayName -eq 'Contoso'
-        $contoso.ScopeGroupNames | Should -Be @('Um365RAo1-Contoso')
+        $contoso.ScopeGroupNames | Should -Be @('SomeCustomScopeNoGuidSuffix')
         $contoso.ScopeGroupMembers | Should -BeNullOrEmpty
-        ($warnings -join ';') | Should -Match "Could not resolve scope group 'Um365RAo1-Contoso'"
+        ($warnings -join ';') | Should -Match "Could not resolve scope group 'SomeCustomScopeNoGuidSuffix'"
     }
 
     It 'normalizes a short role filter before querying EXO' {

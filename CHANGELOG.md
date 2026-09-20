@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **RBAC4App YAML config schema bumped to `SchemaVersion: "2.0"`.** Scope-group settings
+  (`AccessGroupType`, `GroupPrefix`, `AccessGroupName`, `Members`, `ManagedBy`, `BootstrapMember`)
+  moved out of `Rbac:` into their own `RbacScope:` section; `Rbac:` now holds only `Roles`. `New-`/
+  `Invoke-RBAC4AppConfig` and the private `ConvertTo-`/`ConvertFrom-RBAC4AppYaml` helpers were
+  updated accordingly. **Breaking change:** `Invoke-RBAC4AppConfig` now refuses a config whose
+  `SchemaVersion` isn't `"2.0"` (including old `"1.0"` files) with an error pointing back at
+  `New-RBAC4AppConfig` to regenerate it, rather than silently reading stale/misplaced values.
+
 ### Added
 - `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig` now return `MembersFinal`:
   the scope group's complete membership (pre-existing members plus any added this run), alongside
@@ -19,6 +28,17 @@ All notable changes to this project are documented here. The format is based on
   are cached per call, so one shared by multiple applications is only read once.
 
 ### Fixed
+- `Get-RegisteredAppWithPermission`'s `ScopeGroupNames`/`ScopeGroupMembers` (added above) were
+  coming back empty on a real tenant: for the `Group` recipient write-scope (what
+  `-RecipientGroupScope` actually produces, i.e. every assignment this module creates),
+  `CustomRecipientWriteScope` is empty - the scope group name has to be recovered from
+  `CustomResourceScope` instead, the name of an auto-created `ManagementScope` object that follows
+  the pattern `"<GroupName>_<GUID>"` (confirmed against a real tenant). Added the shared private
+  helper `Resolve-RBAC4AppScopeGroupName`, which strips the GUID suffix to recover the group name
+  directly (no extra EXO call needed), and wired it into `Get-RegisteredAppWithPermission`.
+  **Note:** the same wrong-field read (`CustomRecipientWriteScope` for a `Group`-scoped assignment)
+  is still present in `Get-RBAC4AppEntry`'s `Scope` column and in the scope-matching logic of
+  `Set-`/`Remove-RBAC4AppEntry`; see `TODO.md`.
 - `Get-RegisteredAppWithPermission` no longer fails with "Authentication needed. Please call
   Connect-MgGraph." when run in an Exchange-Online-only session. Microsoft Graph is now optional:
   without a connected session (or if connectivity is lost partway through), the function writes a

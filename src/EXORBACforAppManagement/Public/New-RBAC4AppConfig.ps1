@@ -161,7 +161,7 @@ function New-RBAC4AppConfig {
         $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) { $AccessGroupName } else { '' }
 
         $config = [pscustomobject]@{
-            SchemaVersion = '1.0'
+            SchemaVersion = '2.0'
             GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
             TenantId      = $tenantId
             Application   = [pscustomobject]@{
@@ -170,7 +170,9 @@ function New-RBAC4AppConfig {
                 DisplayName = [string]$sp.DisplayName
             }
             Rbac          = [pscustomobject]@{
-                Roles           = $normalizedRoles
+                Roles = $normalizedRoles
+            }
+            RbacScope     = [pscustomobject]@{
                 AccessGroupType = $AccessGroupType
                 GroupPrefix     = $GroupPrefix
                 AccessGroupName = $accessGroupNameValue

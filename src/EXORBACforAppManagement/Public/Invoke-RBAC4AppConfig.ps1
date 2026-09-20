@@ -53,6 +53,10 @@ function Invoke-RBAC4AppConfig {
         $content = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
         $config  = ConvertFrom-RBAC4AppYaml -Content $content
 
+        if ($config.SchemaVersion -ne '2.0') {
+            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '2.0' (scope-group settings moved from Rbac: to their own RbacScope: section). Re-generate the config with New-RBAC4AppConfig."
+            return
+        }
         if (-not $config.Application.SpObjectId) {
             Write-Error "Config '$Path' is missing Application.SpObjectId. Re-generate with New-RBAC4AppConfig."
             return
@@ -70,12 +74,12 @@ function Invoke-RBAC4AppConfig {
         $spAppId       = $config.Application.AppId
         $spDisplayName = $config.Application.DisplayName
 
-        $AccessGroupType = $config.Rbac.AccessGroupType
-        $GroupPrefix     = $config.Rbac.GroupPrefix
-        $AccessGroupName = $config.Rbac.AccessGroupName
-        $Members         = @($config.Rbac.Members)
-        $ManagedBy       = $config.Rbac.ManagedBy
-        $BootstrapMember = $config.Rbac.BootstrapMember
+        $AccessGroupType = $config.RbacScope.AccessGroupType
+        $GroupPrefix     = $config.RbacScope.GroupPrefix
+        $AccessGroupName = $config.RbacScope.AccessGroupName
+        $Members         = @($config.RbacScope.Members)
+        $ManagedBy       = $config.RbacScope.ManagedBy
+        $BootstrapMember = $config.RbacScope.BootstrapMember
         $roles           = @($config.Rbac.Roles)
 
         $result = [ordered]@{
