@@ -1,7 +1,5 @@
 # EXORBACforAppManagement
 
-[![CI](https://github.com/ziembor/new-RBACforAppEntry/actions/workflows/ci.yml/badge.svg)](https://github.com/ziembor/new-RBACforAppEntry/actions/workflows/ci.yml)
-
 A PowerShell module for governing **Exchange Online (EXO) Role-Based Access Control for Entra
 (Azure AD) applications**. It registers applications, assigns resource-scoped EXO *Application*
 role permissions (e.g. `Application Mail.Send`) scoped to a Microsoft 365 group, and reads those

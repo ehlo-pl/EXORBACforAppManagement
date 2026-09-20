@@ -37,6 +37,18 @@ Describe 'New-RBAC4AppUnifiedGroup' {
         $res.OwnerAdded     | Should -Be @('owner@contoso.com')
     }
 
+    It 'strips spaces and other Alias-unsafe characters from -Name' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso Mail App 1642232032' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.Name | Should -Be 'Um365RAo1-ContosoMailApp1642232032'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
+            $Name -eq 'Um365RAo1-ContosoMailApp1642232032' -and $Alias -eq 'Um365RAo1-ContosoMailApp1642232032'
+        }
+    }
+
     It 'creates the group with multiple owners, each resolved independently' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }

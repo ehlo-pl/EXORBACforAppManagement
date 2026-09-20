@@ -92,4 +92,25 @@ Describe 'New-RBAC4AppDistributionGroup' {
         $res.AlreadyExisted | Should -BeFalse
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1
     }
+
+    It 'strips spaces and other Alias-unsafe characters from a name derived via -AppName' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+
+        $res = New-RBAC4AppDistributionGroup -AppName 'Contoso Mail App 1642232032' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.Name | Should -Be 'UDLRAo1-ContosoMailApp1642232032'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1 -ParameterFilter {
+            $Name -eq 'UDLRAo1-ContosoMailApp1642232032' -and $Alias -eq 'UDLRAo1-ContosoMailApp1642232032'
+        }
+    }
+
+    It 'strips spaces and other Alias-unsafe characters from an explicit -Name too' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+
+        $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso, Mail; App' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.Name | Should -Be 'UDLRAo1-ContosoMailApp'
+    }
 }
