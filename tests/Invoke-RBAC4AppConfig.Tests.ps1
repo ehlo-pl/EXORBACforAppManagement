@@ -3,6 +3,7 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
+    function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
     function global:Get-UnifiedGroupLinks { }
     function global:New-UnifiedGroup { }
@@ -97,7 +98,7 @@ Rbac:
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-UnifiedGroup', 'Get-UnifiedGroupLinks', 'New-UnifiedGroup', 'Set-UnifiedGroup', 'Add-UnifiedGroupLinks',
+    foreach ($n in 'Get-ConnectionInformation', 'Get-UnifiedGroup', 'Get-UnifiedGroupLinks', 'New-UnifiedGroup', 'Set-UnifiedGroup', 'Add-UnifiedGroupLinks',
                    'Get-Recipient', 'New-ServicePrincipal', 'Get-ServicePrincipal', 'New-ManagementRoleAssignment', 'Get-ManagementRoleAssignment', 'Get-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
@@ -105,6 +106,7 @@ AfterAll {
 
 Describe 'Invoke-RBAC4AppConfig' {
     BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
