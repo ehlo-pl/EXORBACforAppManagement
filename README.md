@@ -31,35 +31,53 @@ The three functions form a **create → assign → read** flow and share the sam
 - **PowerShell 5.1+** (developed/tested on PowerShell 7).
 - The following modules installed and **connected** at runtime (they are intentionally *not*
   declared as `RequiredModules`, so the module imports without them for unit testing):
-  - **Microsoft Graph** — `Connect-MgGraph`
-    (used by `Get-MgServicePrincipal`, `Get-MgContext`, `New-MgApplication`, `New-MgServicePrincipal`).
-    `New-RegisteredApp` needs the `Application.ReadWrite.All` scope.
-  - **Exchange Online** — `Connect-ExchangeOnline`
-    (used by `Get-UnifiedGroup`, `New-UnifiedGroup`, `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`,
-    `New-ServicePrincipal`, `Get-Recipient`, `New-ManagementRoleAssignment`, `Get-ManagementRoleAssignment`).
+  - **Microsoft Graph** — `Connect-MgGraph`. Needed by only three functions: `New-RegisteredApp`
+    (`New-MgApplication`, `New-MgServicePrincipal`, `Get-MgContext`; needs the
+    `Application.ReadWrite.All` scope), `New-RBAC4AppConfig` (`Get-MgServicePrincipal`,
+    `Get-MgContext`), and `Convert-ApplicationAccessPolicyToRBAC` (`Get-MgServicePrincipal`,
+    `Get-MgServicePrincipalAppRoleAssignment`).
+  - **Exchange Online** — `Connect-ExchangeOnline`. Needed by every other function, including
+    `New-RBAC4AppEntry` itself: `Get-ServicePrincipal` resolves the application (matching the
+    pointer `Register-EXOServicePrincipal` creates — no Graph lookup), `Get-ConnectionInformation`
+    reads the tenant id / current user, plus the usual `Get-UnifiedGroup`, `New-UnifiedGroup`,
+    `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`, `New-ServicePrincipal`, `Get-Recipient`,
+    `New-ManagementRoleAssignment`, `Get-ManagementRoleAssignment`.
 
 ### Per-function module requirements
+
+Only three functions touch Microsoft Graph at all. Every other function — including
+`New-RBAC4AppEntry` itself — resolves the application purely through Exchange Online's own service
+principal pointer (`Get-ServicePrincipal`, matching what `Register-EXOServicePrincipal` creates) and
+needs no Graph session, working around the MSAL/WAM assembly conflict between `Microsoft.Graph` and
+`ExchangeOnlineManagement` in one process.
 
 | Function | Microsoft.Graph | ExchangeOnlineManagement |
 | --- | --- | --- |
 | `New-RegisteredApp` | `New-MgApplication` `New-MgServicePrincipal` `Get-MgContext` | — |
-| `New-RBAC4AppUnifiedGroup` | `Get-MgContext` *(debug trace only)* | `Get-UnifiedGroup` `New-UnifiedGroup` `Set-UnifiedGroup` `Get-Recipient` |
+| `New-RBAC4AppConfig` | `Get-MgServicePrincipal` `Get-MgContext` | — |
+| `New-RBAC4AppUnifiedGroup` | — | `Get-UnifiedGroup` `New-UnifiedGroup` `Set-UnifiedGroup` `Get-Recipient` `Get-ConnectionInformation` *(debug trace only)* |
 | `New-RBAC4AppDistributionGroup` | — | `Get-DistributionGroup` `New-DistributionGroup` `Set-DistributionGroup` `Get-Recipient` |
 | `Register-EXOServicePrincipal` | — | `Get-ServicePrincipal` `New-ServicePrincipal` *(skips creation if one already matches by AppId/DisplayName)* |
-| `New-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(skips a role assignment already scoped to the target group; + delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
-| `Set-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ServicePrincipal` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` |
-| `Test-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-Recipient` |
-| `Remove-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
-| `Get-RBAC4AppEntry` | `Get-MgServicePrincipal` *(only when an app filter is supplied)* | `Get-ManagementRoleAssignment` |
-| `Get-RegisteredAppWithPermission` | `Get-MgContext` `Get-MgServicePrincipal` *(optional - degrades to EXO-only details if not connected)* | `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` *(resolves each scope group's name from CustomResourceScope, then its membership, cached per run)* |
-| `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(+ all EXO cmdlets used by `New-RBAC4AppEntry`)* |
+| `New-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(resolves the app via `Get-ServicePrincipal`, or bootstraps a never-before-registered pointer when `-AppId`, `-SpObjectId`, and `-RegisteredAppName` are all supplied; skips a role assignment already scoped to the target group; + delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
+| `Set-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` *(same bootstrap fallback as `New-RBAC4AppEntry` when the pointer doesn't exist yet)* |
+| `Test-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` |
+| `Remove-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
+| `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` *(only when an app filter is supplied)* `Get-ManagementRoleAssignment` |
+| `Get-RegisteredAppWithPermission` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` *(resolves each scope group's name from CustomResourceScope, then its membership, cached per run)* |
+| `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(+ all EXO cmdlets used by `New-RBAC4AppEntry`, which it calls with the SP identity it already resolved via Graph)* |
+| `Invoke-RBAC4AppConfig` | — | `Get-ServicePrincipal` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`, same as `New-RBAC4AppEntry`)* |
 
 ## Two-session workflow
 
 Microsoft.Graph and ExchangeOnlineManagement share MSAL/WAM identity assemblies that can
 conflict when both are loaded in the same PowerShell process — symptoms range from
 `RuntimeBroker` / WAM `NullReferenceException` on `Connect-ExchangeOnline` to
-`Method not found` on `Connect-MgGraph`. The two-session split works around this entirely.
+`Method not found` on `Connect-MgGraph`. As of the per-function table above, only
+`New-RegisteredApp`, `New-RBAC4AppConfig`, and `Convert-ApplicationAccessPolicyToRBAC` ever touch
+Graph — every other function, including `New-RBAC4AppEntry` itself, is Exchange-Online-only and
+never hits the conflict in the first place. `New-RBAC4AppConfig` / `Invoke-RBAC4AppConfig` remain
+useful specifically for provisioning a **brand-new** application (one with no Exchange Online
+service principal pointer yet) split cleanly across two sessions.
 
 ### What to do in each session
 
@@ -69,13 +87,15 @@ conflict when both are loaded in the same PowerShell process — symptoms range 
 | **App registration** | `New-RegisteredApp` | — |
 | **Plan RBAC config** | `New-RBAC4AppConfig` → writes `.yml` | — |
 | **Provision from config** | — | `Invoke-RBAC4AppConfig -Path .\config.yml` |
-| **EXO-only helpers** | — | `New-RBAC4AppUnifiedGroup` `New-RBAC4AppDistributionGroup` `Register-EXOServicePrincipal` |
+| **Everything else** | — | `New-RBAC4AppEntry` `Set-RBAC4AppEntry` `Test-RBAC4AppEntry` `Remove-RBAC4AppEntry` `Get-RBAC4AppEntry` `Get-RegisteredAppWithPermission` `New-RBAC4AppUnifiedGroup` `New-RBAC4AppDistributionGroup` `Register-EXOServicePrincipal` |
 
-Functions that **need both modules** (`New-RBAC4AppEntry`, `Set-RBAC4AppEntry`,
-`Test-RBAC4AppEntry`, `Remove-RBAC4AppEntry`, `Get-RBAC4AppEntry`,
-`Get-RegisteredAppWithPermission`, `Convert-ApplicationAccessPolicyToRBAC`) remain available
-for environments where the conflict does not occur or where separate processes are not
-practical — they are **not deprecated**.
+For a never-before-registered application, `New-RBAC4AppEntry` and `Set-RBAC4AppEntry` can also
+bootstrap the Exchange Online service principal pointer directly in one Exchange-Online-only
+session — supply `-AppId`, `-SpObjectId`, and `-RegisteredAppName` together (see
+[`New-RBAC4AppEntry`](#new-rbac4appentry)) — as an alternative to the two-session config workflow.
+`Convert-ApplicationAccessPolicyToRBAC` is the one remaining function that genuinely needs both
+modules together in the same session, since it reads the app's Graph permission grants and then
+provisions RBAC in the same call.
 
 ### Typical two-session flow
 

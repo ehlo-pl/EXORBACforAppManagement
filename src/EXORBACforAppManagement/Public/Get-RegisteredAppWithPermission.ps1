@@ -22,12 +22,11 @@ Processing steps:
      RoleAssigneeType -eq 'ServicePrincipal').
   4. Apply the optional -Enabled filter.
   5. Group the surviving assignments by RoleAssigneeName (this collapses many assignments into
-     one row per application) and resolve each distinct assignee back to its Entra service
-     principal through Microsoft Graph. Because the EXO assignee is usually the service principal
-     pointer named "<DisplayName>_SP", resolution is attempted by display name against both the
-     raw assignee and the "_SP"-stripped variant: exactly one Graph match wins; more than one
-     match writes an error (re-run with a narrower role filter or resolve the Entra duplicates);
-     no match falls through to the next candidate.
+     one row per application) and resolve each distinct assignee back to its Exchange Online
+     service principal pointer (Get-ServicePrincipal), matched by exact DisplayName - the EXO
+     assignee IS that pointer's own DisplayName (e.g. "Contoso_SP"), so no Microsoft Graph lookup
+     is needed. The exposed DisplayName is normalized back to the application name (the "_SP"
+     suffix stripped). No match falls back to EXO-only details for that application.
   6. Resolve each distinct scope group referenced by the app's assignments and read its
      membership. The scope group identity is NOT read directly off CustomRecipientWriteScope: for
      the 'Group' write-scope that every assignment made by this module actually uses,
@@ -38,15 +37,13 @@ Processing steps:
      Get-DistributionGroup (DistributionList or MailEnabledSecurityGroup); a scope group resolved
      by neither is skipped with a warning. Resolved scope groups are cached per run so a group
      referenced by multiple applications is only read once.
-  7. Emit one object per application. When Graph resolution fails the row is still returned with
+  7. Emit one object per application. When the EXO service principal pointer cannot be resolved
+     (e.g. it was removed after the role assignment was made) the row is still returned with
      EXO-only details (DisplayName falls back to the assignee with "_SP" stripped; AppId and
      ServicePrincipalId are null) and a warning is written.
 
-Microsoft Graph is optional: if no Graph session is connected (Get-MgContext returns nothing, or
-throws because the Microsoft.Graph module isn't even imported), Graph resolution is skipped
-entirely for every application - a single warning is written up front and every row falls back to
-EXO-only details, instead of the whole call failing with "Authentication needed. Please call
-Connect-MgGraph." This lets the function run standalone in an Exchange-Online-only session.
+No Microsoft Graph session is required or used; every application is resolved through Exchange
+Online's own service principal pointers (Get-ServicePrincipal).
 
 .PARAMETER Role
 One or more application roles to query. Short names such as Mail.Send are accepted and
@@ -72,9 +69,10 @@ PSCustomObject
 
 One object per distinct registered application, with the following properties:
 
-  DisplayName             - Graph display name (or the "_SP"-stripped assignee when unresolved).
-  AppId                   - Application (client) id from Graph (null when unresolved).
-  ServicePrincipalId      - Service principal object id from Graph (null when unresolved).
+  DisplayName             - Application display name (or the "_SP"-stripped assignee when
+                            unresolved).
+  AppId                   - Application (client) id (null when unresolved).
+  ServicePrincipalId      - Service principal object id (null when unresolved).
   ExoServicePrincipal     - The raw Exchange Online assignee name (e.g. Contoso_SP).
   ScopeGroupNames         - Sorted, unique recipient scope group name(s) the app's assignments are
                             scoped to (resolved via the private Resolve-RBAC4AppScopeGroupName
@@ -92,17 +90,16 @@ One object per distinct registered application, with the following properties:
   DisabledAssignmentCount - Count of those that are disabled.
 
 .NOTES
-Requires a connected Exchange Online session (Get-ManagementRoleAssignment, Get-UnifiedGroup,
-Get-UnifiedGroupLinks, Get-DistributionGroup, Get-DistributionGroupMember). A connected Microsoft
-Graph session (Get-MgContext, Get-MgServicePrincipal) is optional - without one, every row is
-returned with EXO-only details and a single warning is written instead of the call failing.
+Requires a connected Exchange Online session only (Get-ManagementRoleAssignment,
+Get-ServicePrincipal, Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-DistributionGroup,
+Get-DistributionGroupMember). No Microsoft Graph session is needed.
 
 Performance / behavior notes:
 - The function issues one Get-ManagementRoleAssignment query per role, so cost scales with the
   number of roles requested (all supported roles by default); EXO does the filtering and results
   are grouped client-side.
-- Graph reverse-resolution is by display name (not AppId), which is why duplicate display names
-  produce the ambiguity error and why the "_SP"-stripped variant is also tried.
+- The EXO service principal list (Get-ServicePrincipal) is read once per call and matched
+  client-side by exact DisplayName against each assignee.
 - Unlike Get-RBAC4AppEntry, this function does not filter on recipient scope: any
   'Application *' assignment to a service principal is counted.
 - Scope group resolution adds up to two read calls (Get-UnifiedGroup/Get-DistributionGroup, then
@@ -148,19 +145,9 @@ function Get-RegisteredAppWithPermission {
             $assignments = @($assignments | Where-Object { $_.Enabled -eq $Enabled })
         }
 
-        # --- Microsoft Graph is optional: without a connected session, skip resolution entirely
-        # rather than letting Get-MgServicePrincipal throw "Authentication needed." and fail the
-        # whole call - this lets the function run in an Exchange-Online-only session.
-        $graphConnected = $true
-        try {
-            if (-not (Get-MgContext -ErrorAction Stop)) { $graphConnected = $false }
-        }
-        catch {
-            $graphConnected = $false
-        }
-        if (-not $graphConnected) {
-            Write-Warning -Message 'Microsoft Graph is not connected (Connect-MgGraph); returning Exchange-Online-only details (DisplayName/AppId/ServicePrincipalId unresolved) for every application.'
-        }
+        # --- Read the Exchange Online service principal directory once per call; each application
+        # is resolved against it by exact DisplayName below, no Microsoft Graph session needed.
+        $allExoServicePrincipals = @(Get-ServicePrincipal -ErrorAction SilentlyContinue)
 
         # --- Scope group membership is cached once per run: the same group can back more than one
         # application's assignments, and re-reading it per application would be wasteful. Scope
@@ -169,36 +156,12 @@ function Get-RegisteredAppWithPermission {
 
         foreach ($assignmentGroup in ($assignments | Group-Object RoleAssigneeName | Sort-Object Name)) {
             $assigneeName = [string]$assignmentGroup.Name
-            $resolvedSp = $null
+            $resolvedSp = $allExoServicePrincipals |
+                Where-Object { $_ -and ([string]$_.DisplayName -eq $assigneeName) } |
+                Select-Object -First 1
 
-            if ($graphConnected) {
-                $lookupNames = @($assigneeName)
-                if ($assigneeName -match '_SP$') {
-                    $lookupNames += ($assigneeName -replace '_SP$', '')
-                }
-
-                try {
-                    foreach ($lookupName in ($lookupNames | Select-Object -Unique)) {
-                        $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq '$lookupName'" -ErrorAction Stop)
-                        if ($matchesRes.Count -eq 1) {
-                            $resolvedSp = $matchesRes[0]
-                            break
-                        }
-
-                        if ($matchesRes.Count -gt 1) {
-                            Write-Error -Message ("Ambiguous service principal resolution for assignee '{0}' using displayName '{1}'. Re-run with a narrower role filter or resolve the duplicates in Entra." -f $assigneeName, $lookupName)
-                            break
-                        }
-                    }
-                }
-                catch {
-                    $graphConnected = $false
-                    Write-Warning -Message ("Lost Microsoft Graph connectivity while resolving '{0}': {1}. Returning Exchange-Online-only details for this and any remaining applications." -f $assigneeName, $_.Exception.Message)
-                }
-            }
-
-            if (-not $resolvedSp -and $graphConnected) {
-                Write-Warning -Message ("Could not resolve EXO assignee '{0}' to a single Graph service principal; returning EXO-only details." -f $assigneeName)
+            if (-not $resolvedSp) {
+                Write-Warning -Message ("Could not resolve EXO assignee '{0}' to an Exchange Online service principal; returning EXO-only details." -f $assigneeName)
             }
 
             $rolesForApp = @($assignmentGroup.Group.Role | Sort-Object -Unique)
@@ -238,9 +201,9 @@ function Get-RegisteredAppWithPermission {
             $scopeMembers = @($scopeMembers | Sort-Object -Unique)
 
             [pscustomobject][ordered]@{
-                DisplayName           = if ($resolvedSp) { $resolvedSp.DisplayName } else { ($assigneeName -replace '_SP$', '') }
-                AppId                 = if ($resolvedSp) { $resolvedSp.AppId } else { $null }
-                ServicePrincipalId    = if ($resolvedSp) { $resolvedSp.Id } else { $null }
+                DisplayName           = if ($resolvedSp) { [string]$resolvedSp.DisplayName -replace '_SP$', '' } else { ($assigneeName -replace '_SP$', '') }
+                AppId                 = if ($resolvedSp) { [string]$resolvedSp.AppId } else { $null }
+                ServicePrincipalId    = if ($resolvedSp) { [string]$resolvedSp.ObjectId } else { $null }
                 ExoServicePrincipal   = $assigneeName
                 ScopeGroupNames       = $scopeNames
                 ScopeGroupMembers     = $scopeMembers

@@ -4,10 +4,10 @@ BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
     # Global stubs so the module scope can resolve them and Pester can mock them on CI
-    # (where Microsoft.Graph / ExchangeOnlineManagement are not installed). Parameters the
-    # code passes must be declared so the mock can bind and filter on them.
-    function global:Get-MgContext { [CmdletBinding()] param() }
-    function global:Get-MgServicePrincipal { [CmdletBinding()] param([string]$Filter, [string]$ServicePrincipalId) }
+    # (where ExchangeOnlineManagement is not installed). Parameters the code passes must be
+    # declared so the mock can bind and filter on them. No Microsoft Graph stubs are needed: SP
+    # resolution goes through Get-ServicePrincipal (EXO) only.
+    function global:Get-ConnectionInformation { [CmdletBinding()] param() }
     function global:Get-UnifiedGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-ServicePrincipal { [CmdletBinding()] param([string]$Identity) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
@@ -16,22 +16,23 @@ BeforeAll {
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
 
-    $script:Sp = [pscustomobject]@{ DisplayName = 'Contoso'; AppId = '11111111-1111-1111-1111-111111111111'; Id = '22222222-2222-2222-2222-222222222222' }
+    # The EXO service principal pointer that both SP resolution (Resolve-RBAC4AppServicePrincipal)
+    # and Test-RBAC4AppEntry's own ExoServicePrincipalExists check read via Get-ServicePrincipal.
+    $script:ExoSp = [pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111'; ObjectId = '22222222-2222-2222-2222-222222222222' }
 }
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-UnifiedGroup','Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-Recipient','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember') {
+    foreach ($n in 'Get-ConnectionInformation','Get-UnifiedGroup','Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-Recipient','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
 
 Describe 'Test-RBAC4AppEntry' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { $script:Sp }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso' } }
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111' }) }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         # Non-parameter-filtered so individual It blocks can fully override it (a parameter-filtered
         # mock would otherwise keep matching ahead of a plain override).
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
@@ -71,9 +72,15 @@ Describe 'Test-RBAC4AppEntry' {
     }
 
     It 'flags a missing Exchange Online service principal' {
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
+        # Resolution still succeeds (matched by SpObjectId), but this record predates the "_SP"
+        # naming convention and has no AppId, so it does not satisfy the pointer-existence check
+        # inside Test-RBAC4AppEntry (which matches by AppId or by the "<Name>_SP" convention).
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            @([pscustomobject]@{ DisplayName = 'Contoso'; AppId = $null; ObjectId = '22222222-2222-2222-2222-222222222222' })
+        }
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso'
+        $r = Test-RBAC4AppEntry -SpObjectId '22222222-2222-2222-2222-222222222222'
+        $r.ServicePrincipalExists | Should -BeTrue
         $r.ExoServicePrincipalExists | Should -BeFalse
         $r.IsValid | Should -BeFalse
         $r.Missing | Should -Contain "Exchange Online service principal 'Contoso_SP'"
@@ -119,7 +126,7 @@ Describe 'Test-RBAC4AppEntry' {
     }
 
     It 'records an error and is not valid when the service principal cannot be resolved' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { @() }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
 
         $r = Test-RBAC4AppEntry -AppId '33333333-3333-3333-3333-333333333333'
         $r.ServicePrincipalExists | Should -BeFalse
@@ -130,9 +137,8 @@ Describe 'Test-RBAC4AppEntry' {
 
 Describe 'Test-RBAC4AppEntry -AccessGroupType' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { $script:Sp }
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111' }) }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             if ($Identity -eq 'AppMailSend-Contoso') { [pscustomobject]@{ Name = $Identity; Role = 'Application Mail.Send' } }
         }

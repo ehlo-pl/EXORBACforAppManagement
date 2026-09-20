@@ -6,8 +6,9 @@ different scoping group.
 
 .DESCRIPTION
 Set-RBAC4AppEntry is the "make it so" companion to Test-RBAC4AppEntry (which only reports) and
-New-RBAC4AppEntry (which creates everything from scratch). It resolves an Entra application /
-service principal (by display name, AppId, or service principal object id) and brings the components
+New-RBAC4AppEntry (which creates everything from scratch). It resolves the application against the
+Exchange Online service principal pointer already registered for it (by display name, AppId, or
+service principal object id) - no Microsoft Graph session is required - and brings the components
 New-RBAC4AppEntry provisions into the desired state, changing only what is needed:
 
   1. the scoped Unified Group ("{GroupPrefix}-{DisplayName}", sanitized via Get-SafeName) is created
@@ -26,13 +27,20 @@ Changing the scoping group: supply -NewGroupName (an explicit group name) or -Ne
 re-scoped onto it. The old group is left in place (use Remove-RBAC4AppEntry to tear it down once it
 is no longer in use); members are not migrated.
 
+For an application that has never been registered in Exchange Online (its service principal pointer
+does not exist yet), none of -RegisteredAppName, -AppId, or -SpObjectId alone is enough to resolve
+it: supply all three together (-AppId, -SpObjectId, and -RegisteredAppName as the display name) to
+bootstrap the pointer as part of reconciliation, or provision it first with New-RBAC4AppConfig +
+Invoke-RBAC4AppConfig.
+
 The function supports -WhatIf and -Confirm through SupportsShouldProcess (ConfirmImpact High), so each
 change is confirmed interactively unless -Confirm:$false / -Force-style suppression is used. Under
 -WhatIf no changes are made and IsValid reflects the actual (unchanged) state.
 
 .PARAMETER RegisteredAppName
-Display name of the registered application or service principal. Default parameter set; must resolve
-to exactly one service principal.
+Display name of the registered application. Used to resolve an already-registered Exchange Online
+service principal pointer by name, and as the display name when bootstrapping a never-before-seen
+application together with -AppId and -SpObjectId.
 
 .PARAMETER AppId
 Application (client) id of the registered application. GUID-validated.
@@ -105,27 +113,33 @@ which components were created, the requested/added members and the final group m
 IsValid flag, and any Warnings/Errors.
 
 .NOTES
-Requires a connected Microsoft Graph session (Get-MgServicePrincipal, Get-MgContext) and a connected
-Exchange Online session (Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-DistributionGroupMember,
-Get-ServicePrincipal, Get-Recipient, Get-ManagementRoleAssignment, New-ManagementRoleAssignment,
-Remove-ManagementRoleAssignment, plus the cmdlets used by the delegated New-RBAC4AppUnifiedGroup /
-Register-EXOServicePrincipal). Reconcile companion to Test-RBAC4AppEntry and New-RBAC4AppEntry.
+Requires a connected Exchange Online session only (Get-ServicePrincipal, Get-ConnectionInformation,
+Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-DistributionGroupMember, Get-Recipient,
+Get-ManagementRoleAssignment, New-ManagementRoleAssignment, Remove-ManagementRoleAssignment, plus
+the cmdlets used by the delegated New-RBAC4AppUnifiedGroup / Register-EXOServicePrincipal). No
+Microsoft Graph session is needed. Reconcile companion to Test-RBAC4AppEntry and New-RBAC4AppEntry.
 #>
 function Set-RBAC4AppEntry {
-    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByName')]
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'ByName')]
+        # Resolve by displayName of an already-registered EXO service principal pointer, or the
+        # display name to use when bootstrapping a never-before-seen one (with -AppId/-SpObjectId).
+        [Parameter(Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('DisplayName','Name')]
         [ValidateNotNullOrEmpty()]
         [string] $RegisteredAppName,
 
-        [Parameter(Mandatory, ValueFromPipelineByPropertyName, ParameterSetName = 'ByAppId')]
+        # Resolve by AppId (GUID) of an already-registered EXO service principal pointer, or part
+        # of the bootstrap triple (with -SpObjectId/-RegisteredAppName) for a never-before-seen one.
+        [Parameter(ValueFromPipelineByPropertyName)]
         [Alias('ClientId','ApplicationId')]
         [ValidatePattern('^[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$')]
         [string] $AppId,
 
-        [Parameter(Mandatory, ValueFromPipelineByPropertyName, ParameterSetName = 'BySpObjectId')]
+        # Resolve by Service Principal ObjectId (GUID) of an already-registered EXO service
+        # principal pointer, or part of the bootstrap triple (with -AppId/-RegisteredAppName).
+        [Parameter(ValueFromPipelineByPropertyName)]
         [Alias('Id','ObjectId','ServicePrincipalId')]
         [ValidatePattern('^[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$')]
         [string] $SpObjectId,
@@ -169,14 +183,20 @@ function Set-RBAC4AppEntry {
         $shortRoleMap = Get-AppRoleMap
 
         $tenantid = $null
-        try { $tenantid = Get-MgContext | Select-Object -ExpandProperty TenantId }
-        catch { Write-Verbose -Message "Could not read tenant id from Get-MgContext: $($_.Exception.Message)" }
+        try { $tenantid = Get-ConnectionInformation -ErrorAction Stop | Select-Object -First 1 -ExpandProperty TenantId }
+        catch { Write-Verbose -Message "Could not read tenant id from Get-ConnectionInformation: $($_.Exception.Message)" }
     }
 
     process {
+        if (-not $PSBoundParameters.ContainsKey('RegisteredAppName') -and
+            -not $PSBoundParameters.ContainsKey('AppId') -and
+            -not $PSBoundParameters.ContainsKey('SpObjectId')) {
+            throw "One of -RegisteredAppName, -AppId, or -SpObjectId must be supplied."
+        }
+
         $result = [ordered]@{
-            ParameterSet              = $PSCmdlet.ParameterSetName
-            IdentityInput             = $RegisteredAppName
+            ParameterSet              = $null
+            IdentityInput             = $null
             ResolvedDisplay           = $null
             AppId                     = $null
             SpObjectId                = $null
@@ -205,28 +225,37 @@ function Set-RBAC4AppEntry {
         }
 
         try {
-            # --- Resolve the service principal depending on parameter set.
+            # --- Resolve the service principal against the Exchange Online service principal
+            # pointer already registered via Register-EXOServicePrincipal, New-RBAC4AppEntry, or
+            # Invoke-RBAC4AppConfig. Preference order when more than one identifier is supplied:
+            # SpObjectId, then AppId, then RegisteredAppName.
             $sp = $null
-            switch ($PSCmdlet.ParameterSetName) {
-                'BySpObjectId' {
-                    $result.IdentityInput = $SpObjectId
-                    $sp = Get-MgServicePrincipal -ServicePrincipalId $SpObjectId -ErrorAction Stop
+            if ($PSBoundParameters.ContainsKey('SpObjectId')) {
+                $result.ParameterSet  = 'BySpObjectId'
+                $result.IdentityInput = $SpObjectId
+                $sp = Resolve-RBAC4AppServicePrincipal -SpObjectId $SpObjectId
+            }
+            elseif ($PSBoundParameters.ContainsKey('AppId')) {
+                $result.ParameterSet  = 'ByAppId'
+                $result.IdentityInput = $AppId
+                $sp = Resolve-RBAC4AppServicePrincipal -AppId $AppId
+            }
+            else {
+                $result.ParameterSet  = 'ByName'
+                $result.IdentityInput = $RegisteredAppName
+                $sp = Resolve-RBAC4AppServicePrincipal -DisplayName $RegisteredAppName
+            }
+
+            if (-not $sp) {
+                # --- Never registered in Exchange Online yet: bootstrap it, but only if the caller
+                # supplied everything New-ServicePrincipal needs (AppId + SpObjectId + a display
+                # name). Neither can be derived from the other without Microsoft Graph.
+                if ($AppId -and $SpObjectId -and $RegisteredAppName) {
+                    Write-Verbose -Message "No existing Exchange Online service principal matched; registering a new one from the supplied -AppId/-SpObjectId/-RegisteredAppName."
+                    $sp = [pscustomobject]@{ AppId = $AppId; Id = $SpObjectId; DisplayName = $RegisteredAppName }
                 }
-                'ByAppId' {
-                    $result.IdentityInput = $AppId
-                    $matchesRes = @(Get-MgServicePrincipal -Filter "appId eq `'$AppId`'" -ErrorAction Stop)
-                    if ($matchesRes.Count -eq 0) { throw "No service principal found for AppId '$AppId'." }
-                    if ($matchesRes.Count -gt 1) { throw "Unexpected: multiple service principals for AppId '$AppId'." }
-                    $sp = $matchesRes[0]
-                }
-                'ByName' {
-                    $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq `'$RegisteredAppName`'" -ErrorAction Stop)
-                    if ($matchesRes.Count -eq 0) { throw "No service principal found for displayName '$RegisteredAppName'." }
-                    if ($matchesRes.Count -gt 1) {
-                        $ids = ($matchesRes | Select-Object -First 10 -ExpandProperty Id) -join ', '
-                        throw "Ambiguous displayName '$RegisteredAppName' matched $($matchesRes.Count) service principals. Re-run with -AppId or -SpObjectId. Example SP objectIds: $ids"
-                    }
-                    $sp = $matchesRes[0]
+                else {
+                    throw "No Exchange Online service principal found matching the supplied identity, and there is not enough information to register one. Supply -AppId, -SpObjectId, and -RegisteredAppName together to register a never-before-seen application, or provision it first with New-RBAC4AppConfig + Invoke-RBAC4AppConfig."
                 }
             }
 
@@ -341,9 +370,9 @@ function Set-RBAC4AppEntry {
                 $result.MembersRequested = $requested
 
                 $currentUserUpn = $null
-                try { $currentUserUpn = (Get-MgContext -ErrorAction Stop).Account }
+                try { $currentUserUpn = Get-ConnectionInformation -ErrorAction Stop | Select-Object -First 1 -ExpandProperty UserPrincipalName }
                 catch {
-                    $result.Warnings += "Could not retrieve current connection user via Get-MgContext; connection user filtering will be skipped. Error: $($_.Exception.Message)"
+                    $result.Warnings += "Could not retrieve current connection user via Get-ConnectionInformation; connection user filtering will be skipped. Error: $($_.Exception.Message)"
                 }
 
                 $linkAddresses = @($existingLinks | ForEach-Object { [string]$_.PrimarySmtpAddress; [string]$_.Name } | Where-Object { $_ })

@@ -67,10 +67,11 @@ One object per matching assignment with Name, Role, assignee, scope, enabled sta
 and identity fields.
 
 .NOTES
-Requires a connected Exchange Online session (Connect-ExchangeOnline) for
-Get-ManagementRoleAssignment. When an application filter is supplied, a connected
-Microsoft Graph session (Connect-MgGraph) is also required to resolve the service
-principal. Companion to New-RBAC4AppEntry.
+Requires a connected Exchange Online session (Connect-ExchangeOnline) only, for
+Get-ManagementRoleAssignment and, when an application filter is supplied, Get-ServicePrincipal
+to resolve it. No Microsoft Graph session is needed; the application filter only matches
+applications already registered via Register-EXOServicePrincipal, New-RBAC4AppEntry, or
+Invoke-RBAC4AppConfig. Companion to New-RBAC4AppEntry.
 #>
 function Get-RBAC4AppEntry {
     [CmdletBinding(DefaultParameterSetName = 'All')]
@@ -108,23 +109,12 @@ function Get-RBAC4AppEntry {
         $sp = $null
         try {
             switch ($PSCmdlet.ParameterSetName) {
-                'BySpObjectId' {
-                    $sp = Get-MgServicePrincipal -ServicePrincipalId $SpObjectId -ErrorAction Stop
-                }
-                'ByAppId' {
-                    $matchesRes = @(Get-MgServicePrincipal -Filter "appId eq `'$AppId`'" -ErrorAction Stop)
-                    if ($matchesRes.Count -eq 0) { throw "No service principal found for AppId '$AppId'." }
-                    $sp = $matchesRes[0]
-                }
-                'ByName' {
-                    $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq `'$RegisteredAppName`'" -ErrorAction Stop)
-                    if ($matchesRes.Count -eq 0) { throw "No service principal found for displayName '$RegisteredAppName'." }
-                    if ($matchesRes.Count -gt 1) {
-                        $ids = ($matchesRes | Select-Object -First 10 -ExpandProperty Id) -join ', '
-                        throw "Ambiguous displayName '$RegisteredAppName' matched $($matchesRes.Count) service principals. Re-run with -AppId or -SpObjectId. Example SP objectIds: $ids"
-                    }
-                    $sp = $matchesRes[0]
-                }
+                'BySpObjectId' { $sp = Resolve-RBAC4AppServicePrincipal -SpObjectId $SpObjectId }
+                'ByAppId'      { $sp = Resolve-RBAC4AppServicePrincipal -AppId $AppId }
+                'ByName'       { $sp = Resolve-RBAC4AppServicePrincipal -DisplayName $RegisteredAppName }
+            }
+            if ($PSCmdlet.ParameterSetName -ne 'All' -and -not $sp) {
+                throw "No Exchange Online service principal found matching the supplied identity. It must already be registered via Register-EXOServicePrincipal, New-RBAC4AppEntry, or Invoke-RBAC4AppConfig."
             }
         }
         catch {

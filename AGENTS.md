@@ -5,8 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 `EXORBACforAppManagement` — a PowerShell module for managing Exchange Online (EXO) Role-Based Access
-Control for Entra (Azure AD) applications. It packages ten public functions plus shared private
+Control for Entra (Azure AD) applications. It packages thirteen public functions plus shared private
 helpers, with Pester tests, a build script, and GitHub Actions CI.
+
+Only three functions touch Microsoft Graph at all: `New-RegisteredApp` (creates the Entra app
+registration itself), `New-RBAC4AppConfig` (the Graph half of the two-session config workflow, see
+below), and `Convert-ApplicationAccessPolicyToRBAC` (reads the app's granted Graph permissions to
+derive roles). Every other function — including `New-RBAC4AppEntry` itself — resolves the
+application purely through Exchange Online's own service principal pointer
+(`Get-ServicePrincipal`, via the private `Resolve-RBAC4AppServicePrincipal`) and needs no Graph
+session, working around the MSAL/WAM assembly conflict between `Microsoft.Graph` and
+`ExchangeOnlineManagement` in one process.
 
 Public functions (each in its own file under `src/EXORBACforAppManagement/Public`):
 
@@ -54,6 +63,13 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
   a `[pscustomobject]` with current/target group names, a `GroupChanged` flag, created-component and
   member add flags, role assignments partitioned into created/re-scoped/unchanged, and an overall
   `IsValid`. `SupportsShouldProcess` (`ConfirmImpact='High'`).
+- **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
+  `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
+  separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
+  writes a YAML config file (schema version `2.0`, with top-level `Rbac:`/`RbacScope:` sections).
+  `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session and
+  provisions everything (scope group, EXO SP pointer, role assignments), calling no Graph cmdlet at
+  all. Both mirror `New-RBAC4AppEntry`'s idempotency and output shape.
 
 Together the first three form a create → assign → read flow:
 `New-RegisteredApp` → `New-RBAC4AppEntry` → `Get-RBAC4AppEntry`, all sharing the same
@@ -63,15 +79,19 @@ Together the first three form a create → assign → read flow:
 
 ```
 src/EXORBACforAppManagement/
-  EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 10 public)
+  EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 13 public)
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
   Public/                        # New-RBAC4AppEntry, New-RegisteredApp, Get-RBAC4AppEntry,
                                  # Get-RegisteredAppWithPermission, New-RBAC4AppUnifiedGroup,
-                                 # Register-EXOServicePrincipal, Convert-ApplicationAccessPolicyToRBAC,
-                                 # Test-RBAC4AppEntry, Remove-RBAC4AppEntry, Set-RBAC4AppEntry
+                                 # New-RBAC4AppDistributionGroup, Register-EXOServicePrincipal,
+                                 # Convert-ApplicationAccessPolicyToRBAC, Test-RBAC4AppEntry,
+                                 # Remove-RBAC4AppEntry, Set-RBAC4AppEntry, New-RBAC4AppConfig,
+                                 # Invoke-RBAC4AppConfig
   Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole,
                                  # Get-AppRoleMap, Get-LegacyScopeRoleMap,
-                                 # Resolve-AppRolePermissionValue
+                                 # Resolve-AppRolePermissionValue, Resolve-RBAC4AppServicePrincipal,
+                                 # Resolve-RBAC4AppScopeGroupName, New-RBAC4AppScopeGroup,
+                                 # ConvertTo-RBAC4AppYaml, ConvertFrom-RBAC4AppYaml
 tests/                           # Pester v5 tests (one *.Tests.ps1 per area)
 build.ps1                        # Init / Clean / Analyze / Test / Build tasks
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)
@@ -102,14 +122,28 @@ Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App'
 
 Prerequisites — live, authenticated sessions must already exist in the shell (the module does NOT
 declare these as `RequiredModules`, so it imports without them for unit testing):
-- **Microsoft Graph** (`Connect-MgGraph`) — `Get-MgServicePrincipal` / `Get-MgContext` (all three
-  functions; `Get-RBAC4AppEntry` needs Graph only when an app filter is supplied), and
-  `New-MgApplication` / `New-MgServicePrincipal` in `New-RegisteredApp` (needs
-  `Application.ReadWrite.All`).
-- **Exchange Online** (`Connect-ExchangeOnline`) — `New-RBAC4AppEntry` (`Get-UnifiedGroup`,
-  `New-UnifiedGroup`, `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`, `New-ServicePrincipal`,
-  `Get-Recipient`, `New-ManagementRoleAssignment`) and `Get-RBAC4AppEntry`
-  (`Get-ManagementRoleAssignment`).
+- **Microsoft Graph** (`Connect-MgGraph`) — needed by only three functions: `New-RegisteredApp`
+  (`New-MgApplication` / `New-MgServicePrincipal`, needs `Application.ReadWrite.All`),
+  `New-RBAC4AppConfig` (`Get-MgServicePrincipal` / `Get-MgContext`, to resolve the SP and write the
+  YAML config), and `Convert-ApplicationAccessPolicyToRBAC` (`Get-MgServicePrincipal` /
+  `Get-MgServicePrincipalAppRoleAssignment`, to derive roles from the app's Graph permission
+  grants).
+- **Exchange Online** (`Connect-ExchangeOnline`) — needed by every other function, including
+  `New-RBAC4AppEntry` itself: `Get-ServicePrincipal` resolves the application (via the private
+  `Resolve-RBAC4AppServicePrincipal`, matching the pointer `Register-EXOServicePrincipal` creates -
+  no Graph lookup), `Get-ConnectionInformation` replaces the tenant-id/current-user reads that used
+  to go through `Get-MgContext`, plus the usual `Get-UnifiedGroup`, `New-UnifiedGroup`,
+  `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`, `New-ServicePrincipal`, `Get-Recipient`,
+  `Get-ManagementRoleAssignment`, and `New-ManagementRoleAssignment`. `Invoke-RBAC4AppConfig` (the
+  EXO half of the two-session config workflow) calls no Graph cmdlet at all.
+
+Bootstrapping a never-before-registered application (no EXO service principal pointer exists yet)
+without Graph: `New-RBAC4AppEntry` and `Set-RBAC4AppEntry` accept `-AppId`, `-SpObjectId`, and
+`-RegisteredAppName` together to register the pointer from explicit identifiers (neither AppId nor
+the SP object id can be derived from the other without Graph); otherwise use `New-RBAC4AppConfig` +
+`Invoke-RBAC4AppConfig` in two separate sessions. `Test-`/`Remove-RBAC4AppEntry` and
+`Get-RBAC4AppEntry`'s application filter have no create path, so they require the pointer to
+already exist.
 
 Always validate mutating changes with `-WhatIf` first. `New-RBAC4AppEntry`
 (`ConfirmImpact='High'`) and `New-RegisteredApp` (`ConfirmImpact='Medium'`) use
@@ -141,10 +175,20 @@ intercept them. Add new stubs the same way when a function starts calling a new 
 
 ## Architecture / key concepts
 
-- **SP resolution parameter sets** (`ByName` / `ByAppId` / `BySpObjectId`) are shared by
-  `New-RBAC4AppEntry` and `Get-RBAC4AppEntry`; `New-RegisteredApp` takes a `DisplayName`
-  (aliased `Name`/`RegisteredAppName`). Ambiguous name matches error out and tell the caller to use
-  `-AppId`/`-SpObjectId`. AppId/SpObjectId are GUID-validated via `[ValidatePattern]`.
+- **SP resolution is Exchange-Online-only**, via the private `Resolve-RBAC4AppServicePrincipal`
+  (used by `New-`/`Set-`/`Test-`/`Remove-`/`Get-RBAC4AppEntry`): it reads `Get-ServicePrincipal`
+  (the pointer `Register-EXOServicePrincipal` creates) and matches by `-RegisteredAppName`,
+  `-AppId`, or `-SpObjectId` - no Microsoft Graph call. Because the pointer's own `DisplayName`
+  carries a `"_SP"` suffix (e.g. `"Contoso_SP"`) while every name this module derives (scope group,
+  role assignment) is built from the *application's* name, a by-name lookup matches both the raw
+  and `"_SP"`-suffixed forms, and the returned `DisplayName` always has the suffix stripped.
+  Ambiguous matches throw and tell the caller to use `-AppId`/`-SpObjectId`; no match returns
+  `$null` rather than throwing, so callers can react differently - `Get-`/`Test-`/`Remove-`
+  `RBAC4AppEntry` error out (the pointer must already exist), while `New-`/`Set-RBAC4AppEntry` fall
+  back to bootstrapping a brand-new pointer when the caller supplied `-AppId`, `-SpObjectId`, and
+  `-RegisteredAppName` all together (neither identifier can be derived from the other without
+  Graph). `New-RegisteredApp` separately takes a `DisplayName` (aliased `Name`/`RegisteredAppName`)
+  for its own Graph-based app creation. AppId/SpObjectId are GUID-validated via `[ValidatePattern]`.
 
 - **`New-RBAC4AppEntry` workflow:** resolve SP → ensure Unified Group (delegated to
   `New-RBAC4AppUnifiedGroup`) → add members → ensure EXO service principal (delegated to

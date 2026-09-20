@@ -3,13 +3,13 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
-    # Global stubs for the external Graph/EXO cmdlets so Pester can mock them in the module
-    # scope without the real Microsoft.Graph / ExchangeOnlineManagement modules installed.
-    # They must be global so the module's session state (a child of global) can resolve them.
-    # The delegated module functions (New-RBAC4AppUnifiedGroup / Register-EXOServicePrincipal)
-    # are mocked directly with -ModuleName so their internals are not exercised here.
-    function global:Get-MgContext { }
-    function global:Get-MgServicePrincipal { param([string]$Filter, [string]$ServicePrincipalId) }
+    # Global stubs for the external EXO cmdlets so Pester can mock them in the module scope
+    # without the real ExchangeOnlineManagement module installed. They must be global so the
+    # module's session state (a child of global) can resolve them. No Microsoft Graph stubs are
+    # needed: SP resolution goes through Get-ServicePrincipal (EXO) only. The delegated module
+    # functions (New-RBAC4AppUnifiedGroup / Register-EXOServicePrincipal) are mocked directly
+    # with -ModuleName so their internals are not exercised here.
+    function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { param([string]$Identity) }
     function global:Get-UnifiedGroupLinks { param([string]$Identity, [string]$LinkType) }
     function global:Add-UnifiedGroupLinks { param([string]$Identity, [string]$LinkType, [string]$Links) }
@@ -22,34 +22,39 @@ BeforeAll {
     function global:Get-DistributionGroupMember { param([string]$Identity) }
     function global:Add-DistributionGroupMember { param([string]$Identity, [string]$Member) }
 
-    $script:Sp = [pscustomobject]@{
-        DisplayName = 'Contoso'
+    $script:ExoSp = [pscustomobject]@{
+        DisplayName = 'Contoso_SP'
         AppId       = '11111111-1111-1111-1111-111111111111'
-        Id          = '22222222-2222-2222-2222-222222222222'
+        ObjectId    = '22222222-2222-2222-2222-222222222222'
     }
 }
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-UnifiedGroup','Get-UnifiedGroupLinks','Add-UnifiedGroupLinks','Get-ServicePrincipal','Get-Recipient','Get-ManagementRoleAssignment','New-ManagementRoleAssignment','Remove-ManagementRoleAssignment','Get-DistributionGroup','Get-DistributionGroupMember','Add-DistributionGroupMember') {
+    foreach ($n in 'Get-ConnectionInformation','Get-UnifiedGroup','Get-UnifiedGroupLinks','Add-UnifiedGroupLinks','Get-ServicePrincipal','Get-Recipient','Get-ManagementRoleAssignment','New-ManagementRoleAssignment','Remove-ManagementRoleAssignment','Get-DistributionGroup','Get-DistributionGroupMember','Add-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
 
 Describe 'Set-RBAC4AppEntry SP resolution' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
     }
 
-    It 'records an error when no SP matches the AppId' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { @() }
+    It 'records an error when no EXO service principal matches the AppId' {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
 
         $r = Set-RBAC4AppEntry -AppId '33333333-3333-3333-3333-333333333333' -WhatIf
-        $r.Errors -join ';' | Should -Match 'No service principal found'
+        $r.Errors -join ';' | Should -Match 'not enough information to register one'
     }
 
     It 'records an error when the display name is ambiguous' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { @($script:Sp, $script:Sp) }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            @(
+                [pscustomobject]@{ DisplayName = 'dup_SP'; AppId = '66666666-6666-6666-6666-666666666666'; ObjectId = '77777777-7777-7777-7777-777777777777' },
+                [pscustomobject]@{ DisplayName = 'dup_SP'; AppId = '88888888-8888-8888-8888-888888888888'; ObjectId = '99999999-9999-9999-9999-999999999999' }
+            )
+        }
 
         $r = Set-RBAC4AppEntry -RegisteredAppName 'dup' -WhatIf
         $r.Errors -join ';' | Should -Match 'Ambiguous'
@@ -58,8 +63,7 @@ Describe 'Set-RBAC4AppEntry SP resolution' {
 
 Describe 'Set-RBAC4AppEntry reconcile' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { $script:Sp }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         # Everything present by default: group exists, EXO SP exists, assignment exists scoped to current group.
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Identity = $Identity } }
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111' }) }
@@ -111,10 +115,11 @@ Describe 'Set-RBAC4AppEntry reconcile' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1
     }
 
-    It 'creates the Exchange Online service principal when it is missing' {
+    It 'creates the Exchange Online service principal when it is missing, bootstrapped from AppId/SpObjectId/RegisteredAppName' {
+        # No existing EXO pointer matches at all: resolution falls back to the bootstrap triple.
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AppId '11111111-1111-1111-1111-111111111111' -SpObjectId '22222222-2222-2222-2222-222222222222' -Role 'Mail.Send' -Confirm:$false
 
         $r.ExoServicePrincipalCreated | Should -BeTrue
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Register-EXOServicePrincipal -Times 1
@@ -148,7 +153,9 @@ Describe 'Set-RBAC4AppEntry reconcile' {
 
     It 'makes no mutating calls under -WhatIf' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            @([pscustomobject]@{ DisplayName = 'Contoso'; AppId = $null; ObjectId = '22222222-2222-2222-2222-222222222222' })
+        }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
 
         $null = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Members 'new@contoso.com' -WhatIf
@@ -163,9 +170,8 @@ Describe 'Set-RBAC4AppEntry reconcile' {
 
 Describe 'Set-RBAC4AppEntry -AccessGroupType' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { $script:Sp }
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111' }) }
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = $Identity; Name = $Identity; DisplayName = $Identity; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
         Mock -ModuleName EXORBACforAppManagement New-RBAC4AppDistributionGroup { [pscustomobject]@{ OwnerRequested = 'o'; OwnerAdded = 'o'; AlreadyExisted = $false; Group = [pscustomobject]@{ Identity = $Name } } }

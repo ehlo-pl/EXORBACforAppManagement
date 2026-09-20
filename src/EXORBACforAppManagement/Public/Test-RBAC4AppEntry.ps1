@@ -4,14 +4,19 @@ Validates that a registered application has all the Exchange Online RBAC compone
 New-RBAC4AppEntry creates.
 
 .DESCRIPTION
-Test-RBAC4AppEntry resolves an Entra application / service principal (by display name, AppId, or
-service principal object id) and checks that every component New-RBAC4AppEntry provisions is in
+Test-RBAC4AppEntry resolves an application against the Exchange Online service principal pointer
+already registered for it (by display name, AppId, or service principal object id - no Microsoft
+Graph session is required) and checks that every component New-RBAC4AppEntry provisions is in
 place:
 
-  1. the Entra service principal is resolvable (Microsoft Graph),
+  1. the Exchange Online service principal pointer is resolvable (ServicePrincipalExists) - this
+     is the same lookup used to resolve the application in the first place, so it is only ever
+     false when the whole command fails to resolve an identity and errors out,
   2. the scoped Unified Group "{GroupPrefix}-{DisplayName}" (sanitized via the same Get-SafeName
      rule) exists,
-  3. the Exchange Online service principal pointer "{DisplayName}_SP" exists, and
+  3. the Exchange Online service principal pointer named exactly "{DisplayName}_SP" - by that
+     deterministic name, or by AppId - exists (ExoServicePrincipalExists; distinct from #1, which
+     resolves the application by whichever identity the caller supplied), and
   4. one Exchange Online management role assignment exists per requested role, named the same way
      New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}") and bound to the expected
      role.
@@ -80,10 +85,11 @@ role assignments, optional membership results, an overall IsValid flag, a Missin
 Warnings/Errors.
 
 .NOTES
-Requires a connected Microsoft Graph session (Get-MgServicePrincipal, Get-MgContext) and a connected
-Exchange Online session (Get-UnifiedGroup, Get-ServicePrincipal, Get-ManagementRoleAssignment, and,
-when -Members is supplied, Get-Recipient and Get-UnifiedGroupLinks). Read-only companion to
-New-RBAC4AppEntry.
+Requires a connected Exchange Online session only (Get-ServicePrincipal, Get-ConnectionInformation,
+Get-UnifiedGroup, Get-ManagementRoleAssignment, and, when -Members is supplied, Get-Recipient and
+Get-UnifiedGroupLinks). No Microsoft Graph session is needed; the application is resolved against
+the Exchange Online service principal pointer already registered via Register-EXOServicePrincipal,
+New-RBAC4AppEntry, or Invoke-RBAC4AppConfig. Read-only companion to New-RBAC4AppEntry.
 #>
 function Test-RBAC4AppEntry {
     [CmdletBinding(DefaultParameterSetName = 'ByName')]
@@ -128,8 +134,8 @@ function Test-RBAC4AppEntry {
         $shortRoleMap = Get-AppRoleMap
 
         $tenantid = $null
-        try { $tenantid = Get-MgContext | Select-Object -ExpandProperty TenantId }
-        catch { Write-Verbose -Message "Could not read tenant id from Get-MgContext: $($_.Exception.Message)" }
+        try { $tenantid = Get-ConnectionInformation -ErrorAction Stop | Select-Object -First 1 -ExpandProperty TenantId }
+        catch { Write-Verbose -Message "Could not read tenant id from Get-ConnectionInformation: $($_.Exception.Message)" }
     }
 
     process {
@@ -165,24 +171,18 @@ function Test-RBAC4AppEntry {
             switch ($PSCmdlet.ParameterSetName) {
                 'BySpObjectId' {
                     $result.IdentityInput = $SpObjectId
-                    $sp = Get-MgServicePrincipal -ServicePrincipalId $SpObjectId -ErrorAction Stop
+                    $sp = Resolve-RBAC4AppServicePrincipal -SpObjectId $SpObjectId
                 }
                 'ByAppId' {
                     $result.IdentityInput = $AppId
-                    $matchesRes = @(Get-MgServicePrincipal -Filter "appId eq `'$AppId`'" -ErrorAction Stop)
-                    if ($matchesRes.Count -eq 0) { throw "No service principal found for AppId '$AppId'." }
-                    if ($matchesRes.Count -gt 1) { throw "Unexpected: multiple service principals for AppId '$AppId'." }
-                    $sp = $matchesRes[0]
+                    $sp = Resolve-RBAC4AppServicePrincipal -AppId $AppId
                 }
                 'ByName' {
-                    $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq `'$RegisteredAppName`'" -ErrorAction Stop)
-                    if ($matchesRes.Count -eq 0) { throw "No service principal found for displayName '$RegisteredAppName'." }
-                    if ($matchesRes.Count -gt 1) {
-                        $ids = ($matchesRes | Select-Object -First 10 -ExpandProperty Id) -join ', '
-                        throw "Ambiguous displayName '$RegisteredAppName' matched $($matchesRes.Count) service principals. Re-run with -AppId or -SpObjectId. Example SP objectIds: $ids"
-                    }
-                    $sp = $matchesRes[0]
+                    $sp = Resolve-RBAC4AppServicePrincipal -DisplayName $RegisteredAppName
                 }
+            }
+            if (-not $sp) {
+                throw "No Exchange Online service principal found matching the supplied identity. It must already be registered via Register-EXOServicePrincipal, New-RBAC4AppEntry, or Invoke-RBAC4AppConfig."
             }
 
             $result.ServicePrincipalExists = $true

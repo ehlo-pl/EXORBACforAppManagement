@@ -3,8 +3,7 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
-    function global:Get-MgContext { }
-    function global:Get-MgServicePrincipal { [CmdletBinding()] param([string]$Filter, [string]$ServicePrincipalId) }
+    function global:Get-ServicePrincipal { [CmdletBinding()] param([string]$Identity) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
     function global:Get-UnifiedGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-UnifiedGroupLinks { [CmdletBinding()] param([string]$Identity, [string]$LinkType) }
@@ -23,46 +22,29 @@ BeforeAll {
         [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam' }
         [pscustomobject]@{ Name = 'AppMailSend-Helpdesk'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; Enabled = $true }
     )
+
+    # EXO service principal pointers, keyed by their own DisplayName (the "_SP" form), matching
+    # the RoleAssigneeName on each assignment above.
+    $script:ExoServicePrincipals = @(
+        [pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111'; ObjectId = '22222222-2222-2222-2222-222222222222' }
+        [pscustomobject]@{ DisplayName = 'Fabrikam_SP'; AppId = '33333333-3333-3333-3333-333333333333'; ObjectId = '44444444-4444-4444-4444-444444444444' }
+    )
 }
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-ManagementRoleAssignment','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember') {
+    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
 
 Describe 'Get-RegisteredAppWithPermission' {
     BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
-
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             $script:Assignments | Where-Object { -not $Role -or $_.Role -eq $Role }
         }
 
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
-            switch ($Filter) {
-                "displayName eq 'Contoso_SP'" { @() ; break }
-                "displayName eq 'Contoso'" {
-                    [pscustomobject]@{
-                        DisplayName = 'Contoso'
-                        AppId       = '11111111-1111-1111-1111-111111111111'
-                        Id          = '22222222-2222-2222-2222-222222222222'
-                    }
-                    break
-                }
-                "displayName eq 'Fabrikam_SP'" { @() ; break }
-                "displayName eq 'Fabrikam'" {
-                    [pscustomobject]@{
-                        DisplayName = 'Fabrikam'
-                        AppId       = '33333333-3333-3333-3333-333333333333'
-                        Id          = '44444444-4444-4444-4444-444444444444'
-                    }
-                    break
-                }
-                default { @() }
-            }
-        }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { $script:ExoServicePrincipals }
 
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
             if ($Identity -eq 'Um365RAo1-Contoso') { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = $Identity } }
@@ -84,6 +66,15 @@ Describe 'Get-RegisteredAppWithPermission' {
         $r.Count | Should -Be 2
         ($r.DisplayName | Sort-Object) | Should -Be @('Contoso', 'Fabrikam')
         ($r | Where-Object DisplayName -eq 'Contoso').Roles | Should -Be @('Application Calendars.Read', 'Application Mail.Send')
+    }
+
+    It 'resolves AppId/ServicePrincipalId from the EXO service principal pointer, with the "_SP" suffix stripped from DisplayName' {
+        $r = Get-RegisteredAppWithPermission
+
+        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
+        $contoso.AppId | Should -Be '11111111-1111-1111-1111-111111111111'
+        $contoso.ServicePrincipalId | Should -Be '22222222-2222-2222-2222-222222222222'
+        $contoso.ExoServicePrincipal | Should -Be 'Contoso_SP'
     }
 
     It 'resolves the scope group name and membership for an M365Group-scoped app' {
@@ -162,7 +153,7 @@ Describe 'Get-RegisteredAppWithPermission' {
     }
 }
 
-Describe 'Get-RegisteredAppWithPermission without a Graph session' {
+Describe 'Get-RegisteredAppWithPermission with an unresolvable EXO service principal' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             $script:Assignments | Where-Object { -not $Role -or $_.Role -eq $Role }
@@ -171,9 +162,8 @@ Describe 'Get-RegisteredAppWithPermission without a Graph session' {
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
     }
 
-    It 'returns EXO-only rows and warns once when Get-MgContext returns nothing, without calling Get-MgServicePrincipal' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { throw 'should not be called' }
+    It 'returns EXO-only rows and warns once per unresolvable assignee, without needing Microsoft Graph' {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
 
         $warnings = $null
         $r = Get-RegisteredAppWithPermission -WarningVariable warnings -WarningAction SilentlyContinue
@@ -181,30 +171,7 @@ Describe 'Get-RegisteredAppWithPermission without a Graph session' {
         $r.Count | Should -Be 2
         ($r | Where-Object DisplayName -eq 'Contoso').AppId | Should -BeNullOrEmpty
         ($r | Where-Object DisplayName -eq 'Contoso').ServicePrincipalId | Should -BeNullOrEmpty
-        ($warnings -join ';') | Should -Match 'Microsoft Graph is not connected'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 0
-    }
-
-    It 'returns EXO-only rows when Get-MgContext throws (Microsoft.Graph not imported)' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { throw 'The term ''Get-MgContext'' is not recognized...' }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { throw 'should not be called' }
-
-        $r = Get-RegisteredAppWithPermission -WarningAction SilentlyContinue
-
-        $r.Count | Should -Be 2
-        ($r.DisplayName | Sort-Object) | Should -Be @('Contoso', 'Fabrikam')
-    }
-
-    It 'falls back to EXO-only details for the rest of the run if Graph connectivity is lost mid-resolution' {
-        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1' } }
-        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { throw 'Authentication needed. Please call Connect-MgGraph.' }
-
-        $warnings = $null
-        $r = Get-RegisteredAppWithPermission -WarningVariable warnings -WarningAction SilentlyContinue
-
-        $r.Count | Should -Be 2
-        ($r | Where-Object DisplayName -eq 'Contoso').AppId | Should -BeNullOrEmpty
-        ($warnings -join ';') | Should -Match 'Lost Microsoft Graph connectivity'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 1
+        ($r | Where-Object DisplayName -eq 'Contoso').DisplayName | Should -Be 'Contoso'
+        ($warnings -join ';') | Should -Match "Could not resolve EXO assignee 'Contoso_SP'"
     }
 }
