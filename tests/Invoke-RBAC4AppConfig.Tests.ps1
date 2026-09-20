@@ -252,4 +252,32 @@ Describe 'Invoke-RBAC4AppConfig' {
             $parsed.RbacScope.Members          | Should -Contain 'user@contoso.com'
         }
     }
+
+    It 'derives the default GroupPrefix from AccessGroupType when the YAML omits it' {
+        InModuleScope EXORBACforAppManagement {
+            $distributionConfig = ConvertFrom-RBAC4AppYaml -Content @'
+SchemaVersion: "2.0"
+Application:
+  DisplayName: "Contoso"
+Rbac:
+  Roles:
+    - Application Mail.Send
+RbacScope:
+  AccessGroupType: DistributionList
+'@
+            $distributionConfig.RbacScope.GroupPrefix | Should -Be 'UDLRAo1P'
+
+            $mesgConfig = ConvertFrom-RBAC4AppYaml -Content @'
+SchemaVersion: "2.0"
+Application:
+  DisplayName: "Contoso"
+Rbac:
+  Roles:
+    - Application Mail.Send
+RbacScope:
+  AccessGroupType: MailEnabledSecurityGroup
+'@
+            $mesgConfig.RbacScope.GroupPrefix | Should -Be 'USRAo1P'
+        }
+    }
 }
