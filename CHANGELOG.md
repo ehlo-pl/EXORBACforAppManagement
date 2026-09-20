@@ -12,6 +12,13 @@ All notable changes to this project are documented here. The format is based on
   the existing `MembersAdded`/`MembersRequested`. Populated for all `-AccessGroupType` values,
   including `MailEnabledSecurityGroup` (read-only, informational).
 
+### Fixed
+- `Get-RegisteredAppWithPermission` no longer fails with "Authentication needed. Please call
+  Connect-MgGraph." when run in an Exchange-Online-only session. Microsoft Graph is now optional:
+  without a connected session (or if connectivity is lost partway through), the function writes a
+  warning and returns Exchange-Online-only details (`DisplayName`/`AppId`/`ServicePrincipalId`
+  unresolved) for the affected applications instead of throwing.
+
 ## [0.6.4] - 2026-09-20
 
 ### Changed

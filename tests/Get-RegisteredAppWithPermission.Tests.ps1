@@ -3,6 +3,7 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
+    function global:Get-MgContext { }
     function global:Get-MgServicePrincipal { [CmdletBinding()] param([string]$Filter, [string]$ServicePrincipalId) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
 
@@ -16,13 +17,15 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgServicePrincipal','Get-ManagementRoleAssignment') {
+    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-ManagementRoleAssignment') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
 
 Describe 'Get-RegisteredAppWithPermission' {
     BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1'; Account = 'admin@contoso.com' } }
+
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             $script:Assignments | Where-Object { -not $Role -or $_.Role -eq $Role }
         }
@@ -73,5 +76,50 @@ Describe 'Get-RegisteredAppWithPermission' {
         $r.Count | Should -Be 1
         $r.DisplayName | Should -Be 'Fabrikam'
         $r.DisabledAssignmentCount | Should -Be 1
+    }
+}
+
+Describe 'Get-RegisteredAppWithPermission without a Graph session' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            $script:Assignments | Where-Object { -not $Role -or $_.Role -eq $Role }
+        }
+    }
+
+    It 'returns EXO-only rows and warns once when Get-MgContext returns nothing, without calling Get-MgServicePrincipal' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgContext { }
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { throw 'should not be called' }
+
+        $warnings = $null
+        $r = Get-RegisteredAppWithPermission -WarningVariable warnings -WarningAction SilentlyContinue
+
+        $r.Count | Should -Be 2
+        ($r | Where-Object DisplayName -eq 'Contoso').AppId | Should -BeNullOrEmpty
+        ($r | Where-Object DisplayName -eq 'Contoso').ServicePrincipalId | Should -BeNullOrEmpty
+        ($warnings -join ';') | Should -Match 'Microsoft Graph is not connected'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 0
+    }
+
+    It 'returns EXO-only rows when Get-MgContext throws (Microsoft.Graph not imported)' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgContext { throw 'The term ''Get-MgContext'' is not recognized...' }
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { throw 'should not be called' }
+
+        $r = Get-RegisteredAppWithPermission -WarningAction SilentlyContinue
+
+        $r.Count | Should -Be 2
+        ($r.DisplayName | Sort-Object) | Should -Be @('Contoso', 'Fabrikam')
+    }
+
+    It 'falls back to EXO-only details for the rest of the run if Graph connectivity is lost mid-resolution' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgContext { [pscustomobject]@{ TenantId = 'tenant-1' } }
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { throw 'Authentication needed. Please call Connect-MgGraph.' }
+
+        $warnings = $null
+        $r = Get-RegisteredAppWithPermission -WarningVariable warnings -WarningAction SilentlyContinue
+
+        $r.Count | Should -Be 2
+        ($r | Where-Object DisplayName -eq 'Contoso').AppId | Should -BeNullOrEmpty
+        ($warnings -join ';') | Should -Match 'Lost Microsoft Graph connectivity'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 1
     }
 }

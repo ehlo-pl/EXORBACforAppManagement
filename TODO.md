@@ -11,3 +11,7 @@
 [x] warn (and record in Warnings) when -ManagedBy or -BootstrapMember is set to a non-default value for -AccessGroupType MailEnabledSecurityGroup, matching the existing -Members-ignored warning
 
 [x] add MembersFinal (full current group membership, not just what was added) to the results of New-RBAC4AppEntry, Set-RBAC4AppEntry, and Invoke-RBAC4AppConfig
+
+[ ] verify that every creation path checks whether the target object (Exchange Online service principal, scope group) already exists and skips creation when it does - New-RBAC4AppUnifiedGroup/New-RBAC4AppDistributionGroup already check before creating, but Register-EXOServicePrincipal calls New-ServicePrincipal unconditionally and relies on its callers (New-/Set-RBAC4AppEntry) to check first
+
+[x] mitigate "Authentication needed. Please call Connect-MgGraph." terminating error from Get-RegisteredAppWithPermission when run in an EXO-only session - it unconditionally calls Get-MgServicePrincipal -ErrorAction Stop with no try/catch to reverse-resolve each EXO assignee, unlike Get-RBAC4AppEntry (Graph is optional there, wrapped in try/catch); should degrade gracefully to EXO-only details + warning instead of throwing, e.g. check Get-MgContext up front or catch the Graph error per assignee

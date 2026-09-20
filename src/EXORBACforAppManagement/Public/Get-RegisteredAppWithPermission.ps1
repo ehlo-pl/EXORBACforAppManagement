@@ -32,6 +32,12 @@ Processing steps:
      EXO-only details (DisplayName falls back to the assignee with "_SP" stripped; AppId and
      ServicePrincipalId are null) and a warning is written.
 
+Microsoft Graph is optional: if no Graph session is connected (Get-MgContext returns nothing, or
+throws because the Microsoft.Graph module isn't even imported), Graph resolution is skipped
+entirely for every application - a single warning is written up front and every row falls back to
+EXO-only details, instead of the whole call failing with "Authentication needed. Please call
+Connect-MgGraph." This lets the function run standalone in an Exchange-Online-only session.
+
 .PARAMETER Role
 One or more application roles to query. Short names such as Mail.Send are accepted and
 normalized to Application Mail.Send. When omitted, every role supported by
@@ -67,8 +73,9 @@ One object per distinct registered application, with the following properties:
   DisabledAssignmentCount - Count of those that are disabled.
 
 .NOTES
-Requires a connected Exchange Online session (Get-ManagementRoleAssignment) and a
-connected Microsoft Graph session (Get-MgServicePrincipal).
+Requires a connected Exchange Online session (Get-ManagementRoleAssignment). A connected
+Microsoft Graph session (Get-MgContext, Get-MgServicePrincipal) is optional - without one, every
+row is returned with EXO-only details and a single warning is written instead of the call failing.
 
 Performance / behavior notes:
 - The function issues one Get-ManagementRoleAssignment query per role, so cost scales with the
@@ -118,29 +125,51 @@ function Get-RegisteredAppWithPermission {
             $assignments = @($assignments | Where-Object { $_.Enabled -eq $Enabled })
         }
 
+        # --- Microsoft Graph is optional: without a connected session, skip resolution entirely
+        # rather than letting Get-MgServicePrincipal throw "Authentication needed." and fail the
+        # whole call - this lets the function run in an Exchange-Online-only session.
+        $graphConnected = $true
+        try {
+            if (-not (Get-MgContext -ErrorAction Stop)) { $graphConnected = $false }
+        }
+        catch {
+            $graphConnected = $false
+        }
+        if (-not $graphConnected) {
+            Write-Warning -Message 'Microsoft Graph is not connected (Connect-MgGraph); returning Exchange-Online-only details (DisplayName/AppId/ServicePrincipalId unresolved) for every application.'
+        }
+
         foreach ($assignmentGroup in ($assignments | Group-Object RoleAssigneeName | Sort-Object Name)) {
             $assigneeName = [string]$assignmentGroup.Name
             $resolvedSp = $null
-            $lookupNames = @($assigneeName)
 
-            if ($assigneeName -match '_SP$') {
-                $lookupNames += ($assigneeName -replace '_SP$', '')
-            }
-
-            foreach ($lookupName in ($lookupNames | Select-Object -Unique)) {
-                $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq '$lookupName'" -ErrorAction Stop)
-                if ($matchesRes.Count -eq 1) {
-                    $resolvedSp = $matchesRes[0]
-                    break
+            if ($graphConnected) {
+                $lookupNames = @($assigneeName)
+                if ($assigneeName -match '_SP$') {
+                    $lookupNames += ($assigneeName -replace '_SP$', '')
                 }
 
-                if ($matchesRes.Count -gt 1) {
-                    Write-Error -Message ("Ambiguous service principal resolution for assignee '{0}' using displayName '{1}'. Re-run with a narrower role filter or resolve the duplicates in Entra." -f $assigneeName, $lookupName)
-                    break
+                try {
+                    foreach ($lookupName in ($lookupNames | Select-Object -Unique)) {
+                        $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq '$lookupName'" -ErrorAction Stop)
+                        if ($matchesRes.Count -eq 1) {
+                            $resolvedSp = $matchesRes[0]
+                            break
+                        }
+
+                        if ($matchesRes.Count -gt 1) {
+                            Write-Error -Message ("Ambiguous service principal resolution for assignee '{0}' using displayName '{1}'. Re-run with a narrower role filter or resolve the duplicates in Entra." -f $assigneeName, $lookupName)
+                            break
+                        }
+                    }
+                }
+                catch {
+                    $graphConnected = $false
+                    Write-Warning -Message ("Lost Microsoft Graph connectivity while resolving '{0}': {1}. Returning Exchange-Online-only details for this and any remaining applications." -f $assigneeName, $_.Exception.Message)
                 }
             }
 
-            if (-not $resolvedSp) {
+            if (-not $resolvedSp -and $graphConnected) {
                 Write-Warning -Message ("Could not resolve EXO assignee '{0}' to a single Graph service principal; returning EXO-only details." -f $assigneeName)
             }
 
