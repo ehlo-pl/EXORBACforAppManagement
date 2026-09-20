@@ -228,7 +228,8 @@ function Invoke-RBAC4AppConfig {
 
             [pscustomobject]$result
             if ($rbacNameBase) {
-                [pscustomobject]$result | Export-Clixml ('{0}/{1}_{2}.clixml' -f $env:TEMP, $rbacNameBase, (Get-Date -Format s).Replace(':', '')) -Verbose
+                $exportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("{0}_{1}.clixml" -f $rbacNameBase, (Get-Date -Format s).Replace(':', ''))
+                [pscustomobject]$result | Export-Clixml $exportPath -Verbose
             }
         }
         catch {
