@@ -169,6 +169,24 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
+    It 'treats a CustomRecipientScope assignment as already scoped to the target group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Mail.Send'
+                RecipientWriteScope       = 'CustomRecipientScope'
+                CustomRecipientWriteScope = 'Um365RAo1-Contoso'
+                CustomResourceScope       = $null
+            }
+        }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+        $res.RoleAssignments | Should -HaveCount 1
+        ($res.Warnings -join ';') | Should -Match 'already exists and is scoped'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
     It 'does not call mutating commands under -WhatIf' {
         $null = Invoke-RBAC4AppConfig -Path $script:configPath -WhatIf
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup          -Times 0

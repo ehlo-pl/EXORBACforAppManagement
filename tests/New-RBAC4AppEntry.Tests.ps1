@@ -167,6 +167,24 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
+    It 'treats a CustomRecipientScope assignment as already scoped to the target group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Mail.Send'
+                RecipientWriteScope       = 'CustomRecipientScope'
+                CustomRecipientWriteScope = 'Um365RAo1-Contoso'
+                CustomResourceScope       = $null
+            }
+        }
+
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        $r.RoleAssignments | Should -HaveCount 1
+        ($r.Warnings -join ';') | Should -Match 'already exists and is scoped'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
     It 'warns instead of erroring when a same-named assignment exists but is scoped elsewhere' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             [pscustomobject]@{
