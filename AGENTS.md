@@ -66,8 +66,10 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
   `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
-  writes a YAML config file (schema version `2.0`, with top-level `Rbac:`/`RbacScope:` sections).
-  `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session and
+  writes a config file (schema version `3.0`, with top-level `Rbac:`/`RbacScope:` sections) in
+  either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
+  `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
+  (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and
   provisions everything (scope group, EXO SP pointer, role assignments), calling no Graph cmdlet at
   all. Both mirror `New-RBAC4AppEntry`'s idempotency and output shape.
 
@@ -122,10 +124,11 @@ Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App'
 
 Prerequisites — live, authenticated sessions must already exist in the shell (the module does NOT
 declare these as `RequiredModules`, so it imports without them for unit testing):
+
 - **Microsoft Graph** (`Connect-MgGraph`) — needed by only three functions: `New-RegisteredApp`
   (`New-MgApplication` / `New-MgServicePrincipal`, needs `Application.ReadWrite.All`),
   `New-RBAC4AppConfig` (`Get-MgServicePrincipal` / `Get-MgContext`, to resolve the SP and write the
-  YAML config), and `Convert-ApplicationAccessPolicyToRBAC` (`Get-MgServicePrincipal` /
+  config, YAML or JSON), and `Convert-ApplicationAccessPolicyToRBAC` (`Get-MgServicePrincipal` /
   `Get-MgServicePrincipalAppRoleAssignment`, to derive roles from the app's Graph permission
   grants).
 - **Exchange Online** (`Connect-ExchangeOnline`) — needed by every other function, including
@@ -167,6 +170,7 @@ Always validate mutating changes with `-WhatIf` first. `New-RBAC4AppEntry`
 - **Build** copies the module to `output/EXORBACforAppManagement` and validates the manifest.
 
 ### Test approach
+
 Tests are Pester v5. Helper tests use `InModuleScope EXORBACforAppManagement` to reach the Private
 functions. Public-function tests mock the external Graph/EXO cmdlets: because those modules are not
 installed in CI, each test defines **global** stub functions for the cmdlets it needs (declaring the
@@ -201,23 +205,35 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   captures the delegated functions' warnings via `-WarningVariable` to keep the summary `Warnings`
   (e.g. the group "already exists" note).
 
-- **Scope group type (`-AccessGroupType`):** `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry` and
-  `Convert-ApplicationAccessPolicyToRBAC` take `-AccessGroupType` (`M365Group` default,
-  `DistributionList`, `MailEnabledSecurityGroup`). The EXO `-RecipientGroupScope` role-assignment step
-  is identical for all three (it accepts any group id); only provisioning/read/membership/teardown
-  differ. The private `New-RBAC4AppScopeGroup` dispatcher routes creation to
-  `New-RBAC4AppUnifiedGroup` (M365Group) or `New-RBAC4AppDistributionGroup` (DistributionList), or
-  validates existence only for `MailEnabledSecurityGroup` (on-prem/hybrid-synced: never created,
-  `-AccessGroupName` required, membership left on-premises). `Remove-RBAC4AppEntry` never deletes a
-  `MailEnabledSecurityGroup` and uses `Remove-DistributionGroup` for a `DistributionList`.
+- **Scope group type (`-AccessGroupType`):** `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry`,
+  `New-RBAC4AppConfig`, and `Convert-ApplicationAccessPolicyToRBAC` take `-AccessGroupType`
+  (`DistributionList` default, `M365Group`, `MailEnabledSecurityGroup`). The EXO
+  `-RecipientGroupScope` role-assignment step is identical for all three (it accepts any group id);
+  only provisioning/read/membership/teardown differ. The private `New-RBAC4AppScopeGroup` dispatcher
+  routes creation to `New-RBAC4AppUnifiedGroup` (M365Group) or `New-RBAC4AppDistributionGroup`
+  (DistributionList), or validates existence only for `MailEnabledSecurityGroup`
+  (on-prem/hybrid-synced: never created, `-AccessGroupName` required, membership left
+  on-premises). `Remove-RBAC4AppEntry` never deletes a `MailEnabledSecurityGroup` and uses
+  `Remove-DistributionGroup` for a `DistributionList`.
+
+- **`-GroupPrefix` naming convention:** when `-AccessGroupName` is not supplied, `-GroupPrefix`
+  itself defaults to a type-dependent value rather than a fixed string - `'UDLRAo1P'`
+  (DistributionList), `'USRAo1P'` (MailEnabledSecurityGroup), or `'Um365RAo1P'` (M365Group) -
+  computed at the top of each function's `process`/`begin` block via
+  `if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) { $GroupPrefix = switch ($AccessGroupType) {...} }`.
+  This is shared verbatim (originally introduced in `New-RBAC4AppConfig`) by `New-`/`Set-`/
+  `Test-`/`Remove-RBAC4AppEntry` and `Convert-ApplicationAccessPolicyToRBAC` (2-way switch there,
+  since it has no `MailEnabledSecurityGroup` option). An explicit `-GroupPrefix` always wins.
 
 - **`New-RBAC4AppUnifiedGroup` / `Register-EXOServicePrincipal`** are standalone public functions
   (each `SupportsShouldProcess`, `ConfirmImpact='High'`). They hold the Unified Group ensure/create/
   configure logic and the `New-ServicePrincipal` step respectively, so `-WhatIf` propagates into them
   from the orchestrator. `New-RBAC4AppUnifiedGroup` returns a summary `[pscustomobject]`
-  (`OwnerRequested`/`OwnerAdded`/`AlreadyExisted`/`Group`); it resolves the `-ManagedBy` owner via
-  `Get-Recipient` (like members) for the created group, or reports the existing group's owner when the
-  group already exists.
+  (`OwnerRequested`/`OwnerAdded`/`AlreadyExisted`/`Group`, both `Owner*` fields arrays); `-ManagedBy`
+  accepts one or more owners, each resolved independently via `Get-Recipient` (like members) for the
+  created group, or reports the existing group's owners when the group already exists. An owner that
+  cannot be resolved is still passed through as-is (unlike a member, an owner cannot be skipped - the
+  group must be created with at least one `ManagedBy` value).
 
 - **Three role lookup tables, kept consistent:** the private `Get-NormalizeRole` normalizes short
   names → `Application <perm>` (validated against `Get-AppRoleMap`); the private `Get-AppRoleMap`
@@ -232,7 +248,7 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   `-App` parameter, so role filtering uses native `-Role` and the app filter is client-side
   (matching the resolved SP's `DisplayName`/`<DisplayName>_SP`/`AppId`/`Id` against each
   assignment's `RoleAssigneeName`/`Name`). The private `ConvertTo-AppRole` normalizes role names by
-  prefixing `Application `.
+  prefixing `Application`.
 
 ## Conventions
 

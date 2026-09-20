@@ -98,4 +98,46 @@ Describe 'New-RBAC4AppConfig' {
         $content | Should -Match 'AccessGroupType: DistributionList'
         $content | Should -Match 'box@contoso\.com'
     }
+
+    It 'writes a .yml file by default' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Confirm:$false
+        $outFile | Should -BeLike '*.yml'
+    }
+
+    It '-Format Json writes a .json file with the same schema as the YAML output' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-obj-id'; AppId = 'app-client-id'; DisplayName = 'Contoso' }
+        }
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Role 'Mail.Send' `
+            -Members 'shared@contoso.com' -ManagedBy 'owner1@contoso.com', 'owner2@contoso.com' `
+            -Format Json -OutputPath $TestDrive -Confirm:$false
+
+        $outFile | Should -BeLike '*.json'
+        (Test-Path $outFile) | Should -BeTrue
+
+        $parsed = Get-Content $outFile -Raw | ConvertFrom-Json
+        $parsed.SchemaVersion              | Should -Be '3.0'
+        $parsed.TenantId                   | Should -Be 'tenant-id-123'
+        $parsed.Application.AppId          | Should -Be 'app-client-id'
+        $parsed.Application.SpObjectId     | Should -Be 'sp-obj-id'
+        $parsed.Application.DisplayName    | Should -Be 'Contoso'
+        $parsed.Rbac.Roles                 | Should -Contain 'Application Mail.Send'
+        $parsed.RbacScope.Members          | Should -Contain 'shared@contoso.com'
+        $parsed.RbacScope.ManagedBy        | Should -Contain 'owner1@contoso.com'
+        $parsed.RbacScope.ManagedBy        | Should -Contain 'owner2@contoso.com'
+    }
+
+    It '-Format Json writes nothing under -WhatIf' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $emptyDir = Join-Path $TestDrive 'whatif-check-json'
+        $null = New-Item -ItemType Directory -Path $emptyDir -Force
+        $result = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Format Json -OutputPath $emptyDir -WhatIf
+        $result | Should -BeNullOrEmpty
+        @(Get-ChildItem $emptyDir -Filter '*.json').Count | Should -Be 0
+    }
 }

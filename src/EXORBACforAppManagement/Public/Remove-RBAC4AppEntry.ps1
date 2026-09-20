@@ -40,8 +40,9 @@ Application (client) id of the registered application. GUID-validated.
 Object id of the target service principal. GUID-validated.
 
 .PARAMETER GroupPrefix
-Prefix used when building the Unified Group name. Defaults to 'Um365RAo1' (matching
-New-RBAC4AppEntry).
+Prefix used when building the scope group name (matching New-RBAC4AppEntry). When omitted,
+defaults to 'UDLRAo1P' (DistributionList), 'USRAo1P' (MailEnabledSecurityGroup), or
+'Um365RAo1P' (M365Group) based on -AccessGroupType.
 
 .PARAMETER AccessGroupName
 Explicit scope group name to tear down instead of generating one from GroupPrefix and the
@@ -49,9 +50,10 @@ resolved display name. Required when -AccessGroupType is MailEnabledSecurityGrou
 
 .PARAMETER AccessGroupType
 Kind of group that backs the RBAC scope (M365Group, DistributionList, or
-MailEnabledSecurityGroup). Defaults to M365Group. A MailEnabledSecurityGroup is
-on-prem/hybrid-synced and is NEVER deleted by this function - only this application's role
-assignments are detached; a DistributionList is removed with Remove-DistributionGroup.
+MailEnabledSecurityGroup). Defaults to DistributionList (matching New-RBAC4AppEntry). A
+MailEnabledSecurityGroup is on-prem/hybrid-synced and is NEVER deleted by this function - only
+this application's role assignments are detached; a DistributionList is removed with
+Remove-DistributionGroup.
 
 .PARAMETER BootstrapMember
 Bootstrap placeholder member to ignore when deciding whether the group has real members. Defaults to
@@ -105,8 +107,7 @@ function Remove-RBAC4AppEntry {
         [string] $SpObjectId,
 
         [Parameter()]
-        [ValidateNotNullOrEmpty()]
-        [string] $GroupPrefix = 'Um365RAo1',
+        [string] $GroupPrefix = $null,
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
@@ -114,7 +115,7 @@ function Remove-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'M365Group',
+        [string] $AccessGroupType = 'DistributionList',
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
@@ -128,6 +129,14 @@ function Remove-RBAC4AppEntry {
     }
 
     process {
+        if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
+            $GroupPrefix = switch ($AccessGroupType) {
+                'DistributionList'         { 'UDLRAo1P' }
+                'MailEnabledSecurityGroup' { 'USRAo1P' }
+                default                    { 'Um365RAo1P' }
+            }
+        }
+
         $result = [ordered]@{
             ParameterSet        = $PSCmdlet.ParameterSetName
             IdentityInput       = $RegisteredAppName

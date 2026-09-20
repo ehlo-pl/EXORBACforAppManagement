@@ -78,7 +78,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
             }
         }
         # Delegated module functions + mutating cmdlets.
-        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppUnifiedGroup { [pscustomobject]@{ OwnerRequested = 'o'; OwnerAdded = 'o'; AlreadyExisted = $false; Group = [pscustomobject]@{ Identity = $Name } } }
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppUnifiedGroup { [pscustomobject]@{ OwnerRequested = @('o'); OwnerAdded = @('o'); AlreadyExisted = $false; Group = [pscustomobject]@{ Identity = $Name } } }
         Mock -ModuleName EXORBACforAppManagement Register-EXOServicePrincipal { [pscustomobject]@{ DisplayName = $DisplayName } }
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
@@ -86,7 +86,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
     }
 
     It 'leaves a fully-configured app on its group untouched and reports IsValid' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send'
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send'
 
         $r.IsValid | Should -BeTrue
         $r.RoleAssignmentsUnchanged | Should -Contain 'AppMailSend-Contoso'
@@ -99,7 +99,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
     It 'creates only the missing role assignment, not the existing group' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.RoleAssignmentsCreated | Should -Contain 'AppMailSend-Contoso'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
@@ -109,7 +109,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
     It 'creates the Unified Group when it is missing' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.ScopeGroupCreated | Should -BeTrue
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1
@@ -119,14 +119,14 @@ Describe 'Set-RBAC4AppEntry reconcile' {
         # No existing EXO pointer matches at all: resolution falls back to the bootstrap triple.
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AppId '11111111-1111-1111-1111-111111111111' -SpObjectId '22222222-2222-2222-2222-222222222222' -Role 'Mail.Send' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -AppId '11111111-1111-1111-1111-111111111111' -SpObjectId '22222222-2222-2222-2222-222222222222' -Role 'Mail.Send' -Confirm:$false
 
         $r.ExoServicePrincipalCreated | Should -BeTrue
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Register-EXOServicePrincipal -Times 1
     }
 
     It 'adds a requested member that is not already in the group (additive)' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Members 'new@contoso.com' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Members 'new@contoso.com' -Confirm:$false
 
         $r.MembersAdded | Should -Contain 'new@contoso.com'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 1
@@ -135,14 +135,14 @@ Describe 'Set-RBAC4AppEntry reconcile' {
     It 'does not re-add a member already present in the group' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @([pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' }) }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Members 'shared@contoso.com'
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Members 'shared@contoso.com'
 
         $r.MembersAlreadyPresent | Should -Contain 'shared@contoso.com'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 0
     }
 
     It 're-scopes the assignment onto a new group when -NewGroupPrefix is supplied' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -NewGroupPrefix 'Um365Prod' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -NewGroupPrefix 'Um365Prod' -Confirm:$false
 
         $r.GroupChanged | Should -BeTrue
         $r.TargetGroupName | Should -Be 'Um365Prod-Contoso'
@@ -158,7 +158,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
         }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
 
-        $null = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Members 'new@contoso.com' -WhatIf
+        $null = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Members 'new@contoso.com' -WhatIf
 
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Register-EXOServicePrincipal -Times 0
@@ -174,7 +174,7 @@ Describe 'Set-RBAC4AppEntry -AccessGroupType' {
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = $Identity; Name = $Identity; DisplayName = $Identity; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
-        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppDistributionGroup { [pscustomobject]@{ OwnerRequested = 'o'; OwnerAdded = 'o'; AlreadyExisted = $false; Group = [pscustomobject]@{ Identity = $Name } } }
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppDistributionGroup { [pscustomobject]@{ OwnerRequested = @('o'); OwnerAdded = @('o'); AlreadyExisted = $false; Group = [pscustomobject]@{ Identity = $Name } } }
         Mock -ModuleName EXORBACforAppManagement Register-EXOServicePrincipal { }
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
         Mock -ModuleName EXORBACforAppManagement Add-DistributionGroupMember { }

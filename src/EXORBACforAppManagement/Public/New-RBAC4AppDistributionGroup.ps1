@@ -15,23 +15,29 @@ New-RBAC4AppUnifiedGroup so the two helpers are interchangeable behind New-RBAC4
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
 .PARAMETER AppName
-Application name used to derive the group name. Combined with -Prefix as "{Prefix}-{AppName}".
-Mutually exclusive with -Name.
+Application name used to derive the group name. Combined with -Prefix as "{Prefix}-{AppName}",
+then sanitized via Get-SafeName (spaces, tabs, commas, and any other character outside
+letters/digits/dash are stripped, since Exchange's Alias rejects them). Mutually exclusive with
+-Name.
 
 .PARAMETER Prefix
 Prefix prepended to -AppName when deriving the group name. Defaults to 'UDLRAo1'.
 Only valid with -AppName.
 
 .PARAMETER Name
-Name and Alias of the distribution list. Expected to already be a safe value (<= 63 chars,
-alphanumeric/dash); callers such as New-RBAC4AppEntry sanitize it with Get-SafeName first.
-Mutually exclusive with -AppName / -Prefix.
+Name and Alias of the distribution list. Sanitized via Get-SafeName (<= 63 chars,
+alphanumeric/dash only - spaces, tabs, commas, semicolons, and other characters Exchange's Alias
+rejects are stripped) regardless of whether the caller already sanitized it. Mutually exclusive
+with -AppName / -Prefix.
 
 .PARAMETER DisplayName
 Display name for the group. Defaults to "{Name} - RBAC for APP".
 
 .PARAMETER ManagedBy
-Recipient assigned as the group owner. Defaults to the GraphAPI-Dummy-owner placeholder.
+One or more recipients assigned as the group's owners. Defaults to the GraphAPI-Dummy-owner
+placeholder. Each is resolved independently via Get-Recipient; one that cannot be resolved is
+still passed through as-is (an owner cannot be skipped the way a member can - the group must be
+created with at least one ManagedBy value).
 
 .PARAMETER BootstrapMember
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
@@ -54,9 +60,9 @@ Shows the planned distribution list creation without making changes (explicit na
 .OUTPUTS
 PSCustomObject
 
-A summary object describing the group: Name, DisplayName, OwnerRequested (the -ManagedBy input),
-OwnerAdded (the owner actually applied/in place), AlreadyExisted, and Group (the underlying Exchange
-Online distribution group object, existing or newly created).
+A summary object describing the group: Name, DisplayName, OwnerRequested (the -ManagedBy input, as
+an array), OwnerAdded (the owners actually applied/in place, as an array), AlreadyExisted, and Group
+(the underlying Exchange Online distribution group object, existing or newly created).
 
 .NOTES
 Requires a connected Exchange Online session (Get-DistributionGroup, New-DistributionGroup,
@@ -84,7 +90,7 @@ function New-RBAC4AppDistributionGroup {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagedBy = 'GraphAPI-Dummy-owner',
+        [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy'
@@ -95,18 +101,24 @@ function New-RBAC4AppDistributionGroup {
             $Name = '{0}-{1}' -f $Prefix, $AppName
         }
 
+        # --- Name/Alias must be free of spaces and other characters Exchange's Alias rejects.
+        # Callers such as New-RBAC4AppEntry already pass an already-safe name (sanitizing again is
+        # a no-op then), but -AppName/-Prefix are built from raw caller input here, and -Name may
+        # also be passed directly by a caller that skipped sanitizing it - always sanitize.
+        $Name = Get-SafeName -s $Name
+
         if (-not $DisplayName) { $DisplayName = '{0} - RBAC for APP' -f $Name }
 
         Write-Verbose -Message ("Checking distribution list '{0}'." -f $Name)
         $existingGroup = Get-DistributionGroup -Identity $Name -ErrorAction SilentlyContinue
         if ($existingGroup) {
-            $existingOwner = ($existingGroup.ManagedBy | Where-Object { $_ }) -join ', '
+            $existingOwner = @($existingGroup.ManagedBy | Where-Object { $_ })
             Write-Warning -Message ("Distribution list '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Distribution list '{0}' already exists; skipping creation." -f $Name)
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $existingGroup.DisplayName
-                OwnerRequested = $ManagedBy
+                OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
                 AlreadyExisted = $true
                 Group          = $existingGroup
@@ -115,18 +127,24 @@ function New-RBAC4AppDistributionGroup {
 
         Write-Warning -Message ('{0} do not yet exists' -f $Name)
 
-        # Resolve the requested owner (like members are resolved via Get-Recipient). Unlike a member,
-        # an owner cannot be skipped: the group must be created with a ManagedBy, so if the recipient
-        # cannot be resolved we warn and fall back to the raw -ManagedBy value.
-        $resolvedOwner = $ManagedBy
-        $ownerRecipient = Get-Recipient -Identity $ManagedBy -ErrorAction SilentlyContinue
-        if ($ownerRecipient) {
-            $resolvedOwner = [string]$ownerRecipient.PrimarySmtpAddress
-            Write-Verbose -Message ("Owner '{0}' resolved to '{1}'." -f $ManagedBy, $resolvedOwner)
+        # Resolve each requested owner independently (like members are resolved via Get-Recipient).
+        # Unlike a member, an owner cannot be skipped: the group must be created with at least one
+        # ManagedBy value, so an owner that cannot be resolved is still passed through as-is rather
+        # than dropped.
+        $resolvedOwners = [System.Collections.Generic.List[string]]::new()
+        foreach ($owner in @($ManagedBy | Where-Object { $_ })) {
+            $ownerRecipient = Get-Recipient -Identity $owner -ErrorAction SilentlyContinue
+            if ($ownerRecipient) {
+                $resolved = [string]$ownerRecipient.PrimarySmtpAddress
+                $resolvedOwners.Add($resolved)
+                Write-Verbose -Message ("Owner '{0}' resolved to '{1}'." -f $owner, $resolved)
+            }
+            else {
+                Write-Warning -Message ("Owner recipient '{0}' could not be resolved; using the requested value as-is." -f $owner)
+                $resolvedOwners.Add($owner)
+            }
         }
-        else {
-            Write-Warning -Message ("Owner recipient '{0}' could not be resolved; using the requested value as-is." -f $ManagedBy)
-        }
+        $resolvedOwner = @($resolvedOwners)
 
         $initialMembers = @()
         if ($BootstrapMember) { $initialMembers += $BootstrapMember }
@@ -165,7 +183,7 @@ function New-RBAC4AppDistributionGroup {
                 return [pscustomobject]@{
                     Name           = $Name
                     DisplayName    = $configuredGroup.DisplayName
-                    OwnerRequested = $ManagedBy
+                    OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
                     AlreadyExisted = $false
                     Group          = $configuredGroup
@@ -175,7 +193,7 @@ function New-RBAC4AppDistributionGroup {
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $ndg.DisplayName
-                OwnerRequested = $ManagedBy
+                OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
                 AlreadyExisted = $false
                 Group          = $ndg

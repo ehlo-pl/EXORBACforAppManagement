@@ -13,14 +13,18 @@ place and a warning is emitted. A summary object describing the resolved group i
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
 .PARAMETER Name
-Name and Alias of the Unified Group. Expected to already be a safe value (<= 63 chars,
-alphanumeric/dash); callers such as New-RBAC4AppEntry sanitize it with Get-SafeName first.
+Name and Alias of the Unified Group. Sanitized via Get-SafeName (<= 63 chars, alphanumeric/dash
+only - spaces, tabs, commas, semicolons, and other characters Exchange's Alias rejects are
+stripped) regardless of whether the caller already sanitized it.
 
 .PARAMETER DisplayName
 Display name for the group. Defaults to "{Name} - RBAC for APP".
 
 .PARAMETER ManagedBy
-Recipient assigned as the group owner. Defaults to the GraphAPI-Dummy-owner placeholder.
+One or more recipients assigned as the group's owners. Defaults to the GraphAPI-Dummy-owner
+placeholder. Each is resolved independently via Get-Recipient; one that cannot be resolved is
+still passed through as-is (an owner cannot be skipped the way a member can - the group must be
+created with at least one ManagedBy value).
 
 .PARAMETER BootstrapMember
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
@@ -33,9 +37,9 @@ Shows the planned Unified Group creation without making changes.
 .OUTPUTS
 PSCustomObject
 
-A summary object describing the group: Name, DisplayName, OwnerRequested (the -ManagedBy input),
-OwnerAdded (the owner actually applied/in place), AlreadyExisted, and Group (the underlying Exchange
-Online Unified Group object, existing or newly created).
+A summary object describing the group: Name, DisplayName, OwnerRequested (the -ManagedBy input, as
+an array), OwnerAdded (the owners actually applied/in place, as an array), AlreadyExisted, and Group
+(the underlying Exchange Online Unified Group object, existing or newly created).
 
 .NOTES
 Requires a connected Exchange Online session only (Get-UnifiedGroup, New-UnifiedGroup,
@@ -56,26 +60,31 @@ function New-RBAC4AppUnifiedGroup {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagedBy = 'GraphAPI-Dummy-owner',
+        [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy'
     )
 
     process {
+        # --- Name/Alias must be free of spaces and other characters Exchange's Alias rejects.
+        # Callers such as New-RBAC4AppEntry already pass an already-safe name (sanitizing again is
+        # a no-op then), but a caller invoking this directly may not have - always sanitize.
+        $Name = Get-SafeName -s $Name
+
         if (-not $DisplayName) { $DisplayName = '{0} - RBAC for APP' -f $Name }
 
         Write-Verbose -Message ("Checking Unified Group '{0}'." -f $Name)
         $existingGroup = Get-UnifiedGroup -Identity $Name -ErrorAction SilentlyContinue
         if ($existingGroup) {
-            $existingOwner = ($existingGroup.ManagedBy | Where-Object { $_ }) -join ', '
+            $existingOwner = @($existingGroup.ManagedBy | Where-Object { $_ })
             Write-Warning -Message ("UnifiedGroup '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Unified Group '{0}' already exists; skipping creation." -f $Name)
-            Write-Debug -Message ("Existing Unified Group details: DisplayName='{0}'; Identity='{1}'; ManagedBy='{2}'" -f $existingGroup.DisplayName, $existingGroup.Identity, $existingOwner)
+            Write-Debug -Message ("Existing Unified Group details: DisplayName='{0}'; Identity='{1}'; ManagedBy='{2}'" -f $existingGroup.DisplayName, $existingGroup.Identity, ($existingOwner -join ', '))
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $existingGroup.DisplayName
-                OwnerRequested = $ManagedBy
+                OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
                 AlreadyExisted = $true
                 Group          = $existingGroup
@@ -84,18 +93,24 @@ function New-RBAC4AppUnifiedGroup {
 
         Write-Warning -Message ('{0} do not yet exists' -f $Name)
 
-        # Resolve the requested owner (like members are resolved via Get-Recipient). Unlike a member,
-        # an owner cannot be skipped: the group must be created with a ManagedBy, so if the recipient
-        # cannot be resolved we warn and fall back to the raw -ManagedBy value.
-        $resolvedOwner = $ManagedBy
-        $ownerRecipient = Get-Recipient -Identity $ManagedBy -ErrorAction SilentlyContinue
-        if ($ownerRecipient) {
-            $resolvedOwner = [string]$ownerRecipient.PrimarySmtpAddress
-            Write-Verbose -Message ("Owner '{0}' resolved to '{1}'." -f $ManagedBy, $resolvedOwner)
+        # Resolve each requested owner independently (like members are resolved via Get-Recipient).
+        # Unlike a member, an owner cannot be skipped: the group must be created with at least one
+        # ManagedBy value, so an owner that cannot be resolved is still passed through as-is rather
+        # than dropped.
+        $resolvedOwners = [System.Collections.Generic.List[string]]::new()
+        foreach ($owner in @($ManagedBy | Where-Object { $_ })) {
+            $ownerRecipient = Get-Recipient -Identity $owner -ErrorAction SilentlyContinue
+            if ($ownerRecipient) {
+                $resolved = [string]$ownerRecipient.PrimarySmtpAddress
+                $resolvedOwners.Add($resolved)
+                Write-Verbose -Message ("Owner '{0}' resolved to '{1}'." -f $owner, $resolved)
+            }
+            else {
+                Write-Warning -Message ("Owner recipient '{0}' could not be resolved; using the requested value as-is." -f $owner)
+                $resolvedOwners.Add($owner)
+            }
         }
-        else {
-            Write-Warning -Message ("Owner recipient '{0}' could not be resolved; using the requested value as-is." -f $ManagedBy)
-        }
+        $resolvedOwner = @($resolvedOwners)
 
         $initialMembers = @()
         if ($BootstrapMember) { $initialMembers += $BootstrapMember }
@@ -107,7 +122,7 @@ function New-RBAC4AppUnifiedGroup {
         Write-Debug -Message ("  -Name            : '{0}'" -f $Name)
         Write-Debug -Message ("  -Alias           : '{0}'" -f $Name)
         Write-Debug -Message ("  -AccessType      : Private")
-        Write-Debug -Message ("  -ManagedBy       : '{0}' (requested: '{1}')" -f $resolvedOwner, $ManagedBy)
+        Write-Debug -Message ("  -ManagedBy       : '{0}' (requested: '{1}')" -f ($resolvedOwner -join ', '), ($ManagedBy -join ', '))
         Write-Debug -Message ("  -Members (count) : {0}  Values: [{1}]" -f $initialMembers.Count, (($initialMembers | Where-Object { $_ }) -join ', '))
         $connInfo = Get-ConnectionInformation -ErrorAction SilentlyContinue | Select-Object -First 1
         Write-Debug -Message ("  Calling context  : TenantId='{0}'; CallerAccount='{1}'" -f $connInfo.TenantId, $connInfo.UserPrincipalName)
@@ -132,7 +147,7 @@ function New-RBAC4AppUnifiedGroup {
             $nugElapsed = ([datetime]::UtcNow - $nugInvokeStart).TotalSeconds
             Write-Debug -Message ("[New-UnifiedGroup] EXCEPTION after {0:N2} seconds." -f $nugElapsed)
             Write-Debug -Message ("[New-UnifiedGroup] Failed for '{0}'." -f $Name)
-            Write-Debug -Message ("  ManagedBy       : '{0}' (requested: '{1}')" -f $resolvedOwner, $ManagedBy)
+            Write-Debug -Message ("  ManagedBy       : '{0}' (requested: '{1}')" -f ($resolvedOwner -join ', '), ($ManagedBy -join ', '))
             Write-Debug -Message ("  BootstrapMembers: '{0}'" -f (($initialMembers | Where-Object { $_ }) -join ', '))
             Write-Debug -Message ("  Exception type  : '{0}'" -f $_.Exception.GetType().FullName)
             Write-Debug -Message ("  Exception msg   : '{0}'" -f $_.Exception.Message)
@@ -181,7 +196,7 @@ function New-RBAC4AppUnifiedGroup {
                 return [pscustomobject]@{
                     Name           = $Name
                     DisplayName    = $configuredGroup.DisplayName
-                    OwnerRequested = $ManagedBy
+                    OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
                     AlreadyExisted = $false
                     Group          = $configuredGroup
@@ -194,7 +209,7 @@ function New-RBAC4AppUnifiedGroup {
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $nug.DisplayName
-                OwnerRequested = $ManagedBy
+                OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
                 AlreadyExisted = $false
                 Group          = $nug

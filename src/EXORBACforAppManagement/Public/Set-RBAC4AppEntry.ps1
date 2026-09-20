@@ -58,12 +58,13 @@ Get-Recipient and added if absent. Membership is additive: members already prese
 nothing is removed.
 
 .PARAMETER ManagedBy
-Recipient assigned as the Unified Group owner when the group must be created. Defaults to
-'GraphAPI-Dummy-owner' (matching New-RBAC4AppEntry).
+One or more recipients assigned as the scope group's owners when the group must be created.
+Defaults to 'GraphAPI-Dummy-owner' (matching New-RBAC4AppEntry).
 
 .PARAMETER GroupPrefix
-Prefix used when building the current Unified Group name. Defaults to 'Um365RAo1' (matching
-New-RBAC4AppEntry).
+Prefix used when building the current scope group name (matching New-RBAC4AppEntry). When
+omitted, defaults to 'UDLRAo1P' (DistributionList), 'USRAo1P' (MailEnabledSecurityGroup), or
+'Um365RAo1P' (M365Group) based on -AccessGroupType.
 
 .PARAMETER AccessGroupName
 Explicit current scope group name to reconcile instead of generating one from GroupPrefix and
@@ -71,9 +72,10 @@ the resolved display name. Required when -AccessGroupType is MailEnabledSecurity
 
 .PARAMETER AccessGroupType
 Kind of group that backs the RBAC scope (M365Group, DistributionList, or
-MailEnabledSecurityGroup). Defaults to M365Group. A MailEnabledSecurityGroup is
-on-prem/hybrid-synced: it is never created or modified, and -Members, -ManagedBy, and
--BootstrapMember are all ignored (membership and ownership are managed on-premises).
+MailEnabledSecurityGroup). Defaults to DistributionList (matching New-RBAC4AppEntry). A
+MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified, and
+-Members, -ManagedBy, and -BootstrapMember are all ignored (membership and ownership are
+managed on-premises).
 
 .PARAMETER BootstrapMember
 Optional initial member passed to New-RBAC4AppUnifiedGroup when the group must be created. Defaults
@@ -153,11 +155,10 @@ function Set-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagedBy = 'GraphAPI-Dummy-owner',
+        [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
-        [ValidateNotNullOrEmpty()]
-        [string] $GroupPrefix = 'Um365RAo1',
+        [string] $GroupPrefix = $null,
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
@@ -165,7 +166,7 @@ function Set-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'M365Group',
+        [string] $AccessGroupType = 'DistributionList',
 
         [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy',
@@ -192,6 +193,14 @@ function Set-RBAC4AppEntry {
             -not $PSBoundParameters.ContainsKey('AppId') -and
             -not $PSBoundParameters.ContainsKey('SpObjectId')) {
             throw "One of -RegisteredAppName, -AppId, or -SpObjectId must be supplied."
+        }
+
+        if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
+            $GroupPrefix = switch ($AccessGroupType) {
+                'DistributionList'         { 'UDLRAo1P' }
+                'MailEnabledSecurityGroup' { 'USRAo1P' }
+                default                    { 'Um365RAo1P' }
+            }
         }
 
         $result = [ordered]@{
@@ -345,7 +354,7 @@ function Set-RBAC4AppEntry {
             # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
             # here, so warn about any group-modifying parameter that was requested but ignored.
             if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                if ($ManagedBy -and $ManagedBy -ne 'GraphAPI-Dummy-owner') {
+                if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
                     $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -ManagedBy was ignored."
                     $result.Warnings += $skipOwnerMsg
                     Write-Warning -Message $skipOwnerMsg

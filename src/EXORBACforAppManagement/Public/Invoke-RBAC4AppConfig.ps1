@@ -1,13 +1,16 @@
 ﻿<#
 .SYNOPSIS
-Provisions Exchange Online RBAC from a YAML config file written by New-RBAC4AppConfig.
+Provisions Exchange Online RBAC from a YAML or JSON config file written by New-RBAC4AppConfig.
 
 .DESCRIPTION
 Invoke-RBAC4AppConfig is the ExchangeOnlineManagement half of the two-session workflow.
-It reads a YAML config file produced by New-RBAC4AppConfig (which runs in a Microsoft Graph
+It reads a config file produced by New-RBAC4AppConfig (which runs in a Microsoft Graph
 session) and provisions every Exchange Online resource — scope group creation, member addition,
 EXO service principal registration, and management role assignment — without calling any
 Microsoft Graph cmdlets.
+
+The config file's format (YAML or JSON) is auto-detected from the -Path extension (.json vs
+.yml/.yaml) unless -Format overrides it.
 
 This separates the two modules into distinct PowerShell sessions, avoiding the MSAL/WAM
 assembly conflict that can occur when both Microsoft.Graph and ExchangeOnlineManagement are
@@ -19,11 +22,18 @@ a role assignment that already exists and is scoped to the same group is left al
 notes it was skipped); requested members are still added to the group regardless.
 
 .PARAMETER Path
-Path to the YAML file produced by New-RBAC4AppConfig.
+Path to the YAML or JSON file produced by New-RBAC4AppConfig.
+
+.PARAMETER Format
+Config file format to read: Auto (default, detected from the -Path extension), Yaml, or Json.
+Use Yaml/Json to force a format when the file's extension doesn't match its content.
 
 .EXAMPLE
 Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.yml -WhatIf
 Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.yml
+
+.EXAMPLE
+Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.json
 
 .OUTPUTS
 PSCustomObject — same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
@@ -36,7 +46,11 @@ function Invoke-RBAC4AppConfig {
     param(
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
-        [string] $Path
+        [string] $Path,
+
+        [Parameter()]
+        [ValidateSet('Auto', 'Yaml', 'Json')]
+        [string] $Format = 'Auto'
     )
 
     begin {
@@ -50,11 +64,22 @@ function Invoke-RBAC4AppConfig {
             return
         }
 
-        $content = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
-        $config  = ConvertFrom-RBAC4AppYaml -Content $content
+        $resolvedFormat = $Format
+        if ($resolvedFormat -eq 'Auto') {
+            $resolvedFormat = if ([System.IO.Path]::GetExtension($Path) -match '(?i)^\.json$') { 'Json' } else { 'Yaml' }
+        }
 
-        if ($config.SchemaVersion -ne '2.0') {
-            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '2.0' (scope-group settings moved from Rbac: to their own RbacScope: section). Re-generate the config with New-RBAC4AppConfig."
+        $content = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+        try {
+            $config = if ($resolvedFormat -eq 'Json') { $content | ConvertFrom-Json } else { ConvertFrom-RBAC4AppYaml -Content $content }
+        }
+        catch {
+            Write-Error "Config '$Path' could not be parsed as $resolvedFormat`: $($_.Exception.Message)"
+            return
+        }
+
+        if ($config.SchemaVersion -ne '3.0') {
+            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '3.0' (RbacScope.ManagedBy is now a YAML list, supporting multiple owners, instead of a single scalar value). Re-generate the config with New-RBAC4AppConfig."
             return
         }
         if (-not $config.Application.SpObjectId) {
@@ -78,7 +103,7 @@ function Invoke-RBAC4AppConfig {
         $GroupPrefix     = $config.RbacScope.GroupPrefix
         $AccessGroupName = $config.RbacScope.AccessGroupName
         $Members         = @($config.RbacScope.Members)
-        $ManagedBy       = $config.RbacScope.ManagedBy
+        $ManagedBy       = @($config.RbacScope.ManagedBy)
         $BootstrapMember = $config.RbacScope.BootstrapMember
         $roles           = @($config.Rbac.Roles)
 
@@ -91,7 +116,7 @@ function Invoke-RBAC4AppConfig {
             TenantId            = $config.TenantId
             AccessGroupType     = $AccessGroupType
             ScopeGroupName      = $null
-            OwnerRequested      = $ManagedBy
+            OwnerRequested      = @($ManagedBy)
             OwnerAdded          = $null
             MembersRequested    = @($Members)
             MembersAdded        = @()
@@ -149,7 +174,7 @@ function Invoke-RBAC4AppConfig {
                     $result.Warnings += $skipMsg
                     Write-Warning $skipMsg
                 }
-                if ($ManagedBy -and $ManagedBy -ne 'GraphAPI-Dummy-owner') {
+                if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
                     $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; ManagedBy from config was ignored."
                     $result.Warnings += $skipOwnerMsg
                     Write-Warning $skipOwnerMsg
