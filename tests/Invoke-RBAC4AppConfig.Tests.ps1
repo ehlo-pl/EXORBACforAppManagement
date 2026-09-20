@@ -187,6 +187,23 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
+    It 'records an error when a same-named assignment exists for a different role' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Calendars.Read'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+            }
+        }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+        ($res.Errors -join ';') | Should -Match "bound to role 'Application Calendars.Read', not 'Application Mail.Send'"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
     It 'does not call mutating commands under -WhatIf' {
         $null = Invoke-RBAC4AppConfig -Path $script:configPath -WhatIf
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup          -Times 0

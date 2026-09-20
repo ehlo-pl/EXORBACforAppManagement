@@ -372,6 +372,11 @@ function New-RBAC4AppEntry {
                 # were already added above regardless of this check.
                 $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
                 if ($existingAssignment) {
+                    $existingRole = Get-NormalizeRole ([string]$existingAssignment.Role)
+                    if ($existingRole -ne $roleItem) {
+                        $result.Errors += "Role assignment '$rbacNameBase' already exists but is bound to role '$existingRole', not '$roleItem'; leaving it unchanged."
+                        continue
+                    }
                     $existingScopeGroup = Resolve-RBAC4AppScopeGroupName -Assignment $existingAssignment
                     $scopedToTarget = [string]$existingScopeGroup -eq $umGroupName
                     if ($scopedToTarget) {

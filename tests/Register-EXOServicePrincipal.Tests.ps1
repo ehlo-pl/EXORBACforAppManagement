@@ -48,11 +48,13 @@ Describe 'Register-EXOServicePrincipal' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ServicePrincipal -Times 0
     }
 
-    It 'skips creation when one already matches by DisplayName' {
+    It 'errors when the requested DisplayName is already used by a different AppId' {
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }) }
         Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { throw 'should not be called' }
 
-        $null = Register-EXOServicePrincipal -AppId $script:AppId -ObjectId $script:ObjectId -DisplayName 'Contoso_SP' -Confirm:$false -WarningAction SilentlyContinue
+        {
+            Register-EXOServicePrincipal -AppId $script:AppId -ObjectId $script:ObjectId -DisplayName 'Contoso_SP' -Confirm:$false -WarningAction SilentlyContinue
+        } | Should -Throw '*already used by AppId*'
 
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ServicePrincipal -Times 0
     }
