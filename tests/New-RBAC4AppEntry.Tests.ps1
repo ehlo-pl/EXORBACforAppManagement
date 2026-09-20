@@ -83,7 +83,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
     It 'uses AccessGroupName as the Unified Group scope' {
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupName 'RBAC-AppScope-Contoso' -Role 'Mail.Send' -WhatIf
 
-        $r.UnifiedGroupName | Should -Be 'RBAC-AppScope-Contoso'
+        $r.ScopeGroupName | Should -Be 'RBAC-AppScope-Contoso'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1 -ParameterFilter {
             $Name -eq 'RBAC-AppScope-Contoso'
         }
@@ -130,7 +130,7 @@ Describe 'New-RBAC4AppEntry -AccessGroupType' {
     It 'MailEnabledSecurityGroup: references an existing group, never creates, and skips members' {
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -Members 'shared@contoso.com' -Role 'Mail.Send' -Confirm:$false
         $r.AccessGroupType  | Should -Be 'MailEnabledSecurityGroup'
-        $r.UnifiedGroupName | Should -Be 'OnPrem-Scope'
+        $r.ScopeGroupName | Should -Be 'OnPrem-Scope'
         ($r.Warnings -join ';') | Should -Match 'managed on-premises'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppDistributionGroup -Times 0

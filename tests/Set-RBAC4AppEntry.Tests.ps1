@@ -107,7 +107,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
 
         $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
 
-        $r.UnifiedGroupCreated | Should -BeTrue
+        $r.ScopeGroupCreated | Should -BeTrue
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1
     }
 
@@ -183,7 +183,7 @@ Describe 'Set-RBAC4AppEntry -AccessGroupType' {
         $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType DistributionList -Members 'new@contoso.com' -Confirm:$false
 
         $r.AccessGroupType | Should -Be 'DistributionList'
-        $r.UnifiedGroupCreated | Should -BeTrue
+        $r.ScopeGroupCreated | Should -BeTrue
         $r.MembersAdded | Should -Contain 'new@contoso.com'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppDistributionGroup -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-DistributionGroupMember -Times 1

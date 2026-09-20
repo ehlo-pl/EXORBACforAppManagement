@@ -184,8 +184,8 @@ function Set-RBAC4AppEntry {
             CurrentGroupName          = $null
             TargetGroupName           = $null
             GroupChanged              = $false
-            UnifiedGroupExisted       = $false
-            UnifiedGroupCreated       = $false
+            ScopeGroupExisted         = $false
+            ScopeGroupCreated         = $false
             ExoServicePrincipalName   = $null
             ExoServicePrincipalExisted = $false
             ExoServicePrincipalCreated = $false
@@ -266,7 +266,7 @@ function Set-RBAC4AppEntry {
                 'MailEnabledSecurityGroup' { Get-Recipient -Identity $targetGroup -ErrorAction SilentlyContinue }
                 default                    { Get-UnifiedGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
             }
-            $result.UnifiedGroupExisted = [bool]$group
+            $result.ScopeGroupExisted = [bool]$group
             if (-not $group) {
                 if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                     # On-prem/hybrid-synced groups cannot be created in the cloud.
@@ -278,7 +278,7 @@ function Set-RBAC4AppEntry {
                         if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
                     }
                     if ($ugResult) {
-                        $result.UnifiedGroupCreated = $true
+                        $result.ScopeGroupCreated = $true
                         $group = $ugResult.Group
                     }
                 }
@@ -413,7 +413,7 @@ function Set-RBAC4AppEntry {
             }
 
             # IsValid: every component is present after this run (true unchanged state, or actually applied).
-            $groupOk = $result.UnifiedGroupExisted -or $result.UnifiedGroupCreated
+            $groupOk = $result.ScopeGroupExisted -or $result.ScopeGroupCreated
             $exoOk   = $result.ExoServicePrincipalExisted -or $result.ExoServicePrincipalCreated
             $result.IsValid = ($result.Errors.Count -eq 0) -and $groupOk -and $exoOk -and $rolesAllSatisfied
 

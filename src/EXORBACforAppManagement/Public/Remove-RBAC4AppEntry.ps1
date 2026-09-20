@@ -134,8 +134,8 @@ function Remove-RBAC4AppEntry {
             SpObjectId          = $null
             TenantId            = $tenantid
             AccessGroupType     = $AccessGroupType
-            UnifiedGroupName    = $null
-            UnifiedGroupExisted = $false
+            ScopeGroupName      = $null
+            ScopeGroupExisted   = $false
             AssignmentsScoped   = @()
             OwnAssignments      = @()
             ForeignAssignments  = @()
@@ -188,14 +188,14 @@ function Remove-RBAC4AppEntry {
             else {
                 $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
             }
-            $result.UnifiedGroupName = $umGroupName
+            $result.ScopeGroupName = $umGroupName
 
             $group = switch ($AccessGroupType) {
                 'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
                 'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
                 default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
             }
-            $result.UnifiedGroupExisted = [bool]$group
+            $result.ScopeGroupExisted = [bool]$group
 
             # --- Assignments scoped to the group (client-side filter: no -App on the EXO cmdlet).
             $scoped = @(Get-ManagementRoleAssignment -ErrorAction SilentlyContinue) | Where-Object {

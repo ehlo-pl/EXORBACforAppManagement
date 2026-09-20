@@ -53,7 +53,7 @@ Describe 'Remove-RBAC4AppEntry' {
         $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
 
         $r.IsRemoved | Should -BeTrue
-        $r.UnifiedGroupName | Should -Be 'Um365RAo1-Contoso'
+        $r.ScopeGroupName | Should -Be 'Um365RAo1-Contoso'
         $r.OwnAssignments | Should -Be @('AppMailSend-Contoso')
         $r.ForeignAssignments | Should -BeNullOrEmpty
         $r.AssignmentsRemoved | Should -Be @('AppMailSend-Contoso')
@@ -110,12 +110,12 @@ Describe 'Remove-RBAC4AppEntry' {
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
     }
 
-    It 'reports UnifiedGroupExisted false when the group is already gone' {
+    It 'reports ScopeGroupExisted false when the group is already gone' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
 
         $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
 
-        $r.UnifiedGroupExisted | Should -BeFalse
+        $r.ScopeGroupExisted | Should -BeFalse
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
     }
 

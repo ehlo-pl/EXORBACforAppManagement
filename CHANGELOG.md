@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-09-20
+
+### Changed
+- Renamed output properties across `New-RBAC4AppEntry`, `Remove-RBAC4AppEntry`,
+  `Test-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig` for consistency with the
+  generalized `-AccessGroupType` (a scope group is not always an M365 Unified Group):
+  `UnifiedGroupName` → `ScopeGroupName`, `UnifiedGroupExists`/`UnifiedGroupExisted` →
+  `ScopeGroupExists`/`ScopeGroupExisted`, `UnifiedGroupCreated` → `ScopeGroupCreated`. **Breaking
+  change** for any script consuming these result objects by the old property names.
+
 ## [0.6.1] - 2026-09-20
 
 ### Added

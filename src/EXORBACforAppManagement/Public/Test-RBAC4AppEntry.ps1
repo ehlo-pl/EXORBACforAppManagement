@@ -75,7 +75,7 @@ Reports which components are still missing before/after a run.
 PSCustomObject
 
 A summary object with the resolved identity, per-component existence flags
-(ServicePrincipalExists, UnifiedGroupExists, ExoServicePrincipalExists), the expected/found/missing
+(ServicePrincipalExists, ScopeGroupExists, ExoServicePrincipalExists), the expected/found/missing
 role assignments, optional membership results, an overall IsValid flag, a Missing list, and any
 Warnings/Errors.
 
@@ -142,8 +142,8 @@ function Test-RBAC4AppEntry {
             TenantId                = $tenantid
             AccessGroupType         = $AccessGroupType
             ServicePrincipalExists  = $false
-            UnifiedGroupName        = $null
-            UnifiedGroupExists      = $false
+            ScopeGroupName          = $null
+            ScopeGroupExists        = $false
             ExoServicePrincipalName = $null
             ExoServicePrincipalExists = $false
             RolesExpected           = @()
@@ -200,14 +200,14 @@ function Test-RBAC4AppEntry {
             else {
                 $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
             }
-            $result.UnifiedGroupName = $umGroupName
+            $result.ScopeGroupName = $umGroupName
             $group = switch ($AccessGroupType) {
                 'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
                 'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
                 default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
             }
             if ($group) {
-                $result.UnifiedGroupExists = $true
+                $result.ScopeGroupExists = $true
             }
             else {
                 $result.Missing += "$AccessGroupType '$umGroupName'"
@@ -255,7 +255,7 @@ function Test-RBAC4AppEntry {
                 $requested = @($Members | Where-Object { $_ })
                 $result.MembersExpected = $requested
 
-                if ($result.UnifiedGroupExists) {
+                if ($result.ScopeGroupExists) {
                     $links = if ($AccessGroupType -eq 'M365Group') {
                         @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
                     }
@@ -285,7 +285,7 @@ function Test-RBAC4AppEntry {
             }
 
             $result.IsValid = $result.ServicePrincipalExists -and
-                              $result.UnifiedGroupExists -and
+                              $result.ScopeGroupExists -and
                               $result.ExoServicePrincipalExists -and
                               ($result.RoleAssignmentsMissing.Count -eq 0) -and
                               ($result.MembersMissing.Count -eq 0)

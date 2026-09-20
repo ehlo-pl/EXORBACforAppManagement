@@ -268,7 +268,7 @@ resolvable service principal, the scoped Unified Group, the Exchange Online serv
 pointer, and one role assignment per role (looked up by the deterministic assignment name). It
 mirrors `New-RBAC4AppEntry`'s `-Role` / `-GroupPrefix` defaults and optionally verifies `-Members`
 against the group's membership. Returns a summary `[pscustomobject]` with per-component flags
-(`ServicePrincipalExists`, `UnifiedGroupExists`, `ExoServicePrincipalExists`), the
+(`ServicePrincipalExists`, `ScopeGroupExists`, `ExoServicePrincipalExists`), the
 expected/found/missing role assignments, a `Missing` list, and an overall `IsValid`.
 
 ```powershell
@@ -340,7 +340,7 @@ member addition, EXO service principal registration, and management role assignm
 calling any Microsoft Graph cmdlet.
 
 Returns the same summary object shape as `New-RBAC4AppEntry` (`ResolvedDisplay`, `AppId`,
-`SpObjectId`, `UnifiedGroupName`, `RolesNormalized`, `RoleAssignmentsName`, `MembersAdded`,
+`SpObjectId`, `ScopeGroupName`, `RolesNormalized`, `RoleAssignmentsName`, `MembersAdded`,
 `Warnings`, `Errors`).
 
 ```powershell

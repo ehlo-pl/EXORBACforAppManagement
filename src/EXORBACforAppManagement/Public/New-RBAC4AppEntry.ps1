@@ -169,7 +169,7 @@ function New-RBAC4AppEntry {
             SpObjectId        = $null
             TenantId          = $tenantid
             AccessGroupType   = $AccessGroupType
-            UnifiedGroupName  = $null
+            ScopeGroupName    = $null
             OwnerRequested    = $ManagedBy
             OwnerAdded        = $null
             MembersRequested  = @($Members)
@@ -226,7 +226,7 @@ function New-RBAC4AppEntry {
                 $umGroupName = "{0}-{1}" -f $GroupPrefix, $sp.DisplayName
                 $umGroupName = Get-SafeName($umGroupName)
             }
-            $result.UnifiedGroupName = $umGroupName
+            $result.ScopeGroupName = $umGroupName
 
             # --- Ensure the scope group (delegated to New-RBAC4AppScopeGroup, which dispatches on type).
             Write-Verbose -Message ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $sp.DisplayName, $sp.Id)

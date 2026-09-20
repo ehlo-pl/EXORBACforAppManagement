@@ -22,7 +22,7 @@ Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.yml
 
 .OUTPUTS
 PSCustomObject — same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
-UnifiedGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, Warnings, Errors, etc.).
+ScopeGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, Warnings, Errors, etc.).
 #>
 function Invoke-RBAC4AppConfig {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -80,7 +80,7 @@ function Invoke-RBAC4AppConfig {
             SpObjectId          = $spId
             TenantId            = $config.TenantId
             AccessGroupType     = $AccessGroupType
-            UnifiedGroupName    = $null
+            ScopeGroupName      = $null
             OwnerRequested      = $ManagedBy
             OwnerAdded          = $null
             MembersRequested    = @($Members)
@@ -104,7 +104,7 @@ function Invoke-RBAC4AppConfig {
             else {
                 $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
             }
-            $result.UnifiedGroupName = $umGroupName
+            $result.ScopeGroupName = $umGroupName
 
             # --- Ensure scope group
             Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)

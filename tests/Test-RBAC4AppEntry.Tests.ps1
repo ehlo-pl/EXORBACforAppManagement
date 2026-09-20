@@ -46,9 +46,9 @@ Describe 'Test-RBAC4AppEntry' {
 
         $r.IsValid | Should -BeTrue
         $r.ServicePrincipalExists | Should -BeTrue
-        $r.UnifiedGroupExists | Should -BeTrue
+        $r.ScopeGroupExists | Should -BeTrue
         $r.ExoServicePrincipalExists | Should -BeTrue
-        $r.UnifiedGroupName | Should -Be 'Um365RAo1-Contoso'
+        $r.ScopeGroupName | Should -Be 'Um365RAo1-Contoso'
         $r.ExoServicePrincipalName | Should -Be 'Contoso_SP'
         $r.RoleAssignmentsFound | Should -Be @('AppMailSend-Contoso')
         $r.RoleAssignmentsMissing | Should -BeNullOrEmpty
@@ -65,7 +65,7 @@ Describe 'Test-RBAC4AppEntry' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
 
         $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso'
-        $r.UnifiedGroupExists | Should -BeFalse
+        $r.ScopeGroupExists | Should -BeFalse
         $r.IsValid | Should -BeFalse
         $r.Missing | Should -Contain "M365Group 'Um365RAo1-Contoso'"
     }
@@ -146,7 +146,7 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
         $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType DistributionList -Members 'shared@contoso.com'
 
         $r.AccessGroupType | Should -Be 'DistributionList'
-        $r.UnifiedGroupExists | Should -BeTrue
+        $r.ScopeGroupExists | Should -BeTrue
         $r.MembersPresent | Should -Be @('shared@contoso.com')
         $r.IsValid | Should -BeTrue
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-DistributionGroup -Times 1
@@ -158,8 +158,8 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
 
         $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope'
 
-        $r.UnifiedGroupName | Should -Be 'OnPrem-Scope'
-        $r.UnifiedGroupExists | Should -BeFalse
+        $r.ScopeGroupName | Should -Be 'OnPrem-Scope'
+        $r.ScopeGroupExists | Should -BeFalse
         $r.Missing | Should -Contain "MailEnabledSecurityGroup 'OnPrem-Scope'"
     }
 
