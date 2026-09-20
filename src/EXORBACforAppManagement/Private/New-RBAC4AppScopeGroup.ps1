@@ -28,7 +28,7 @@ function New-RBAC4AppScopeGroup {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagedBy = 'GraphAPI-Dummy-owner',
+        [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy'
@@ -49,11 +49,11 @@ function New-RBAC4AppScopeGroup {
             if (-not $existing) {
                 throw "MailEnabledSecurityGroup '$Name' was not found. On-prem/hybrid-synced groups must already exist; this module does not create them. Supply an existing group via -AccessGroupName."
             }
-            $existingOwner = ($existing.ManagedBy | Where-Object { $_ }) -join ', '
+            $existingOwner = @($existing.ManagedBy | Where-Object { $_ })
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $existing.DisplayName
-                OwnerRequested = $ManagedBy
+                OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
                 AlreadyExisted = $true
                 Group          = $existing

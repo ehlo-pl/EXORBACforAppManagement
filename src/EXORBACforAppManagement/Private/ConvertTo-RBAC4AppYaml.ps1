@@ -30,7 +30,10 @@
     foreach ($member in @($Config.RbacScope.Members)) {
         $lines.Add("    - $member")
     }
-    $lines.Add("  ManagedBy: $($Config.RbacScope.ManagedBy)")
+    $lines.Add('  ManagedBy:')
+    foreach ($owner in @($Config.RbacScope.ManagedBy)) {
+        $lines.Add("    - $owner")
+    }
     $lines.Add("  BootstrapMember: $($Config.RbacScope.BootstrapMember)")
 
     return $lines -join [System.Environment]::NewLine

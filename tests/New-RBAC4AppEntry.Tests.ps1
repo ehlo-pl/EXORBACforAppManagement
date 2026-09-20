@@ -68,7 +68,7 @@ Describe 'New-RBAC4AppEntry SP resolution' {
     It 'bootstraps a never-before-registered service principal when AppId, SpObjectId, and RegisteredAppName are all supplied' {
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
         Mock -ModuleName EXORBACforAppManagement New-RBAC4AppUnifiedGroup {
-            [pscustomobject]@{ OwnerRequested = 'owner@contoso.com'; OwnerAdded = 'owner@contoso.com' }
+            [pscustomobject]@{ OwnerRequested = @('owner@contoso.com'); OwnerAdded = @('owner@contoso.com') }
         }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Identity = 'g'; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
@@ -77,7 +77,7 @@ Describe 'New-RBAC4AppEntry SP resolution' {
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
         Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
 
-        $r = New-RBAC4AppEntry -RegisteredAppName 'NewApp' -AppId '44444444-4444-4444-4444-444444444444' -SpObjectId '55555555-5555-5555-5555-555555555555' -Role 'Mail.Send' -Confirm:$false
+        $r = New-RBAC4AppEntry -RegisteredAppName 'NewApp' -AppId '44444444-4444-4444-4444-444444444444' -SpObjectId '55555555-5555-5555-5555-555555555555' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.Errors | Should -BeNullOrEmpty
         $r.ResolvedDisplay | Should -Be 'NewApp'
@@ -91,7 +91,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         Mock -ModuleName EXORBACforAppManagement New-RBAC4AppUnifiedGroup {
-            [pscustomobject]@{ OwnerRequested = 'owner@contoso.com'; OwnerAdded = 'owner@contoso.com' }
+            [pscustomobject]@{ OwnerRequested = @('owner@contoso.com'); OwnerAdded = @('owner@contoso.com') }
         }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Identity = 'g'; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
@@ -105,20 +105,28 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
     }
 
     It 'normalizes the role and builds the assignment name' {
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Members 'shared@contoso.com' -Role 'Mail.Send' -WhatIf
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Members 'shared@contoso.com' -Role 'Mail.Send' -WhatIf
         $r.RolesNormalized | Should -Contain 'Application Mail.Send'
         $r.RoleAssignmentsName[0] | Should -BeLike 'AppMailSend-*'
     }
 
     It 'reports the requested and added Unified Group owner' {
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -ManagedBy 'owner@contoso.com' -Role 'Mail.Send' -WhatIf
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -ManagedBy 'owner@contoso.com' -Role 'Mail.Send' -WhatIf
         $r.PSObject.Properties.Name | Should -Contain 'OwnerRequested'
         $r.PSObject.Properties.Name | Should -Contain 'OwnerAdded'
-        $r.OwnerRequested | Should -Be 'owner@contoso.com'
+        $r.OwnerRequested | Should -Be @('owner@contoso.com')
+    }
+
+    It 'passes multiple -ManagedBy owners through to New-RBAC4AppUnifiedGroup' {
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -ManagedBy 'owner1@contoso.com', 'owner2@contoso.com' -Role 'Mail.Send' -WhatIf
+        $r.Errors | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1 -ParameterFilter {
+            (Compare-Object $ManagedBy @('owner1@contoso.com', 'owner2@contoso.com')).Count -eq 0
+        }
     }
 
     It 'uses AccessGroupName as the Unified Group scope' {
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupName 'RBAC-AppScope-Contoso' -Role 'Mail.Send' -WhatIf
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -AccessGroupName 'RBAC-AppScope-Contoso' -Role 'Mail.Send' -WhatIf
 
         $r.ScopeGroupName | Should -Be 'RBAC-AppScope-Contoso'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1 -ParameterFilter {
@@ -133,7 +141,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
     }
 
     It 'does not perform any mutating EXO calls under -WhatIf' {
-        $null = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -WhatIf
+        $null = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -WhatIf
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 0
@@ -143,7 +151,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
     It 'reports the pre-existing and newly-added members in MembersFinal' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @([pscustomobject]@{ PrimarySmtpAddress = 'existing@contoso.com'; Name = 'existing' }) }
 
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Members 'shared@contoso.com' -Role 'Mail.Send' -Confirm:$false
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Members 'shared@contoso.com' -Role 'Mail.Send' -Confirm:$false
 
         $r.MembersFinal | Should -Contain 'existing@contoso.com'
         $r.MembersFinal | Should -Contain 'shared@contoso.com'
@@ -154,7 +162,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
             [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
         }
 
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.RoleAssignments | Should -HaveCount 1
         ($r.Warnings -join ';') | Should -Match 'already exists and is scoped'
@@ -166,7 +174,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
             [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = 'SomeOtherGroup' }
         }
 
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.Errors | Should -BeNullOrEmpty
         ($r.Warnings -join ';') | Should -Match "scoped to 'SomeOtherGroup', not 'Um365RAo1-Contoso'"
@@ -178,8 +186,8 @@ Describe 'New-RBAC4AppEntry -AccessGroupType' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
-        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppUnifiedGroup { [pscustomobject]@{ OwnerRequested = 'o'; OwnerAdded = 'o' } }
-        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppDistributionGroup { [pscustomobject]@{ OwnerRequested = 'o'; OwnerAdded = 'o'; Group = [pscustomobject]@{ Name = 'g' } } }
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppUnifiedGroup { [pscustomobject]@{ OwnerRequested = @('o'); OwnerAdded = @('o') } }
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppDistributionGroup { [pscustomobject]@{ OwnerRequested = @('o'); OwnerAdded = @('o'); Group = [pscustomobject]@{ Name = 'g' } } }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; DisplayName = 'mesg'; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Register-EXOServicePrincipal { }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }

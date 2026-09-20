@@ -51,7 +51,7 @@ Describe 'Remove-RBAC4AppEntry' {
     }
 
     It 'removes own assignments and the group when clean' {
-        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
 
         $r.IsRemoved | Should -BeTrue
         $r.ScopeGroupName | Should -Be 'Um365RAo1-Contoso'
@@ -71,7 +71,7 @@ Describe 'Remove-RBAC4AppEntry' {
             )
         }
 
-        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
 
         $r.IsRemoved | Should -BeFalse
         $r.Reason | Should -Not -BeNullOrEmpty
@@ -88,7 +88,7 @@ Describe 'Remove-RBAC4AppEntry' {
             )
         }
 
-        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
 
         $r.IsRemoved | Should -BeFalse
         $r.RealMembers | Should -Be @('real@contoso.com')
@@ -97,7 +97,7 @@ Describe 'Remove-RBAC4AppEntry' {
     }
 
     It 'treats a group with only the bootstrap member as clean' {
-        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
 
         $r.RealMembers | Should -BeNullOrEmpty
         $r.IsRemoved | Should -BeTrue
@@ -114,7 +114,7 @@ Describe 'Remove-RBAC4AppEntry' {
     It 'reports ScopeGroupExisted false when the group is already gone' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
 
-        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
 
         $r.ScopeGroupExisted | Should -BeFalse
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0

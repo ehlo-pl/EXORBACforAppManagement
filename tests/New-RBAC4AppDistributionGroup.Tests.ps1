@@ -5,7 +5,7 @@ BeforeAll {
 
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
     function global:Get-DistributionGroup { }
-    function global:New-DistributionGroup { }
+    function global:New-DistributionGroup { param($Name, $DisplayName, $Alias, $Type, [string[]]$ManagedBy, $Members) }
     function global:Set-DistributionGroup { }
     function global:Get-Recipient { }
 }
@@ -31,8 +31,25 @@ Describe 'New-RBAC4AppDistributionGroup' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 1
         $res.AlreadyExisted | Should -BeFalse
-        $res.OwnerRequested | Should -Be 'owner@contoso.com'
-        $res.OwnerAdded     | Should -Be 'owner@contoso.com'
+        $res.OwnerRequested | Should -Be @('owner@contoso.com')
+        $res.OwnerAdded     | Should -Be @('owner@contoso.com')
+    }
+
+    It 'creates the list with multiple owners, each resolved independently' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient {
+            param($Identity)
+            [pscustomobject]@{ PrimarySmtpAddress = $Identity }
+        }
+
+        $res = New-RBAC4AppDistributionGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner1@contoso.com', 'owner2@contoso.com' -Confirm:$false
+
+        $res.OwnerRequested | Should -Be @('owner1@contoso.com', 'owner2@contoso.com')
+        $res.OwnerAdded     | Should -Be @('owner1@contoso.com', 'owner2@contoso.com')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1 -ParameterFilter {
+            (Compare-Object $ManagedBy @('owner1@contoso.com', 'owner2@contoso.com')).Count -eq 0
+        }
     }
 
     It 'warns and does not create when the list already exists' {
@@ -44,8 +61,8 @@ Describe 'New-RBAC4AppDistributionGroup' {
         ($warn.Message -join ';') | Should -Match 'already exists'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 0
         $res.AlreadyExisted | Should -BeTrue
-        $res.OwnerRequested | Should -Be 'owner@contoso.com'
-        $res.OwnerAdded     | Should -Be 'existing@contoso.com'
+        $res.OwnerRequested | Should -Be @('owner@contoso.com')
+        $res.OwnerAdded     | Should -Be @('existing@contoso.com')
     }
 
     It 'does not create under -WhatIf' {

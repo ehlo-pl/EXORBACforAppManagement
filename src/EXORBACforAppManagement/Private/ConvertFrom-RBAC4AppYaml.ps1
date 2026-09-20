@@ -21,7 +21,7 @@ function ConvertFrom-RBAC4AppYaml {
             GroupPrefix     = 'Um365RAo1'
             AccessGroupName = ''
             Members         = [System.Collections.Generic.List[string]]::new()
-            ManagedBy       = 'GraphAPI-Dummy-owner'
+            ManagedBy       = [System.Collections.Generic.List[string]]::new()
             BootstrapMember = 'GraphAPI-Dummy'
         }
     }
@@ -44,6 +44,8 @@ function ConvertFrom-RBAC4AppYaml {
                 $config.Rbac.Roles.Add($value)
             } elseif ($section -eq 'RbacScope' -and $listKey -eq 'Members') {
                 $config.RbacScope.Members.Add($value)
+            } elseif ($section -eq 'RbacScope' -and $listKey -eq 'ManagedBy') {
+                $config.RbacScope.ManagedBy.Add($value)
             }
             continue
         }
@@ -75,10 +77,10 @@ function ConvertFrom-RBAC4AppYaml {
             elseif ($section -eq 'RbacScope') {
                 switch ($key) {
                     'Members'         { $listKey = 'Members' }
+                    'ManagedBy'       { $listKey = 'ManagedBy' }
                     'AccessGroupType' { $config.RbacScope.AccessGroupType = $value; $listKey = $null }
                     'GroupPrefix'     { $config.RbacScope.GroupPrefix     = $value; $listKey = $null }
                     'AccessGroupName' { $config.RbacScope.AccessGroupName = $value; $listKey = $null }
-                    'ManagedBy'       { $config.RbacScope.ManagedBy       = $value; $listKey = $null }
                     'BootstrapMember' { $config.RbacScope.BootstrapMember = $value; $listKey = $null }
                 }
             }

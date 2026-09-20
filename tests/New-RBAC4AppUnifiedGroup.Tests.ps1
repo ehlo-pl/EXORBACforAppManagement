@@ -6,7 +6,7 @@ BeforeAll {
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
     function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
-    function global:New-UnifiedGroup { }
+    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
     function global:Set-UnifiedGroup { }
     function global:Get-Recipient { }
 }
@@ -33,8 +33,38 @@ Describe 'New-RBAC4AppUnifiedGroup' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1
         $res.AlreadyExisted | Should -BeFalse
-        $res.OwnerRequested | Should -Be 'owner@contoso.com'
-        $res.OwnerAdded     | Should -Be 'owner@contoso.com'
+        $res.OwnerRequested | Should -Be @('owner@contoso.com')
+        $res.OwnerAdded     | Should -Be @('owner@contoso.com')
+    }
+
+    It 'creates the group with multiple owners, each resolved independently' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient {
+            param($Identity)
+            [pscustomobject]@{ PrimarySmtpAddress = $Identity }
+        }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner1@contoso.com', 'owner2@contoso.com' -Confirm:$false
+
+        $res.OwnerRequested | Should -Be @('owner1@contoso.com', 'owner2@contoso.com')
+        $res.OwnerAdded     | Should -Be @('owner1@contoso.com', 'owner2@contoso.com')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
+            (Compare-Object $ManagedBy @('owner1@contoso.com', 'owner2@contoso.com')).Count -eq 0
+        }
+    }
+
+    It 'falls back to the raw value for an owner that cannot be resolved, without dropping the others' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient {
+            param($Identity)
+            if ($Identity -eq 'owner1@contoso.com') { [pscustomobject]@{ PrimarySmtpAddress = $Identity } }
+        }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner1@contoso.com', 'missing-owner@contoso.com' -Confirm:$false
+
+        $res.OwnerAdded | Should -Be @('owner1@contoso.com', 'missing-owner@contoso.com')
     }
 
     It 'warns and does not create when the group already exists' {
@@ -46,8 +76,8 @@ Describe 'New-RBAC4AppUnifiedGroup' {
         ($warn.Message -join ';') | Should -Match 'already exists'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
         $res.AlreadyExisted | Should -BeTrue
-        $res.OwnerRequested | Should -Be 'owner@contoso.com'
-        $res.OwnerAdded     | Should -Be 'existing@contoso.com'
+        $res.OwnerRequested | Should -Be @('owner@contoso.com')
+        $res.OwnerAdded     | Should -Be @('existing@contoso.com')
     }
 
     It 'does not create under -WhatIf' {

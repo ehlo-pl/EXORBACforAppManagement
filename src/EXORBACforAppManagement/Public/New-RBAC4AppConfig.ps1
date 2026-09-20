@@ -1,15 +1,17 @@
 ﻿<#
 .SYNOPSIS
-Resolves an Entra service principal and writes a YAML configuration file for use with
+Resolves an Entra service principal and writes a YAML or JSON configuration file for use with
 Invoke-RBAC4AppConfig in a separate ExchangeOnlineManagement-only session.
 
 .DESCRIPTION
 New-RBAC4AppConfig is the Microsoft Graph half of the two-session workflow. It resolves the
 Entra service principal (via Get-MgServicePrincipal), captures the RBAC provisioning
-parameters, and serialises everything to a YAML file. The resulting file contains no secrets
-and can be handed to Invoke-RBAC4AppConfig running in a separate PowerShell session where
-only ExchangeOnlineManagement is connected — working around the MSAL/WAM assembly conflict
-that prevents both modules from coexisting in a single session.
+parameters, and serialises everything to a config file - YAML (default) or JSON, selected via
+-Format. The resulting file contains no secrets and can be handed to Invoke-RBAC4AppConfig
+running in a separate PowerShell session where only ExchangeOnlineManagement is connected -
+working around the MSAL/WAM assembly conflict that prevents both modules from coexisting in a
+single session. Invoke-RBAC4AppConfig auto-detects the format from the file extension
+(.json vs .yml/.yaml).
 
 .PARAMETER RegisteredAppName
 Display name of the registered application / service principal (default parameter set).
@@ -25,7 +27,7 @@ Exchange Online application roles to include in the config. Short names such as 
 normalised to Application Mail.Send. Defaults to @('Application Mail.Send').
 
 .PARAMETER AccessGroupType
-Kind of scope group: M365Group (default), DistributionList, or MailEnabledSecurityGroup.
+Kind of scope group: DistributionList (default), M365Group, or MailEnabledSecurityGroup.
 
 .PARAMETER GroupPrefix
 Prefix used when generating the scope group name. When omitted, defaults to
@@ -40,20 +42,28 @@ Cannot be combined with -GroupPrefix.
 Recipients to add to the scope group. Defaults to @('GraphAPI-Dummy').
 
 .PARAMETER ManagedBy
-Recipient assigned as the scope group owner. Defaults to 'GraphAPI-Dummy-owner'.
+One or more recipients assigned as the scope group's owners. Defaults to 'GraphAPI-Dummy-owner'.
 
 .PARAMETER BootstrapMember
 Initial placeholder member passed during scope group creation. Defaults to 'GraphAPI-Dummy'.
 
 .PARAMETER OutputPath
-Directory to write the YAML file into. Defaults to the current working directory.
+Directory to write the config file into. Defaults to the current working directory.
+
+.PARAMETER Format
+Config file format to write: Yaml (default) or Json. Only changes serialisation and the output
+file extension (.yml vs .json); the config schema and every other parameter are identical.
 
 .EXAMPLE
 $yml = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' -Members 'shared@contoso.com'
 Invoke-RBAC4AppConfig -Path $yml
 
+.EXAMPLE
+$json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' -Format Json
+Invoke-RBAC4AppConfig -Path $json
+
 .OUTPUTS
-System.String — the full path of the written YAML file.
+System.String — the full path of the written config file (.yml or .json, depending on -Format).
 #>
 function New-RBAC4AppConfig {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low', DefaultParameterSetName = 'ByName')]
@@ -80,7 +90,7 @@ function New-RBAC4AppConfig {
 
         [Parameter()]
         [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'M365Group',
+        [string] $AccessGroupType = 'DistributionList',
 
         [Parameter()]
         [string] $GroupPrefix = $null,
@@ -94,13 +104,17 @@ function New-RBAC4AppConfig {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagedBy = 'GraphAPI-Dummy-owner',
+        [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy',
 
         [Parameter()]
-        [string] $OutputPath
+        [string] $OutputPath,
+
+        [Parameter()]
+        [ValidateSet('Yaml', 'Json')]
+        [string] $Format = 'Yaml'
     )
 
     process {
@@ -161,7 +175,7 @@ function New-RBAC4AppConfig {
         $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) { $AccessGroupName } else { '' }
 
         $config = [pscustomobject]@{
-            SchemaVersion = '2.0'
+            SchemaVersion = '3.0'
             GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
             TenantId      = $tenantId
             Application   = [pscustomobject]@{
@@ -182,17 +196,18 @@ function New-RBAC4AppConfig {
             }
         }
 
-        # --- Write YAML file
+        # --- Write config file (YAML or JSON, per -Format)
+        $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
         $safeName  = Get-SafeName -s $sp.DisplayName -max 40
         $timestamp = (Get-Date).ToString('yyyyMMddHHmm')
-        $fileName  = "rbac4app-$safeName-$timestamp.yml"
+        $fileName  = "rbac4app-$safeName-$timestamp.$extension"
         $outFile   = Join-Path $OutputPath $fileName
 
-        $yaml = ConvertTo-RBAC4AppYaml -Config $config
-        Write-Verbose ("Config YAML:`n{0}" -f $yaml)
+        $serialized = if ($Format -eq 'Json') { $config | ConvertTo-Json -Depth 6 } else { ConvertTo-RBAC4AppYaml -Config $config }
+        Write-Verbose ("Config {0}:`n{1}" -f $Format, $serialized)
 
-        if ($PSCmdlet.ShouldProcess($outFile, 'Write RBAC4App config')) {
-            [System.IO.File]::WriteAllText($outFile, $yaml, [System.Text.Encoding]::UTF8)
+        if ($PSCmdlet.ShouldProcess($outFile, "Write RBAC4App config ($Format)")) {
+            [System.IO.File]::WriteAllText($outFile, $serialized, [System.Text.Encoding]::UTF8)
             Write-Verbose "Config written to '$outFile'."
             return $outFile
         }

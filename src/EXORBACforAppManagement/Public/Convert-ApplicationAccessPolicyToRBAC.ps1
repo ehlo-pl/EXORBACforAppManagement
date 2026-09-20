@@ -33,17 +33,20 @@ such as Mail.Send are normalized to Application Mail.Send. When supplied, role d
 from the app's Graph permissions is skipped.
 
 .PARAMETER ManagedBy
-Recipient that will be assigned as the new Unified Group owner. Passed through to
+One or more recipients that will be assigned as the new scope group's owners. Passed through to
 New-RBAC4AppEntry.
 
 .PARAMETER GroupPrefix
-Prefix used when building the new Unified Group name. Passed through to New-RBAC4AppEntry.
+Prefix used when building the new scope group name. Passed through to New-RBAC4AppEntry. When
+omitted, defaults to 'UDLRAo1P' (DistributionList) or 'Um365RAo1P' (M365Group) based on
+-AccessGroupType.
 
 .PARAMETER AccessGroupType
 Kind of group to create for the new RBAC scope. Passed through to New-RBAC4AppEntry
-(M365Group or DistributionList). Defaults to M365Group. MailEnabledSecurityGroup is not
-offered here: conversion mints a new scope group per policy, whereas a MailEnabledSecurityGroup
-references a single pre-existing on-prem/hybrid-synced group by name.
+(M365Group or DistributionList). Defaults to DistributionList (matching New-RBAC4AppEntry).
+MailEnabledSecurityGroup is not offered here: conversion mints a new scope group per policy,
+whereas a MailEnabledSecurityGroup references a single pre-existing on-prem/hybrid-synced group
+by name.
 
 .EXAMPLE
 Convert-ApplicationAccessPolicyToRBAC -WhatIf -Verbose
@@ -91,15 +94,14 @@ function Convert-ApplicationAccessPolicyToRBAC {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagedBy = 'GraphAPI-Dummy-owner',
+        [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
-        [ValidateNotNullOrEmpty()]
-        [string] $GroupPrefix = 'Um365RAo1',
+        [string] $GroupPrefix = $null,
 
         [Parameter()]
         [ValidateSet('M365Group', 'DistributionList')]
-        [string] $AccessGroupType = 'M365Group'
+        [string] $AccessGroupType = 'DistributionList'
     )
 
     begin {
@@ -110,6 +112,13 @@ function Convert-ApplicationAccessPolicyToRBAC {
 
         # Collect piped policies so non-pipeline filtering still works in end{}.
         $pipedPolicies = [System.Collections.Generic.List[object]]::new()
+
+        if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
+            $GroupPrefix = switch ($AccessGroupType) {
+                'DistributionList' { 'UDLRAo1P' }
+                default            { 'Um365RAo1P' }
+            }
+        }
     }
 
     process {

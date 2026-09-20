@@ -43,7 +43,7 @@ Describe 'Test-RBAC4AppEntry' {
     }
 
     It 'reports IsValid when every component is present' {
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
 
         $r.IsValid | Should -BeTrue
         $r.ServicePrincipalExists | Should -BeTrue
@@ -57,7 +57,7 @@ Describe 'Test-RBAC4AppEntry' {
     }
 
     It 'normalizes a short role name to its full Application role' {
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send'
         $r.RolesExpected | Should -Be @('Application Mail.Send')
         $r.IsValid | Should -BeTrue
     }
@@ -65,7 +65,7 @@ Describe 'Test-RBAC4AppEntry' {
     It 'flags a missing Unified Group' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
         $r.ScopeGroupExists | Should -BeFalse
         $r.IsValid | Should -BeFalse
         $r.Missing | Should -Contain "M365Group 'Um365RAo1-Contoso'"
@@ -89,7 +89,7 @@ Describe 'Test-RBAC4AppEntry' {
     It 'flags a missing role assignment' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
         $r.RoleAssignmentsMissing | Should -Be @('AppMailSend-Contoso')
         $r.RoleAssignmentsFound | Should -BeNullOrEmpty
         $r.IsValid | Should -BeFalse
@@ -100,7 +100,7 @@ Describe 'Test-RBAC4AppEntry' {
             [pscustomobject]@{ Name = $Identity; Role = 'Application Calendars.Read'; Identity = $Identity }
         }
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
         $r.RoleAssignmentsMissing | Should -Be @('AppMailSend-Contoso')
         $r.IsValid | Should -BeFalse
     }
@@ -109,7 +109,7 @@ Describe 'Test-RBAC4AppEntry' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' } }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @([pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' }) }
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -Members 'shared@contoso.com'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Members 'shared@contoso.com'
         $r.MembersPresent | Should -Be @('shared@contoso.com')
         $r.MembersMissing | Should -BeNullOrEmpty
         $r.IsValid | Should -BeTrue
@@ -119,7 +119,7 @@ Describe 'Test-RBAC4AppEntry' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'missing@contoso.com'; Name = 'missing' } }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -Members 'missing@contoso.com'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Members 'missing@contoso.com'
         $r.MembersMissing | Should -Be @('missing@contoso.com')
         $r.IsValid | Should -BeFalse
         $r.Missing | Should -Contain "Group member 'missing@contoso.com'"

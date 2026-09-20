@@ -46,10 +46,12 @@ Exchange Online application roles to assign. Short names such as Mail.Send are
 normalized to Application Mail.Send where supported.
 
 .PARAMETER ManagedBy
-Recipient that will be assigned as the Unified Group owner.
+One or more recipients that will be assigned as the scope group's owners.
 
 .PARAMETER GroupPrefix
-Prefix used when building the Unified Group name.
+Prefix used when building the scope group name. When omitted, defaults to 'UDLRAo1P'
+(DistributionList), 'USRAo1P' (MailEnabledSecurityGroup), or 'Um365RAo1P' (M365Group) based on
+-AccessGroupType.
 
 .PARAMETER AccessGroupName
 Explicit scope group name to use for RBAC scoping instead of generating a name from
@@ -59,8 +61,8 @@ an explicit GroupPrefix value. Required when -AccessGroupType is MailEnabledSecu
 
 .PARAMETER AccessGroupType
 Kind of group that backs the RBAC scope. One of:
-  - M365Group (default): create/configure a Microsoft 365 Unified Group.
-  - DistributionList: create/configure an Exchange-Online-only distribution list.
+  - DistributionList (default): create/configure an Exchange-Online-only distribution list.
+  - M365Group: create/configure a Microsoft 365 Unified Group.
   - MailEnabledSecurityGroup: reference an existing on-prem/hybrid-synced mail-enabled
     security group. The group is never created or modified (it is mastered on-premises),
     -AccessGroupName is required, and -Members, -ManagedBy, and -BootstrapMember are all
@@ -156,11 +158,10 @@ function New-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagedBy = "GraphAPI-Dummy-owner",
+        [string[]] $ManagedBy = @("GraphAPI-Dummy-owner"),
 
         [Parameter()]
-        [ValidateNotNullOrEmpty()]
-        [string] $GroupPrefix = "Um365RAo1",
+        [string] $GroupPrefix = $null,
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
@@ -168,7 +169,7 @@ function New-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'M365Group',
+        [string] $AccessGroupType = 'DistributionList',
 
         # Optional placeholder member (dont validate as email)
         [Parameter()]
@@ -188,6 +189,14 @@ function New-RBAC4AppEntry {
             throw "Parameters -AccessGroupName and -GroupPrefix cannot be used together."
         }
 
+        if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
+            $GroupPrefix = switch ($AccessGroupType) {
+                'DistributionList'         { 'UDLRAo1P' }
+                'MailEnabledSecurityGroup' { 'USRAo1P' }
+                default                    { 'Um365RAo1P' }
+            }
+        }
+
         if (-not $PSBoundParameters.ContainsKey('RegisteredAppName') -and
             -not $PSBoundParameters.ContainsKey('AppId') -and
             -not $PSBoundParameters.ContainsKey('SpObjectId')) {
@@ -203,7 +212,7 @@ function New-RBAC4AppEntry {
             TenantId          = $tenantid
             AccessGroupType   = $AccessGroupType
             ScopeGroupName    = $null
-            OwnerRequested    = $ManagedBy
+            OwnerRequested    = @($ManagedBy)
             OwnerAdded        = $null
             MembersRequested  = @($Members)
             MembersAdded      = @()
@@ -301,7 +310,7 @@ function New-RBAC4AppEntry {
                     $result.Warnings += $skipMembersMsg
                     Write-Warning -Message $skipMembersMsg
                 }
-                if ($ManagedBy -and $ManagedBy -ne 'GraphAPI-Dummy-owner') {
+                if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
                     $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; -ManagedBy was ignored."
                     $result.Warnings += $skipOwnerMsg
                     Write-Warning -Message $skipOwnerMsg
