@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig` now return `MembersFinal`:
+  the scope group's complete membership (pre-existing members plus any added this run), alongside
+  the existing `MembersAdded`/`MembersRequested`. Populated for all `-AccessGroupType` values,
+  including `MailEnabledSecurityGroup` (read-only, informational).
+
 ## [0.6.4] - 2026-09-20
 
 ### Changed
@@ -15,6 +21,11 @@ All notable changes to this project are documented here. The format is based on
   `UnifiedGroupName` → `ScopeGroupName`, `UnifiedGroupExists`/`UnifiedGroupExisted` →
   `ScopeGroupExists`/`ScopeGroupExisted`, `UnifiedGroupCreated` → `ScopeGroupCreated`. **Breaking
   change** for any script consuming these result objects by the old property names.
+- `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig` now warn (and record the
+  warning in `Warnings`) whenever `-ManagedBy` or `-BootstrapMember` is set to a non-default value
+  for a `MailEnabledSecurityGroup` scope, matching the existing `-Members`-ignored warning — since
+  on-prem/hybrid-synced groups are never created or modified by this module, all three
+  group-modifying parameters are silently ignored otherwise.
 
 ## [0.6.1] - 2026-09-20
 

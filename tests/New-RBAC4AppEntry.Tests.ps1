@@ -9,12 +9,14 @@ BeforeAll {
     function global:Get-MgContext { }
     function global:Get-MgServicePrincipal { }
     function global:Get-UnifiedGroup { }
+    function global:Get-UnifiedGroupLinks { }
     function global:New-UnifiedGroup { }
     function global:Set-UnifiedGroup { }
     function global:Add-UnifiedGroupLinks { }
     function global:New-ServicePrincipal { }
     function global:Get-Recipient { }
     function global:New-ManagementRoleAssignment { }
+    function global:Get-DistributionGroupMember { }
     function global:Add-DistributionGroupMember { }
 
     $script:Sp = [pscustomobject]@{
@@ -26,7 +28,7 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-UnifiedGroup','New-UnifiedGroup','Set-UnifiedGroup','Add-UnifiedGroupLinks','New-ServicePrincipal','Get-Recipient','New-ManagementRoleAssignment','Add-DistributionGroupMember') {
+    foreach ($n in 'Get-MgContext','Get-MgServicePrincipal','Get-UnifiedGroup','Get-UnifiedGroupLinks','New-UnifiedGroup','Set-UnifiedGroup','Add-UnifiedGroupLinks','New-ServicePrincipal','Get-Recipient','New-ManagementRoleAssignment','Get-DistributionGroupMember','Add-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -59,6 +61,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
             [pscustomobject]@{ OwnerRequested = 'owner@contoso.com'; OwnerAdded = 'owner@contoso.com' }
         }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Identity = 'g'; ManagedBy = @() } }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
@@ -102,6 +105,15 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ServicePrincipal -Times 0
     }
+
+    It 'reports the pre-existing and newly-added members in MembersFinal' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @([pscustomobject]@{ PrimarySmtpAddress = 'existing@contoso.com'; Name = 'existing' }) }
+
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Members 'shared@contoso.com' -Role 'Mail.Send' -Confirm:$false
+
+        $r.MembersFinal | Should -Contain 'existing@contoso.com'
+        $r.MembersFinal | Should -Contain 'shared@contoso.com'
+    }
 }
 
 Describe 'New-RBAC4AppEntry -AccessGroupType' {
@@ -112,6 +124,8 @@ Describe 'New-RBAC4AppEntry -AccessGroupType' {
         Mock -ModuleName EXORBACforAppManagement New-RBAC4AppDistributionGroup { [pscustomobject]@{ OwnerRequested = 'o'; OwnerAdded = 'o'; Group = [pscustomobject]@{ Name = 'g' } } }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; DisplayName = 'mesg'; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Register-EXOServicePrincipal { }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
         Mock -ModuleName EXORBACforAppManagement Add-DistributionGroupMember { }
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
@@ -150,5 +164,17 @@ Describe 'New-RBAC4AppEntry -AccessGroupType' {
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'Missing-Scope' -Role 'Mail.Send' -Confirm:$false
         ($r.Errors -join ';') | Should -Match 'was not found'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'MailEnabledSecurityGroup: warns that -ManagedBy and -BootstrapMember are ignored when set to non-default values' {
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -ManagedBy 'custom-owner@contoso.com' -BootstrapMember 'custom-bootstrap@contoso.com' -Role 'Mail.Send' -Confirm:$false
+        ($r.Warnings -join ';') | Should -Match 'ManagedBy was ignored'
+        ($r.Warnings -join ';') | Should -Match 'BootstrapMember was ignored'
+    }
+
+    It 'MailEnabledSecurityGroup: does not warn about -ManagedBy/-BootstrapMember when left at their defaults' {
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -Role 'Mail.Send' -Confirm:$false
+        ($r.Warnings -join ';') | Should -Not -Match 'ManagedBy was ignored'
+        ($r.Warnings -join ';') | Should -Not -Match 'BootstrapMember was ignored'
     }
 }

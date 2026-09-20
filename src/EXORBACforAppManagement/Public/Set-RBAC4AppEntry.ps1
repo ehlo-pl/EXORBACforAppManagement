@@ -64,8 +64,8 @@ the resolved display name. Required when -AccessGroupType is MailEnabledSecurity
 .PARAMETER AccessGroupType
 Kind of group that backs the RBAC scope (M365Group, DistributionList, or
 MailEnabledSecurityGroup). Defaults to M365Group. A MailEnabledSecurityGroup is
-on-prem/hybrid-synced: it is never created, and its membership is left untouched
-(managed on-premises).
+on-prem/hybrid-synced: it is never created or modified, and -Members, -ManagedBy, and
+-BootstrapMember are all ignored (membership and ownership are managed on-premises).
 
 .PARAMETER BootstrapMember
 Optional initial member passed to New-RBAC4AppUnifiedGroup when the group must be created. Defaults
@@ -100,15 +100,16 @@ Re-scopes the application's role assignments onto the 'Um365Prod-...' group (cre
 PSCustomObject
 
 A summary object with the resolved identity, the current and target group names, a GroupChanged flag,
-which components were created, the requested/added members, and the role assignments partitioned into
-created / re-scoped / unchanged, an overall IsValid flag, and any Warnings/Errors.
+which components were created, the requested/added members and the final group membership
+(MembersFinal), and the role assignments partitioned into created / re-scoped / unchanged, an overall
+IsValid flag, and any Warnings/Errors.
 
 .NOTES
 Requires a connected Microsoft Graph session (Get-MgServicePrincipal, Get-MgContext) and a connected
-Exchange Online session (Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-ServicePrincipal, Get-Recipient,
-Get-ManagementRoleAssignment, New-ManagementRoleAssignment, Remove-ManagementRoleAssignment, plus the
-cmdlets used by the delegated New-RBAC4AppUnifiedGroup / Register-EXOServicePrincipal). Reconcile
-companion to Test-RBAC4AppEntry and New-RBAC4AppEntry.
+Exchange Online session (Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-DistributionGroupMember,
+Get-ServicePrincipal, Get-Recipient, Get-ManagementRoleAssignment, New-ManagementRoleAssignment,
+Remove-ManagementRoleAssignment, plus the cmdlets used by the delegated New-RBAC4AppUnifiedGroup /
+Register-EXOServicePrincipal). Reconcile companion to Test-RBAC4AppEntry and New-RBAC4AppEntry.
 #>
 function Set-RBAC4AppEntry {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByName')]
@@ -192,6 +193,7 @@ function Set-RBAC4AppEntry {
             MembersRequested          = @()
             MembersAdded              = @()
             MembersAlreadyPresent     = @()
+            MembersFinal              = @()
             FilteredMembers           = @()
             RolesNormalized           = @()
             RoleAssignmentsCreated    = @()
@@ -298,6 +300,34 @@ function Set-RBAC4AppEntry {
                 $result.ExoServicePrincipalCreated = $true
             }
 
+            # --- Read the target group's current membership once (all types, read-only): used for
+            # the "already present" check below and to seed MembersFinal, reused rather than
+            # re-queried after any additions (EXO reads can lag writes).
+            $existingLinks = if ($AccessGroupType -eq 'M365Group') {
+                @(Get-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -ErrorAction SilentlyContinue)
+            }
+            else {
+                @(Get-DistributionGroupMember -Identity $targetGroup -ErrorAction SilentlyContinue)
+            }
+            $existingMemberIdentities = @($existingLinks | ForEach-Object {
+                    if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
+                } | Where-Object { $_ } | Select-Object -Unique)
+
+            # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
+            # here, so warn about any group-modifying parameter that was requested but ignored.
+            if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                if ($ManagedBy -and $ManagedBy -ne 'GraphAPI-Dummy-owner') {
+                    $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -ManagedBy was ignored."
+                    $result.Warnings += $skipOwnerMsg
+                    Write-Warning -Message $skipOwnerMsg
+                }
+                if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
+                    $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -BootstrapMember was ignored."
+                    $result.Warnings += $skipBootstrapMsg
+                    Write-Warning -Message $skipBootstrapMsg
+                }
+            }
+
             # --- Members (additive): add any requested member not already in the target group.
             # Skipped for MailEnabledSecurityGroup: membership is mastered on-premises.
             if ($PSBoundParameters.ContainsKey('Members') -and $AccessGroupType -eq 'MailEnabledSecurityGroup') {
@@ -316,13 +346,7 @@ function Set-RBAC4AppEntry {
                     $result.Warnings += "Could not retrieve current connection user via Get-MgContext; connection user filtering will be skipped. Error: $($_.Exception.Message)"
                 }
 
-                $links = if ($AccessGroupType -eq 'M365Group') {
-                    @(Get-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -ErrorAction SilentlyContinue)
-                }
-                else {
-                    @(Get-DistributionGroupMember -Identity $targetGroup -ErrorAction SilentlyContinue)
-                }
-                $linkAddresses = @($links | ForEach-Object { [string]$_.PrimarySmtpAddress; [string]$_.Name } | Where-Object { $_ })
+                $linkAddresses = @($existingLinks | ForEach-Object { [string]$_.PrimarySmtpAddress; [string]$_.Name } | Where-Object { $_ })
 
                 foreach ($member in $requested) {
                     if ($currentUserUpn -and ($member -ieq $currentUserUpn)) {
@@ -356,6 +380,8 @@ function Set-RBAC4AppEntry {
                     }
                 }
             }
+
+            $result.MembersFinal = @($existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
 
             # --- Role assignments: ensure one per role, scoped to the target group.
             $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }

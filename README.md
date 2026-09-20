@@ -46,7 +46,7 @@ The three functions form a **create → assign → read** flow and share the sam
 | `New-RBAC4AppUnifiedGroup` | `Get-MgContext` *(debug trace only)* | `Get-UnifiedGroup` `New-UnifiedGroup` `Set-UnifiedGroup` `Get-Recipient` |
 | `New-RBAC4AppDistributionGroup` | — | `Get-DistributionGroup` `New-DistributionGroup` `Set-DistributionGroup` `Get-Recipient` |
 | `Register-EXOServicePrincipal` | — | `New-ServicePrincipal` |
-| `New-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-Recipient` `Add-DistributionGroupMember` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
+| `New-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
 | `Set-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ServicePrincipal` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` |
 | `Test-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-Recipient` |
 | `Remove-RBAC4AppEntry` | `Get-MgServicePrincipal` `Get-MgContext` | `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
@@ -211,11 +211,11 @@ By default the scope is a freshly-created Microsoft 365 group. `-AccessGroupType
 different group kind — Exchange Online RBAC supports Microsoft 365 groups, mail-enabled security
 groups, and distribution lists (direct membership only, nested members are out of scope):
 
-| `-AccessGroupType` | Lifecycle | `-AccessGroupName` | `-Members` |
+| `-AccessGroupType` | Lifecycle | `-AccessGroupName` | `-Members` / `-ManagedBy` / `-BootstrapMember` |
 | --- | --- | --- | --- |
-| `M365Group` (default) | Creates/configures a Unified Group | optional (generated from `GroupPrefix`) | added to the group |
-| `DistributionList` | Creates/configures an EXO-only distribution list | optional (generated from `GroupPrefix`) | added to the group |
-| `MailEnabledSecurityGroup` | References an **existing** on-prem/hybrid-synced group (never created) | **required** | ignored (membership is managed on-premises) |
+| `M365Group` (default) | Creates/configures a Unified Group | optional (generated from `GroupPrefix`) | applied to the group |
+| `DistributionList` | Creates/configures an EXO-only distribution list | optional (generated from `GroupPrefix`) | applied to the group |
+| `MailEnabledSecurityGroup` | References an **existing** on-prem/hybrid-synced group (never created or modified) | **required** | all ignored, with a warning (membership and ownership are managed on-premises) |
 
 ```powershell
 # EXO-only distribution list as the scope:
@@ -341,7 +341,7 @@ calling any Microsoft Graph cmdlet.
 
 Returns the same summary object shape as `New-RBAC4AppEntry` (`ResolvedDisplay`, `AppId`,
 `SpObjectId`, `ScopeGroupName`, `RolesNormalized`, `RoleAssignmentsName`, `MembersAdded`,
-`Warnings`, `Errors`).
+`MembersFinal`, `Warnings`, `Errors`).
 
 ```powershell
 # Preview:

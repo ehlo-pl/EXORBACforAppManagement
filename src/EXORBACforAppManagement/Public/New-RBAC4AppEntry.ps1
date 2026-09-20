@@ -48,8 +48,9 @@ Kind of group that backs the RBAC scope. One of:
   - M365Group (default): create/configure a Microsoft 365 Unified Group.
   - DistributionList: create/configure an Exchange-Online-only distribution list.
   - MailEnabledSecurityGroup: reference an existing on-prem/hybrid-synced mail-enabled
-    security group. The group is never created (it is mastered on-premises), -AccessGroupName
-    is required, and -Members is ignored (membership is managed on-premises).
+    security group. The group is never created or modified (it is mastered on-premises),
+    -AccessGroupName is required, and -Members, -ManagedBy, and -BootstrapMember are all
+    ignored (membership and ownership are managed on-premises).
 
 .PARAMETER BootstrapMember
 Optional initial member passed during Unified Group creation.
@@ -98,8 +99,8 @@ assignment names, warnings, and errors.
 
 .NOTES
 Requires Microsoft Graph and Exchange Online cmdlets used by Get-MgServicePrincipal,
-New-ServicePrincipal, Get-UnifiedGroup, Set-UnifiedGroup, Add-UnifiedGroupLinks, and
-New-ManagementRoleAssignment.
+New-ServicePrincipal, Get-UnifiedGroup, Set-UnifiedGroup, Add-UnifiedGroupLinks,
+Get-UnifiedGroupLinks, Get-DistributionGroupMember, and New-ManagementRoleAssignment.
 #>
 function New-RBAC4AppEntry {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'ByName')]
@@ -174,6 +175,7 @@ function New-RBAC4AppEntry {
             OwnerAdded        = $null
             MembersRequested  = @($Members)
             MembersAdded      = @()
+            MembersFinal      = @()
             FilteredMembers   = @()
             RolesNormalized   = @()
             RoleAssignments   = @()
@@ -239,13 +241,36 @@ function New-RBAC4AppEntry {
                 $result.OwnerAdded    = $ugResult.OwnerAdded
             }
 
-            # --- Add members. Skipped for MailEnabledSecurityGroup: on-prem/hybrid-synced membership
-            # is mastered on-premises and cannot be edited in the cloud.
+            # --- Read the group's current membership once (all types, read-only): seeds MembersFinal
+            # below and is reused rather than re-queried after any additions (EXO reads can lag
+            # writes, so a fresh post-write read would not reliably reflect what was just added).
+            $existingLinks = if ($AccessGroupType -eq 'M365Group') {
+                @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+            }
+            else {
+                @(Get-DistributionGroupMember -Identity $umGroupName -ErrorAction SilentlyContinue)
+            }
+            $existingMemberIdentities = @($existingLinks | ForEach-Object {
+                    if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
+                } | Where-Object { $_ } | Select-Object -Unique)
+
+            # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
+            # here, so warn about any group-modifying parameter that was requested but ignored.
             if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                 if ($PSBoundParameters.ContainsKey('Members')) {
                     $skipMembersMsg = "Membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; -Members was ignored."
                     $result.Warnings += $skipMembersMsg
                     Write-Warning -Message $skipMembersMsg
+                }
+                if ($ManagedBy -and $ManagedBy -ne 'GraphAPI-Dummy-owner') {
+                    $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; -ManagedBy was ignored."
+                    $result.Warnings += $skipOwnerMsg
+                    Write-Warning -Message $skipOwnerMsg
+                }
+                if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
+                    $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; -BootstrapMember was ignored."
+                    $result.Warnings += $skipBootstrapMsg
+                    Write-Warning -Message $skipBootstrapMsg
                 }
             }
             else {
@@ -286,6 +311,8 @@ function New-RBAC4AppEntry {
                     $result.MembersAdded += [string]$rec.PrimarySmtpAddress
                 }
             }
+
+            $result.MembersFinal = @($existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
 
             # --- Ensure EXO ServicePrincipal extension (delegated to Register-EXOServicePrincipal)
             $exoSpDisplay = "{0}_SP" -f $sp.DisplayName

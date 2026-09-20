@@ -22,7 +22,8 @@ Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.yml
 
 .OUTPUTS
 PSCustomObject — same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
-ScopeGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, Warnings, Errors, etc.).
+ScopeGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, MembersFinal, Warnings,
+Errors, etc.).
 #>
 function Invoke-RBAC4AppConfig {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -85,6 +86,7 @@ function Invoke-RBAC4AppConfig {
             OwnerAdded          = $null
             MembersRequested    = @($Members)
             MembersAdded        = @()
+            MembersFinal        = @()
             FilteredMembers     = @()
             RolesNormalized     = @()
             RoleAssignments     = @()
@@ -117,12 +119,36 @@ function Invoke-RBAC4AppConfig {
                 $result.OwnerAdded     = $ugResult.OwnerAdded
             }
 
-            # --- Add members (MailEnabledSecurityGroup membership is on-prem only)
+            # --- Read the group's current membership once (all types, read-only): seeds MembersFinal
+            # below and is reused rather than re-queried after any additions (EXO reads can lag
+            # writes, so a fresh post-write read would not reliably reflect what was just added).
+            $existingLinks = if ($AccessGroupType -eq 'M365Group') {
+                @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+            }
+            else {
+                @(Get-DistributionGroupMember -Identity $umGroupName -ErrorAction SilentlyContinue)
+            }
+            $existingMemberIdentities = @($existingLinks | ForEach-Object {
+                    if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
+                } | Where-Object { $_ } | Select-Object -Unique)
+
+            # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
+            # here, so warn about any group-modifying config value that was ignored.
             if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                 if ($Members -and ($Members | Where-Object { $_ -and $_ -ne 'GraphAPI-Dummy' })) {
                     $skipMsg = "Membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; Members from config was ignored."
                     $result.Warnings += $skipMsg
                     Write-Warning $skipMsg
+                }
+                if ($ManagedBy -and $ManagedBy -ne 'GraphAPI-Dummy-owner') {
+                    $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; ManagedBy from config was ignored."
+                    $result.Warnings += $skipOwnerMsg
+                    Write-Warning $skipOwnerMsg
+                }
+                if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
+                    $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; BootstrapMember from config was ignored."
+                    $result.Warnings += $skipBootstrapMsg
+                    Write-Warning $skipBootstrapMsg
                 }
             }
             else {
@@ -144,6 +170,8 @@ function Invoke-RBAC4AppConfig {
                     $result.MembersAdded += [string]$rec.PrimarySmtpAddress
                 }
             }
+
+            $result.MembersFinal = @($existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
 
             # --- Register EXO service principal
             $exoSpDisplay = '{0}_SP' -f $spDisplayName

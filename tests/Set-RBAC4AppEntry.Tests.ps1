@@ -218,4 +218,10 @@ Describe 'Set-RBAC4AppEntry -AccessGroupType' {
         $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -NewGroupPrefix 'Um365Prod' -Confirm:$false
         ($r.Errors -join ';') | Should -Match 'cannot be used with'
     }
+
+    It 'MailEnabledSecurityGroup: warns that -ManagedBy and -BootstrapMember are ignored when set to non-default values' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -ManagedBy 'custom-owner@contoso.com' -BootstrapMember 'custom-bootstrap@contoso.com' -Confirm:$false
+        ($r.Warnings -join ';') | Should -Match 'ManagedBy was ignored'
+        ($r.Warnings -join ';') | Should -Match 'BootstrapMember was ignored'
+    }
 }
