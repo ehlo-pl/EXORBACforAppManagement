@@ -14,9 +14,9 @@ Describe 'EXORBACforAppManagement module' {
         { Test-ModuleManifest -Path $script:ManifestPath -ErrorAction Stop } | Should -Not -Throw
     }
 
-    It 'exports exactly the eleven public functions' {
+    It 'exports exactly the thirteen public functions' {
         $exported = (Get-Command -Module EXORBACforAppManagement -CommandType Function).Name | Sort-Object
-        $exported | Should -Be @('Convert-ApplicationAccessPolicyToRBAC', 'Get-RBAC4AppEntry', 'Get-RegisteredAppWithPermission', 'New-RBAC4AppDistributionGroup', 'New-RBAC4AppEntry', 'New-RBAC4AppUnifiedGroup', 'New-RegisteredApp', 'Register-EXOServicePrincipal', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry', 'Test-RBAC4AppEntry')
+        $exported | Should -Be @('Convert-ApplicationAccessPolicyToRBAC', 'Get-RBAC4AppEntry', 'Get-RegisteredAppWithPermission', 'Invoke-RBAC4AppConfig', 'New-RBAC4AppConfig', 'New-RBAC4AppDistributionGroup', 'New-RBAC4AppEntry', 'New-RBAC4AppUnifiedGroup', 'New-RegisteredApp', 'Register-EXOServicePrincipal', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry', 'Test-RBAC4AppEntry')
     }
 
     It 'exports the pre-0.6.0 RBACforApp names as aliases to the RBAC4App functions' {
@@ -38,14 +38,14 @@ Describe 'EXORBACforAppManagement module' {
     }
 
     It 'does not export the private helpers' {
-        foreach ($helper in 'Get-SafeName', 'Get-NormalizeRole', 'ConvertTo-AppRole', 'Get-AppRoleMap', 'Get-LegacyScopeRoleMap', 'Resolve-AppRolePermissionValue') {
+        foreach ($helper in 'Get-SafeName', 'Get-NormalizeRole', 'ConvertTo-AppRole', 'Get-AppRoleMap', 'Get-LegacyScopeRoleMap', 'Resolve-AppRolePermissionValue', 'ConvertTo-RBAC4AppYaml', 'ConvertFrom-RBAC4AppYaml') {
             (Get-Command -Module EXORBACforAppManagement -Name $helper -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
         }
     }
 
     It 'makes the private helpers available inside the module scope' {
         InModuleScope EXORBACforAppManagement {
-            (Get-Command Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole, Get-AppRoleMap, Get-LegacyScopeRoleMap, Resolve-AppRolePermissionValue).Count | Should -Be 6
+            (Get-Command Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole, Get-AppRoleMap, Get-LegacyScopeRoleMap, Resolve-AppRolePermissionValue, ConvertTo-RBAC4AppYaml, ConvertFrom-RBAC4AppYaml).Count | Should -Be 8
         }
     }
 }
