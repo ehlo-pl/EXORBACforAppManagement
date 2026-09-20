@@ -87,7 +87,7 @@ Describe 'Invoke-RBAC4AppConfig' {
 
     It 'records an error when the config file does not exist' {
         $err = $null
-        $null = Invoke-RBAC4AppConfig -Path "$TestDrive\nonexistent.yml" -Confirm:$false -ErrorVariable err
+        $null = Invoke-RBAC4AppConfig -Path "$TestDrive\nonexistent.yml" -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
         $err | Should -Not -BeNullOrEmpty
     }
 

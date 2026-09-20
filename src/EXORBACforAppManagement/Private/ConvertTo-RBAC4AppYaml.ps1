@@ -1,4 +1,4 @@
-function ConvertTo-RBAC4AppYaml {
+﻿function ConvertTo-RBAC4AppYaml {
     param(
         [Parameter(Mandatory)]
         [psobject] $Config

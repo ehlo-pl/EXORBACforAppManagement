@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Provisions Exchange Online RBAC from a YAML config file written by New-RBAC4AppConfig.
 

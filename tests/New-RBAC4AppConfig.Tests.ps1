@@ -82,7 +82,7 @@ Describe 'New-RBAC4AppConfig' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { @() }
         $err = $null
         $null = New-RBAC4AppConfig -RegisteredAppName 'Unknown App' `
-            -OutputPath $TestDrive -Confirm:$false -ErrorVariable err
+            -OutputPath $TestDrive -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
         $err | Should -Not -BeNullOrEmpty
     }
 

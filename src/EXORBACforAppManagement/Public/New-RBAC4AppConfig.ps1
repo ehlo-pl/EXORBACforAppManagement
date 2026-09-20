@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Resolves an Entra service principal and writes a YAML configuration file for use with
 Invoke-RBAC4AppConfig in a separate ExchangeOnlineManagement-only session.
@@ -143,7 +143,7 @@ function New-RBAC4AppConfig {
 
         # --- Tenant context (informational; graceful if Graph connection lacks permissions)
         $tenantId = ''
-        try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId } catch { }
+        try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId } catch { Write-Verbose "TenantId unavailable: $($_.Exception.Message)" }
 
         # --- Normalise roles
         $normalizedRoles = @(foreach ($r in @($Role)) { Get-NormalizeRole $r })
