@@ -267,7 +267,11 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   `Get-UnifiedGroup`/`Get-DistributionGroup` group-type probe and membership read, cached per
   distinct scope name for the call). `-ByApplication` groups the enriched per-assignment rows by
   assignee - this is the former standalone `Get-RegisteredAppWithPermission` function, now a
-  deprecated wrapper (`Get-RBAC4AppEntry -ByApplication -ScopeType All`) around this switch.
+  deprecated wrapper (`Get-RBAC4AppEntry -ByApplication -ScopeType All`) around this switch. Each
+  row also carries `EffectiveUserName`/`App` straight from the raw `Get-ManagementRoleAssignment`
+  object (Exchange Online typically leaves both blank/placeholder for application-role
+  assignments); `-ByApplication` aggregates them per application as `EffectiveUserNames`/`Apps`
+  (sorted, unique, non-blank).
 
 ## Conventions
 

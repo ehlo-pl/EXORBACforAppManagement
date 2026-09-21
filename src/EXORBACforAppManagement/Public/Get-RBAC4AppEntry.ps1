@@ -99,6 +99,12 @@ Per-assignment view (default), one object per matching assignment:
   Role               - Full application role name (e.g. "Application Mail.Send").
   RoleAssigneeName   - Raw EXO assignee name (e.g. "Contoso_SP").
   RoleAssigneeType   - Assignee type (ServicePrincipal, RoleGroup, ...).
+  EffectiveUserName  - Raw EffectiveUserName from Get-ManagementRoleAssignment. Exchange Online
+                       leaves this blank/placeholder for application-role assignments; surfaced
+                       as-is for completeness.
+  App                - Raw App from Get-ManagementRoleAssignment. Exchange Online leaves this
+                       blank/placeholder for application-role assignments; surfaced as-is for
+                       completeness (not to be confused with the resolved AppId below).
   DisplayName        - Application display name, "_SP" suffix stripped (best-effort for
                        ServicePrincipal assignees even when the EXO pointer can't be resolved).
   AppId              - Application (client) id, from Get-ServicePrincipal (null when unresolved).
@@ -130,6 +136,10 @@ Per-application view (-ByApplication), one object per distinct application:
                             ScopeGroupNames.
   Roles                   - Sorted, unique application roles the app holds.
   RoleAssignmentNames     - Sorted, unique management role assignment names.
+  EffectiveUserNames      - Sorted, unique non-blank EffectiveUserName values across the app's
+                            assignments (raw EXO field; typically empty for application roles).
+  Apps                    - Sorted, unique non-blank App values across the app's assignments (raw
+                            EXO field; typically empty for application roles).
   AssignmentCount         - Total matched assignments for the app.
   EnabledAssignmentCount  - Count of those that are enabled.
   DisabledAssignmentCount - Count of those that are disabled.
@@ -292,6 +302,8 @@ function Get-RBAC4AppEntry {
 
                 $rolesForApp = @($assignmentGroup.Group.Role | Sort-Object -Unique)
                 $assignmentNames = @($assignmentGroup.Group.Name | Sort-Object -Unique)
+                $effectiveUserNames = @($assignmentGroup.Group.EffectiveUserName | Where-Object { $_ } | Sort-Object -Unique)
+                $apps = @($assignmentGroup.Group.App | Where-Object { $_ } | Sort-Object -Unique)
 
                 $scopes = @($assignmentGroup.Group | ForEach-Object { Resolve-RBAC4AppScope -Assignment $_ -Cache $scopeCache })
                 $scopeNames = @($scopes | Where-Object { $_.ScopeName } | ForEach-Object { $_.ScopeName } | Sort-Object -Unique)
@@ -306,6 +318,8 @@ function Get-RBAC4AppEntry {
                     ScopeGroupMembers       = $scopeMembers
                     Roles                   = $rolesForApp
                     RoleAssignmentNames     = $assignmentNames
+                    EffectiveUserNames      = $effectiveUserNames
+                    Apps                    = $apps
                     AssignmentCount         = $assignmentGroup.Count
                     EnabledAssignmentCount  = @($assignmentGroup.Group | Where-Object { $_.Enabled }).Count
                     DisabledAssignmentCount = @($assignmentGroup.Group | Where-Object { -not $_.Enabled }).Count
@@ -324,6 +338,8 @@ function Get-RBAC4AppEntry {
                 Role               = $a.Role
                 RoleAssigneeName   = $a.RoleAssigneeName
                 RoleAssigneeType   = $a.RoleAssigneeType
+                EffectiveUserName  = $a.EffectiveUserName
+                App                = $a.App
                 DisplayName        = Get-DisplayNameFor $assigneeName $resolvedSp $a.RoleAssigneeType
                 AppId              = if ($resolvedSp) { [string]$resolvedSp.AppId } else { $null }
                 ServicePrincipalId = if ($resolvedSp) { [string]$resolvedSp.ObjectId } else { $null }

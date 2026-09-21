@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `Get-RBAC4AppEntry`'s per-assignment output gained `EffectiveUserName` and `App` - the raw
+  `Get-ManagementRoleAssignment` fields of the same name, passed through as-is. Exchange Online
+  leaves both blank/placeholder for application-role assignments in practice, but they are now
+  surfaced for completeness rather than silently dropped. `-ByApplication` aggregates them per
+  application as sorted, unique, non-blank `EffectiveUserNames`/`Apps` arrays.
+
 ### Changed
 - **`Get-RegisteredAppWithPermission` merged into `Get-RBAC4AppEntry`.** `Get-RBAC4AppEntry` gained
   a `-ByApplication` switch that returns the former app-centric inventory view (one row per

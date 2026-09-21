@@ -307,6 +307,9 @@ it returns all of them; filter by application and/or role, plus optional `-Enabl
 `-RoleAssigneeType`, and `-ScopeType`. Every row resolves the assignee back to its Exchange Online
 service principal pointer (`Get-ServicePrincipal`) to expose `AppId`/`ServicePrincipalId`, and
 resolves its recipient scope to the real scope group name, group type, and current membership.
+The raw `EffectiveUserName`/`App` fields from `Get-ManagementRoleAssignment` are also passed
+through as-is - Exchange Online typically leaves both blank/placeholder for application-role
+assignments, but they're surfaced for completeness rather than dropped.
 
 ```powershell
 Get-RBAC4AppEntry                                            # every application-role assignment

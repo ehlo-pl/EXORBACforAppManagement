@@ -13,13 +13,16 @@ BeforeAll {
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
 
+    # EffectiveUserName/App are raw Get-ManagementRoleAssignment fields Exchange Online leaves
+    # blank/placeholder for application-role assignments; AppMailSend-Contoso carries non-blank
+    # placeholder values here to prove they pass through Get-RBAC4AppEntry's output as-is.
     $script:Assignments = @(
-        [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = 'scope'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailSend-Contoso' }
-        [pscustomobject]@{ Name = 'Mail Recipients-Admin'; Role = 'Mail Recipients'; RoleAssigneeName = 'Org Management'; RoleAssigneeType = 'RoleGroup'; CustomRecipientWriteScope = $null; RecipientWriteScope = 'Organization'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'Mail Recipients-Admin' }
-        [pscustomobject]@{ Name = 'AppCldR-Fabrikam'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = 'scope2'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $false; Guid = [guid]::NewGuid(); Identity = 'AppCldR-Fabrikam' }
-        [pscustomobject]@{ Name = 'AppMailR-Helpdesk'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; CustomRecipientWriteScope = 'scope3'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailR-Helpdesk' }
-        [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailboxSettings-Tailspin' }
-        [pscustomobject]@{ Name = 'AppMailWide-Northwind'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Northwind_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; RecipientWriteScope = 'Organization'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailWide-Northwind' }
+        [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = 'scope'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailSend-Contoso'; EffectiveUserName = 'NT AUTHORITY\SYSTEM (Contoso_SP)'; App = 'Contoso_SP' }
+        [pscustomobject]@{ Name = 'Mail Recipients-Admin'; Role = 'Mail Recipients'; RoleAssigneeName = 'Org Management'; RoleAssigneeType = 'RoleGroup'; CustomRecipientWriteScope = $null; RecipientWriteScope = 'Organization'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'Mail Recipients-Admin'; EffectiveUserName = $null; App = $null }
+        [pscustomobject]@{ Name = 'AppCldR-Fabrikam'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = 'scope2'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $false; Guid = [guid]::NewGuid(); Identity = 'AppCldR-Fabrikam'; EffectiveUserName = $null; App = $null }
+        [pscustomobject]@{ Name = 'AppMailR-Helpdesk'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; CustomRecipientWriteScope = 'scope3'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailR-Helpdesk'; EffectiveUserName = $null; App = $null }
+        [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailboxSettings-Tailspin'; EffectiveUserName = $null; App = $null }
+        [pscustomobject]@{ Name = 'AppMailWide-Northwind'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Northwind_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; RecipientWriteScope = 'Organization'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailWide-Northwind'; EffectiveUserName = $null; App = $null }
     )
 
     # EXO service principal pointers, keyed by their own DisplayName (the "_SP" form).
@@ -66,7 +69,17 @@ Describe 'Get-RBAC4AppEntry (no filter)' {
 
     It 'projects the expected shape' {
         $r = Get-RBAC4AppEntry | Select-Object -First 1
-        $r.PSObject.Properties.Name | Should -Be @('Name','Role','RoleAssigneeName','RoleAssigneeType','DisplayName','AppId','ServicePrincipalId','Scope','ScopeGroupType','ScopeMembers','RecipientScope','Enabled','Guid','Identity')
+        $r.PSObject.Properties.Name | Should -Be @('Name','Role','RoleAssigneeName','RoleAssigneeType','EffectiveUserName','App','DisplayName','AppId','ServicePrincipalId','Scope','ScopeGroupType','ScopeMembers','RecipientScope','Enabled','Guid','Identity')
+    }
+
+    It 'passes EffectiveUserName/App through from the raw assignment as-is' {
+        $r = Get-RBAC4AppEntry | Where-Object Name -eq 'AppMailSend-Contoso'
+        $r.EffectiveUserName | Should -Be 'NT AUTHORITY\SYSTEM (Contoso_SP)'
+        $r.App | Should -Be 'Contoso_SP'
+
+        $tailspin = Get-RBAC4AppEntry | Where-Object Name -eq 'AppMailboxSettings-Tailspin'
+        $tailspin.EffectiveUserName | Should -BeNullOrEmpty
+        $tailspin.App | Should -BeNullOrEmpty
     }
 
     It 'resolves Scope from CustomResourceScope for Group-scoped assignments' {
@@ -161,10 +174,10 @@ Describe 'Get-RBAC4AppEntry application filter' {
 Describe 'Get-RBAC4AppEntry -ByApplication' {
     BeforeEach {
         $script:AppAssignments = @(
-            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
-            [pscustomobject]@{ Name = 'AppCldR-Contoso'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
-            [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam' }
-            [pscustomobject]@{ Name = 'AppMailSend-Helpdesk'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; Enabled = $true }
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = 'NT AUTHORITY\SYSTEM (Contoso_SP)'; App = 'Contoso_SP' }
+            [pscustomobject]@{ Name = 'AppCldR-Contoso'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = 'NT AUTHORITY\SYSTEM (Contoso_SP)'; App = 'Contoso_SP' }
+            [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam'; EffectiveUserName = $null; App = $null }
+            [pscustomobject]@{ Name = 'AppMailSend-Helpdesk'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; Enabled = $true; EffectiveUserName = $null; App = $null }
         )
 
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
@@ -194,6 +207,18 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
         $r.Count | Should -Be 2
         ($r.DisplayName | Sort-Object) | Should -Be @('Contoso', 'Fabrikam')
         ($r | Where-Object DisplayName -eq 'Contoso').Roles | Should -Be @('Application Calendars.Read', 'Application Mail.Send')
+    }
+
+    It 'aggregates non-blank EffectiveUserName/App values across an application''s assignments' {
+        $r = Get-RBAC4AppEntry -ByApplication
+
+        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
+        $contoso.EffectiveUserNames | Should -Be @('NT AUTHORITY\SYSTEM (Contoso_SP)')
+        $contoso.Apps | Should -Be @('Contoso_SP')
+
+        $fabrikam = $r | Where-Object DisplayName -eq 'Fabrikam'
+        $fabrikam.EffectiveUserNames | Should -BeNullOrEmpty
+        $fabrikam.Apps | Should -BeNullOrEmpty
     }
 
     It 'resolves AppId/ServicePrincipalId from the EXO service principal pointer, with the "_SP" suffix stripped from DisplayName' {
@@ -227,8 +252,8 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             param($Role)
             @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_20d5848c-4d61-4b82-a44f-205adc37321f' }
-                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = $null; App = $null }
+                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'; EffectiveUserName = $null; App = $null }
             ) | Where-Object { -not $Role -or $_.Role -eq $Role }
         }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Shared'; Identity = $Identity } }
@@ -245,7 +270,7 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             param($Role)
             @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'SomeCustomScopeNoGuidSuffix' }
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'SomeCustomScopeNoGuidSuffix'; EffectiveUserName = $null; App = $null }
             ) | Where-Object { -not $Role -or $_.Role -eq $Role }
         }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
@@ -280,8 +305,8 @@ Describe 'Get-RBAC4AppEntry -ByApplication with an unresolvable EXO service prin
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
-                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam' }
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = $null; App = $null }
+                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam'; EffectiveUserName = $null; App = $null }
             )
         }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
