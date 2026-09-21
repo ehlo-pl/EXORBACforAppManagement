@@ -333,7 +333,7 @@ Describe 'Invoke-RBAC4AppConfig' {
                 Application   = [pscustomobject]@{
                     AppId       = 'aaa-bbb'
                     SpObjectId  = 'ccc-ddd'
-                    DisplayName = 'My App'
+                    DisplayName = 'My "Quoted" \ App'
                 }
                 Rbac = [pscustomobject]@{
                     Roles = @('Application Mail.Send', 'Application Calendars.Read')
@@ -343,7 +343,7 @@ Describe 'Invoke-RBAC4AppConfig' {
                     GroupPrefix     = 'UDLRAo1'
                     AccessGroupName = ''
                     Members         = @('user@contoso.com')
-                    ManagedBy       = @('owner1@contoso.com', 'owner2@contoso.com')
+                    ManagedBy       = @('owner1@contoso.com', 'owner"2@contoso.com')
                     BootstrapMember = 'GraphAPI-Dummy'
                 }
             }
@@ -351,7 +351,8 @@ Describe 'Invoke-RBAC4AppConfig' {
             $parsed = ConvertFrom-RBAC4AppYaml -Content $yaml
             $parsed.Application.AppId          | Should -Be 'aaa-bbb'
             $parsed.Application.SpObjectId     | Should -Be 'ccc-ddd'
-            $parsed.Application.DisplayName    | Should -Be 'My App'
+            $yaml                              | Should -Match 'DisplayName: "My \\"Quoted\\" \\\\ App"'
+            $parsed.Application.DisplayName    | Should -Be 'My "Quoted" \ App'
             $parsed.TenantId                   | Should -Be 'tid-abc'
             $parsed.RbacScope.AccessGroupType  | Should -Be 'DistributionList'
             $parsed.RbacScope.GroupPrefix      | Should -Be 'UDLRAo1'
@@ -359,7 +360,32 @@ Describe 'Invoke-RBAC4AppConfig' {
             $parsed.Rbac.Roles                 | Should -Contain 'Application Calendars.Read'
             $parsed.RbacScope.Members          | Should -Contain 'user@contoso.com'
             $parsed.RbacScope.ManagedBy        | Should -Contain 'owner1@contoso.com'
-            $parsed.RbacScope.ManagedBy        | Should -Contain 'owner2@contoso.com'
+            $parsed.RbacScope.ManagedBy        | Should -Contain 'owner"2@contoso.com'
+        }
+    }
+
+    It 'rejects YAML scalar values containing line breaks' {
+        InModuleScope EXORBACforAppManagement {
+            $config = [pscustomobject]@{
+                SchemaVersion = '3.0'
+                GeneratedAt   = '2026-09-20T10:00:00.0000000Z'
+                TenantId      = 'tid-abc'
+                Application   = [pscustomobject]@{
+                    AppId       = 'aaa-bbb'
+                    SpObjectId  = 'ccc-ddd'
+                    DisplayName = "Bad`nApp"
+                }
+                Rbac = [pscustomobject]@{ Roles = @('Application Mail.Send') }
+                RbacScope = [pscustomobject]@{
+                    AccessGroupType = 'DistributionList'
+                    GroupPrefix     = 'UDLRAo1'
+                    AccessGroupName = ''
+                    Members         = @('user@contoso.com')
+                    ManagedBy       = @('owner@contoso.com')
+                    BootstrapMember = 'GraphAPI-Dummy'
+                }
+            }
+            { ConvertTo-RBAC4AppYaml -Config $config } | Should -Throw '*CR or LF*'
         }
     }
 }

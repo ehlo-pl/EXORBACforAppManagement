@@ -4,6 +4,40 @@ function ConvertFrom-RBAC4AppYaml {
         [string] $Content
     )
 
+    function ConvertFrom-RBAC4AppYamlScalar {
+        param(
+            [AllowNull()]
+            [string] $Value
+        )
+
+        $text = if ($null -eq $Value) { '' } else { $Value.Trim() }
+        if ($text.Length -ge 2 -and $text[0] -eq '"' -and $text[$text.Length - 1] -eq '"') {
+            $inner = $text.Substring(1, $text.Length - 2)
+            $builder = [System.Text.StringBuilder]::new()
+            for ($i = 0; $i -lt $inner.Length; $i++) {
+                $ch = $inner[$i]
+                if ($ch -eq '\' -and ($i + 1) -lt $inner.Length) {
+                    $i++
+                    $next = $inner[$i]
+                    switch ($next) {
+                        '"'  { [void]$builder.Append('"') }
+                        '\'  { [void]$builder.Append('\') }
+                        'n'  { [void]$builder.Append("`n") }
+                        'r'  { [void]$builder.Append("`r") }
+                        't'  { [void]$builder.Append("`t") }
+                        default { [void]$builder.Append($next) }
+                    }
+                }
+                else {
+                    [void]$builder.Append($ch)
+                }
+            }
+            return $builder.ToString()
+        }
+
+        return $text.Trim('"').Trim("'")
+    }
+
     $config = [pscustomobject]@{
         SchemaVersion = ''
         GeneratedAt   = ''
@@ -39,7 +73,7 @@ function ConvertFrom-RBAC4AppYaml {
         }
 
         if ($line -match '^\s+-\s+(.+)') {
-            $value = $Matches[1].Trim().Trim('"').Trim("'")
+            $value = ConvertFrom-RBAC4AppYamlScalar $Matches[1]
             if ($section -eq 'Rbac' -and $listKey -eq 'Roles') {
                 $config.Rbac.Roles.Add($value)
             } elseif ($section -eq 'RbacScope' -and $listKey -eq 'Members') {
@@ -52,7 +86,7 @@ function ConvertFrom-RBAC4AppYaml {
 
         if ($line -match '^\s*(\w+)\s*:\s*(.*)$') {
             $key   = $Matches[1]
-            $value = $Matches[2].Trim().Trim('"').Trim("'")
+            $value = ConvertFrom-RBAC4AppYamlScalar $Matches[2]
 
             if ($null -eq $section) {
                 switch ($key) {

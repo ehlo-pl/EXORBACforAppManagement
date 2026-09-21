@@ -218,7 +218,8 @@ function Remove-RBAC4AppEntry {
                 $assignee = [string]$a.RoleAssigneeName
                 $isOwn = $false
                 foreach ($n in $needles) {
-                    if ($assignee -and $assignee -like "*$n*") { $isOwn = $true; break }
+                    $escapedNeedle = [System.Management.Automation.WildcardPattern]::Escape([string]$n)
+                    if ($assignee -and $assignee -like "*$escapedNeedle*") { $isOwn = $true; break }
                 }
                 if ($isOwn) { $own += $a } else { $foreign += $a }
             }
