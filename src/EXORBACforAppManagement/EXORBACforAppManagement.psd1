@@ -12,7 +12,7 @@
 RootModule = 'EXORBACforAppManagement.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.6.10'
+ModuleVersion = '0.6.14'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -108,7 +108,7 @@ PrivateData = @{
         # IconUri = ''
 
         # ReleaseNotes of this module
-        ReleaseNotes = '0.6.0 - Renamed the RBAC-for-App functions to the RBAC4App form (New-/Get-/Set-/Test-/Remove-RBAC4AppEntry, New-RBAC4AppUnifiedGroup, New-RBAC4AppDistributionGroup); the previous RBACforApp names remain exported as aliases for backward compatibility. Added -AccessGroupType (M365Group default, DistributionList, MailEnabledSecurityGroup) to New-/Set-/Test-/Remove-RBAC4AppEntry and Convert-ApplicationAccessPolicyToRBAC, letting RBAC scope to an EXO-only distribution list or an existing on-prem/hybrid-synced mail-enabled security group (referenced, never created). Added public helper New-RBAC4AppDistributionGroup and private dispatcher New-RBAC4AppScopeGroup. Remove-RBAC4AppEntry never deletes a MailEnabledSecurityGroup and uses Remove-DistributionGroup for a DistributionList. 0.4.1 - Renamed the module from RBACforAppGovern to EXORBACforAppManagement (module identity only; public function names and the manifest GUID are unchanged). New-RBACforAppEntry / New-RBACforAppUnifiedGroup now report the Unified Group owner as OwnerRequested/OwnerAdded. 0.4.0 - Added Convert-ApplicationAccessPolicyToRBAC: migrates legacy Application Access Policies to RBAC for Applications by deriving roles from the app''s Graph permission grants and delegating to New-RBACforAppEntry. 0.3.0 - Get-RBACforAppEntry now filters by assignee type, defaulting to ServicePrincipal (use -RoleAssigneeType All or a specific type to change). 0.2.1 - Default -ManagedBy is now GraphAPI-Dummy-owner (a group owner must be a valid owner account, distinct from a plain member). 0.2.0 - Extracted New-RBACforAppUnifiedGroup and Register-EXOServicePrincipal as public functions; New-RBACforAppEntry now delegates to them.'
+        ReleaseNotes = '0.6.x - Renamed the RBAC-for-App functions to the RBAC4App form (New-/Get-/Set-/Test-/Remove-RBAC4AppEntry, New-RBAC4AppUnifiedGroup, New-RBAC4AppDistributionGroup); the previous RBACforApp names remain exported as aliases for backward compatibility. Added -AccessGroupType (M365Group default, DistributionList, MailEnabledSecurityGroup) to New-/Set-/Test-/Remove-RBAC4AppEntry and Convert-ApplicationAccessPolicyToRBAC, letting RBAC scope to an EXO-only distribution list or an existing on-prem/hybrid-synced mail-enabled security group (referenced, never created). Added public helper New-RBAC4AppDistributionGroup and private dispatcher New-RBAC4AppScopeGroup. Remove-RBAC4AppEntry never deletes a MailEnabledSecurityGroup and uses Remove-DistributionGroup for a DistributionList. '
 
         # Prerelease string of this module
         # Prerelease = ''

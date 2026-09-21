@@ -26,9 +26,15 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
   (by default) its service principal via `New-MgServicePrincipal`. Its output exposes
   `AppId`/`ServicePrincipalId` so it can pipe into `New-RBAC4AppEntry`.
 - **`Get-RBAC4AppEntry`** — lists EXO management role assignments for application roles (the
-  assignments `New-RBAC4AppEntry` makes).
-- **`Get-RegisteredAppWithPermission`** — lists distinct registered applications that currently
-  hold supported EXO application-role assignments, grouped by app.
+  assignments `New-RBAC4AppEntry` makes). Every row resolves the assignee to its Exchange Online
+  service principal pointer (`AppId`/`ServicePrincipalId`, via `Get-ServicePrincipal`) and its
+  recipient scope to a real scope group name/type/membership (via the private
+  `Resolve-RBAC4AppScope`). `-ByApplication` switches to an app-centric view - one row per
+  distinct application instead of one row per assignment - absorbing what used to be the separate
+  `Get-RegisteredAppWithPermission` function.
+- **`Get-RegisteredAppWithPermission`** — **deprecated**; a thin wrapper around
+  `Get-RBAC4AppEntry -ByApplication -ScopeType All` kept for backward compatibility (writes a
+  deprecation warning). Update callers to use `Get-RBAC4AppEntry -ByApplication` directly.
 - **`New-RBAC4AppUnifiedGroup`** — ensures/creates and configures the scoped Unified Group
   (extracted from `New-RBAC4AppEntry`, which now delegates to it).
 - **`New-RBAC4AppDistributionGroup`** — ensures/creates and configures a scoped Exchange-Online-only
@@ -92,8 +98,9 @@ src/EXORBACforAppManagement/
   Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole,
                                  # Get-AppRoleMap, Get-LegacyScopeRoleMap,
                                  # Resolve-AppRolePermissionValue, Resolve-RBAC4AppServicePrincipal,
-                                 # Resolve-RBAC4AppScopeGroupName, New-RBAC4AppScopeGroup,
-                                 # ConvertTo-RBAC4AppYaml, ConvertFrom-RBAC4AppYaml
+                                 # Resolve-RBAC4AppScopeGroupName, Resolve-RBAC4AppScope,
+                                 # New-RBAC4AppScopeGroup, ConvertTo-RBAC4AppYaml,
+                                 # ConvertFrom-RBAC4AppYaml
 tests/                           # Pester v5 tests (one *.Tests.ps1 per area)
 build.ps1                        # Init / Clean / Analyze / Test / Build tasks
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)
@@ -237,8 +244,11 @@ intercept them. Add new stubs the same way when a function starts calling a new 
 
 - **Three role lookup tables, kept consistent:** the private `Get-NormalizeRole` normalizes short
   names → `Application <perm>` (validated against `Get-AppRoleMap`); the private `Get-AppRoleMap`
-  owns the normalized role → short assignment-name token map used by `New-RBAC4AppEntry` and
-  `Get-RegisteredAppWithPermission`; the private `Get-LegacyScopeRoleMap` maps each legacy
+  owns the normalized role → short assignment-name token map used by `New-RBAC4AppEntry`.
+  `Get-RBAC4AppEntry` normalizes `-Role` via the simpler private `ConvertTo-AppRole` (prefixes
+  `Application ` without validating against the map) and, when `-Role` is omitted, queries every
+  `Application *` role rather than only the ones `Get-AppRoleMap` knows; the
+  private `Get-LegacyScopeRoleMap` maps each legacy
   Application Access Policy permission scope (e.g. `Mail.Read`, EWS `full_access_as_app`) to its App
   RBAC role name (a `Get-AppRoleMap` key), and is used by `Convert-ApplicationAccessPolicyToRBAC`
   together with the private `Resolve-AppRolePermissionValue` (resolves a Graph app-role grant's
@@ -248,7 +258,20 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   `-App` parameter, so role filtering uses native `-Role` and the app filter is client-side
   (matching the resolved SP's `DisplayName`/`<DisplayName>_SP`/`AppId`/`Id` against each
   assignment's `RoleAssigneeName`/`Name`). The private `ConvertTo-AppRole` normalizes role names by
-  prefixing `Application`.
+  prefixing `Application`. `-ScopeType` (default `Group`,`CustomRecipientScope`; pass `All` for
+  every recipient scope) replaces what used to be a hard-coded scope filter. Every returned row
+  (per-assignment or, with `-ByApplication`, per-application) is enriched via a single
+  `Get-ServicePrincipal` directory read (`DisplayName`/`AppId`/`ServicePrincipalId`, matched by
+  exact assignee name - the same both-forms `_SP` rule `Resolve-RBAC4AppServicePrincipal` uses) and
+  via the private `Resolve-RBAC4AppScope` (wraps `Resolve-RBAC4AppScopeGroupName`, adds a
+  `Get-UnifiedGroup`/`Get-DistributionGroup` group-type probe and membership read, cached per
+  distinct scope name for the call). `-ByApplication` groups the enriched per-assignment rows by
+  assignee - this is the former standalone `Get-RegisteredAppWithPermission` function, now a
+  deprecated wrapper (`Get-RBAC4AppEntry -ByApplication -ScopeType All`) around this switch. Each
+  row also carries `EffectiveUserName`/`App` straight from the raw `Get-ManagementRoleAssignment`
+  object (Exchange Online typically leaves both blank/placeholder for application-role
+  assignments); `-ByApplication` aggregates them per application as `EffectiveUserNames`/`Apps`
+  (sorted, unique, non-blank).
 
 ## Conventions
 

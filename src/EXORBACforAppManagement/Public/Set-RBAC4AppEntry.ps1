@@ -438,9 +438,10 @@ function Set-RBAC4AppEntry {
 
                 try {
                     $existing = Get-ManagementRoleAssignment -Identity $rbacName -ErrorAction SilentlyContinue
+                    $existingScope = if ($existing) { Resolve-RBAC4AppScopeGroupName -Assignment $existing } else { $null }
                     $scopedToTarget = $existing -and
                         ([string]$existing.RecipientWriteScope -in @('Group','CustomRecipientScope')) -and
-                        ([string]$existing.CustomRecipientWriteScope -eq $targetGroup)
+                        ([string]$existingScope -eq $targetGroup)
 
                     if ($existing -and $scopedToTarget) {
                         # Already in desired state.

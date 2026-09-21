@@ -6,7 +6,37 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `Get-RBAC4AppEntry`'s per-assignment output gained `EffectiveUserName` and `App` - the raw
+  `Get-ManagementRoleAssignment` fields of the same name, passed through as-is. Exchange Online
+  leaves both blank/placeholder for application-role assignments in practice, but they are now
+  surfaced for completeness rather than silently dropped. `-ByApplication` aggregates them per
+  application as sorted, unique, non-blank `EffectiveUserNames`/`Apps` arrays.
+
 ### Changed
+- **`Get-RegisteredAppWithPermission` merged into `Get-RBAC4AppEntry`.** `Get-RBAC4AppEntry` gained
+  a `-ByApplication` switch that returns the former app-centric inventory view (one row per
+  distinct registered application) instead of the default one-row-per-assignment view.
+  `Get-RegisteredAppWithPermission` is now a **deprecated** thin wrapper - `Get-RBAC4AppEntry
+  -ByApplication -ScopeType All` - that writes a deprecation warning and will be removed in a
+  future release; update scripts to call `Get-RBAC4AppEntry -ByApplication` directly.
+- **`Get-RBAC4AppEntry`'s per-assignment output gained `DisplayName`, `AppId`,
+  `ServicePrincipalId`, `ScopeGroupType`, and `ScopeMembers`.** Every assignment is now resolved
+  back to its Exchange Online service principal pointer (`Get-ServicePrincipal`, one directory read
+  per call - no Microsoft Graph session needed) for `AppId`/`ServicePrincipalId`, and its recipient
+  scope is resolved via the new private `Resolve-RBAC4AppScope` helper to the real scope group's
+  type (`M365Group`/`DistributionList`/`MailEnabledSecurityGroup`) and current membership, not just
+  the raw `RecipientWriteScope`/`Scope` fields. **Breaking change** for any script consuming
+  `Get-RBAC4AppEntry`'s output positionally or relying on its exact former property list.
+- **`Get-RBAC4AppEntry` gained `-ScopeType`**, replacing its previous hard-coded
+  `Group`/`CustomRecipientScope` recipient-scope filter (still the default). Pass `-ScopeType All`
+  to see every recipient scope, including e.g. Organization-wide application assignments this
+  module never creates but a tenant may still have.
+- **`Get-RBAC4AppEntry`'s default (no `-Role`) query now covers every `Application *` role**, not
+  only the roles known to the private `Get-AppRoleMap` table - matching its own prior default
+  behavior, and now also the default for `-ByApplication` (previously
+  `Get-RegisteredAppWithPermission` only inventoried the `Get-AppRoleMap` roles by default).
+  **Breaking change** if a script relied on the narrower inventory-only default.
 - **RBAC4App YAML config schema bumped to `SchemaVersion: "2.0"`.** Scope-group settings
   (`AccessGroupType`, `GroupPrefix`, `AccessGroupName`, `Members`, `ManagedBy`, `BootstrapMember`)
   moved out of `Rbac:` into their own `RbacScope:` section; `Rbac:` now holds only `Roles`. `New-`/

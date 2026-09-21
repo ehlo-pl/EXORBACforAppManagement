@@ -3,7 +3,7 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
-    function global:Get-MgServicePrincipal { }
+    function global:Get-MgServicePrincipal { param([string]$Filter, [string]$ServicePrincipalId) }
     function global:Get-MgContext { }
 }
 
@@ -35,6 +35,19 @@ Describe 'New-RBAC4AppConfig' {
         $content | Should -Match 'SpObjectId:.*sp-obj-id'
         $content | Should -Match 'DisplayName:.*Contoso'
         $content | Should -Match 'TenantId:.*tenant-id-123'
+    }
+
+    It 'escapes single quotes in display-name OData filters' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-obj-id'; AppId = 'app-client-id'; DisplayName = "O'Brien App" }
+        } -ParameterFilter { $Filter -eq "displayName eq 'O''Brien App'" }
+
+        $outFile = New-RBAC4AppConfig -RegisteredAppName "O'Brien App" -OutputPath $TestDrive -Confirm:$false
+
+        (Test-Path $outFile) | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 1 -ParameterFilter {
+            $Filter -eq "displayName eq 'O''Brien App'"
+        }
     }
 
     It 'normalises short role names to Application form in the YAML' {
@@ -95,7 +108,7 @@ Describe 'New-RBAC4AppConfig' {
             -OutputPath $TestDrive -Confirm:$false
 
         $content = Get-Content $outFile -Raw
-        $content | Should -Match 'AccessGroupType: DistributionList'
+        $content | Should -Match 'AccessGroupType: "DistributionList"'
         $content | Should -Match 'box@contoso\.com'
     }
 

@@ -237,6 +237,7 @@ function Test-RBAC4AppEntry {
             # --- Role assignment existence, by the deterministic name New-RBAC4AppEntry builds.
             $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }
             $result.RolesExpected = @($rolesNormalized)
+            $assigneeNeedles = @($sp.DisplayName, ("{0}_SP" -f $sp.DisplayName), $sp.AppId, $sp.Id) | Where-Object { $_ }
 
             foreach ($roleItem in $rolesNormalized) {
                 $shortRoleName = $shortRoleMap[$roleItem]
@@ -249,7 +250,24 @@ function Test-RBAC4AppEntry {
                 $result.RoleAssignmentsExpected += $expectedName
 
                 $assignment = Get-ManagementRoleAssignment -Identity $expectedName -ErrorAction SilentlyContinue
-                if ($assignment -and ([string]$assignment.Role -eq $roleItem)) {
+                $assignmentMatches = $false
+                foreach ($candidate in @($assignment | Where-Object { $_ })) {
+                    $assignee = [string]$candidate.RoleAssigneeName
+                    $assigneeMatches = $false
+                    foreach ($n in $assigneeNeedles) {
+                        if ($assignee -and $assignee -like "*$n*") { $assigneeMatches = $true; break }
+                    }
+
+                    $scopeName = Resolve-RBAC4AppScopeGroupName -Assignment $candidate
+                    if (([string]$candidate.Role -eq $roleItem) -and
+                        $assigneeMatches -and
+                        ([string]$scopeName -eq $umGroupName)) {
+                        $assignmentMatches = $true
+                        break
+                    }
+                }
+
+                if ($assignmentMatches) {
                     $result.RoleAssignmentsFound += $expectedName
                 }
                 else {

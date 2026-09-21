@@ -149,7 +149,8 @@ function New-RBAC4AppConfig {
                 }
                 'ByName' {
                     Write-Verbose "Resolving service principal by display name '$RegisteredAppName'."
-                    $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq '$RegisteredAppName'" -ErrorAction Stop)
+                    $escapedName = $RegisteredAppName.Replace("'", "''")
+                    $matchesRes = @(Get-MgServicePrincipal -Filter "displayName eq '$escapedName'" -ErrorAction Stop)
                     if ($matchesRes.Count -eq 0) { throw "No service principal found for displayName '$RegisteredAppName'." }
                     if ($matchesRes.Count -gt 1) {
                         $ids = ($matchesRes | Select-Object -First 5 -ExpandProperty Id) -join ', '

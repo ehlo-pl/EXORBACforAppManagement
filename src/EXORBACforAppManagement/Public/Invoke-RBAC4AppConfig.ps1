@@ -224,21 +224,27 @@ function Invoke-RBAC4AppConfig {
                 # --- Skip creation if a role assignment with this deterministic name already
                 # exists, so re-running against an already-provisioned app is idempotent. Members
                 # were already added above regardless of this check.
-                $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
-                if ($existingAssignment) {
-                    $existingRole = Get-NormalizeRole ([string]$existingAssignment.Role)
-                    if ($existingRole -ne $roleItem) {
-                        $result.Errors += "Role assignment '$rbacNameBase' already exists but is bound to role '$existingRole', not '$roleItem'; leaving it unchanged."
+                $existingAssignments = @(Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue)
+                if ($existingAssignments.Count -gt 0) {
+                    if ($existingAssignments.Count -gt 1) {
+                        $existsMsg = "Role assignment '$rbacNameBase' lookup returned $($existingAssignments.Count) entries; expected 1. Resolve duplicate assignments before retrying."
+                        $result.Errors += $existsMsg
                         continue
                     }
-                    $existingScopeGroup = Resolve-RBAC4AppScopeGroupName -Assignment $existingAssignment
-                    $scopedToTarget = [string]$existingScopeGroup -eq $umGroupName
+                    $existingAssignment = $existingAssignments[0]
+                    if ([string]$existingAssignment.Role -and ([string]$existingAssignment.Role -ine $roleItem)) {
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is bound to role '$([string]$existingAssignment.Role)', not '$roleItem'."
+                        $result.Errors += $existsMsg
+                        continue
+                    }
+                    $existingScope = Resolve-RBAC4AppScopeGroupName -Assignment $existingAssignment
+                    $scopedToTarget = ([string]$existingAssignment.RecipientWriteScope -in @('Group', 'CustomRecipientScope')) -and
+                        ([string]$existingScope -eq $umGroupName)
                     if ($scopedToTarget) {
                         $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to '$umGroupName'; skipping creation."
                     }
                     else {
-                        $resolvedScope = if ($existingScopeGroup) { [string]$existingScopeGroup } else { '<unknown>' }
-                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$resolvedScope', not '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$([string]$existingScope)', not '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
                     }
                     $result.Warnings += $existsMsg
                     Write-Warning -Message $existsMsg

@@ -37,7 +37,15 @@ Describe 'Test-RBAC4AppEntry' {
         # mock would otherwise keep matching ahead of a plain override).
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             if ($Identity -eq 'AppMailSend-Contoso') {
-                [pscustomobject]@{ Name = $Identity; Role = 'Application Mail.Send'; Identity = $Identity }
+                [pscustomobject]@{
+                    Name                      = $Identity
+                    Role                      = 'Application Mail.Send'
+                    RoleAssigneeName          = 'Contoso_SP'
+                    RecipientWriteScope       = 'Group'
+                    CustomRecipientWriteScope = $null
+                    CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+                    Identity                  = $Identity
+                }
             }
         }
     }
@@ -97,7 +105,51 @@ Describe 'Test-RBAC4AppEntry' {
 
     It 'does not count an assignment whose role does not match' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            [pscustomobject]@{ Name = $Identity; Role = 'Application Calendars.Read'; Identity = $Identity }
+            [pscustomobject]@{
+                Name                      = $Identity
+                Role                      = 'Application Calendars.Read'
+                RoleAssigneeName          = 'Contoso_SP'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+                Identity                  = $Identity
+            }
+        }
+
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
+        $r.RoleAssignmentsMissing | Should -Be @('AppMailSend-Contoso')
+        $r.IsValid | Should -BeFalse
+    }
+
+    It 'does not count an assignment whose assignee does not match the resolved service principal' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = $Identity
+                Role                      = 'Application Mail.Send'
+                RoleAssigneeName          = 'OtherApp_SP'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+                Identity                  = $Identity
+            }
+        }
+
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
+        $r.RoleAssignmentsMissing | Should -Be @('AppMailSend-Contoso')
+        $r.IsValid | Should -BeFalse
+    }
+
+    It 'does not count an assignment scoped to a different group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = $Identity
+                Role                      = 'Application Mail.Send'
+                RoleAssigneeName          = 'Contoso_SP'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Other-Scope_20d5848c-4d61-4b82-a44f-205adc37321f'
+                Identity                  = $Identity
+            }
         }
 
         $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
@@ -140,7 +192,16 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
         Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            if ($Identity -eq 'AppMailSend-Contoso') { [pscustomobject]@{ Name = $Identity; Role = 'Application Mail.Send' } }
+            if ($Identity -eq 'AppMailSend-Contoso') {
+                [pscustomobject]@{
+                    Name                      = $Identity
+                    Role                      = 'Application Mail.Send'
+                    RoleAssigneeName          = 'Contoso_SP'
+                    RecipientWriteScope       = 'Group'
+                    CustomRecipientWriteScope = $null
+                    CustomResourceScope       = 'UDLRAo1P-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+                }
+            }
         }
     }
 
