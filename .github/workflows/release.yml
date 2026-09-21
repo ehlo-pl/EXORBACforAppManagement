@@ -25,7 +25,7 @@ jobs:
         run: |
           $version = '${{ github.ref_name }}'.TrimStart('v')
           $zip = "EXORBACforAppManagement-$version.zip"
-          Compress-Archive -Path ./output/EXORBACforAppManagement/* -DestinationPath $zip -Force
+          Compress-Archive -Path "./output/$version/EXORBACforAppManagement/*" -DestinationPath $zip -Force
           "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Create GitHub release
