@@ -226,6 +226,11 @@ function Invoke-RBAC4AppConfig {
                 # were already added above regardless of this check.
                 $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
                 if ($existingAssignment) {
+                    if ([string]$existingAssignment.Role -and ([string]$existingAssignment.Role -ine $roleItem)) {
+                        $existsMsg = "Role assignment '$rbacNameBase' already exists but is bound to role '$([string]$existingAssignment.Role)', not '$roleItem'."
+                        $result.Errors += $existsMsg
+                        continue
+                    }
                     $existingScope = Resolve-RBAC4AppScopeGroupName -Assignment $existingAssignment
                     $scopedToTarget = ([string]$existingAssignment.RecipientWriteScope -in @('Group', 'CustomRecipientScope')) -and
                         ([string]$existingScope -eq $umGroupName)
