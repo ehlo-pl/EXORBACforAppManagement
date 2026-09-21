@@ -43,9 +43,8 @@ created with at least one ManagedBy value).
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
 
 .PARAMETER ChangeReference
-Optional change or incident reference to persist on the scope group's Notes field. Management role
-assignments do not expose a notes/description field, so the reference is stored on the scoped group
-without changing deterministic role-assignment names.
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml without changing Exchange Online object names.
 
 .EXAMPLE
 New-RBAC4AppDistributionGroup -AppName 'ContosoMailApp' -WhatIf -Verbose
@@ -122,13 +121,9 @@ function New-RBAC4AppDistributionGroup {
         $existingGroup = Get-DistributionGroup -Identity $Name -ErrorAction SilentlyContinue
         if ($existingGroup) {
             $existingOwner = @($existingGroup.ManagedBy | Where-Object { $_ })
-            $notesUpdated = $false
+            $metadataPath = $null
             if ($PSBoundParameters.ContainsKey('ChangeReference')) {
-                $targetNotes = Merge-RBAC4AppChangeReferenceNote -ExistingNotes ([string]$existingGroup.Notes) -ChangeReference $ChangeReference
-                if ([string]$existingGroup.Notes -ne $targetNotes -and $PSCmdlet.ShouldProcess($Name, "Set change reference metadata '$ChangeReference'")) {
-                    Set-DistributionGroup -Identity $Name -Notes $targetNotes -ErrorAction Stop
-                    $notesUpdated = $true
-                }
+                $metadataPath = Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType 'DistributionList' -ScopeGroupName $Name
             }
             Write-Warning -Message ("Distribution list '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Distribution list '{0}' already exists; skipping creation." -f $Name)
@@ -138,7 +133,7 @@ function New-RBAC4AppDistributionGroup {
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
                 ChangeReference = $ChangeReference
-                NotesUpdated    = $notesUpdated
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $true
                 Group          = $existingGroup
             }
@@ -167,8 +162,8 @@ function New-RBAC4AppDistributionGroup {
 
         $initialMembers = @()
         if ($BootstrapMember) { $initialMembers += $BootstrapMember }
-        $scopeNotes = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
-            Merge-RBAC4AppChangeReferenceNote -ExistingNotes $null -ChangeReference $ChangeReference
+        $metadataPath = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+            Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType 'DistributionList' -ScopeGroupName $Name
         }
         else { $null }
         Write-Verbose -Message ("Distribution list '{0}' not found. Creating new group." -f $Name)
@@ -185,7 +180,6 @@ function New-RBAC4AppDistributionGroup {
                 Members     = $initialMembers
                 ErrorAction = 'Stop'
             }
-            if ($scopeNotes) { $newDistributionGroupParams['Notes'] = $scopeNotes }
             $ndg = New-DistributionGroup @newDistributionGroupParams
         }
         catch {
@@ -205,7 +199,6 @@ function New-RBAC4AppDistributionGroup {
                 MemberDepartRestriction            = 'Closed'
                 ErrorAction                        = 'Stop'
             }
-            if ($scopeNotes) { $setDistributionGroupParams['Notes'] = $scopeNotes }
             Set-DistributionGroup @setDistributionGroupParams
 
             $configuredGroup = Get-DistributionGroup -Identity $Name -ErrorAction SilentlyContinue
@@ -216,7 +209,7 @@ function New-RBAC4AppDistributionGroup {
                     OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
                     ChangeReference = $ChangeReference
-                    NotesUpdated    = [bool]$scopeNotes
+                    ChangeReferencePath = $metadataPath
                     AlreadyExisted = $false
                     Group          = $configuredGroup
                 }
@@ -228,7 +221,7 @@ function New-RBAC4AppDistributionGroup {
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
                 ChangeReference = $ChangeReference
-                NotesUpdated    = [bool]$scopeNotes
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $false
                 Group          = $ndg
             }

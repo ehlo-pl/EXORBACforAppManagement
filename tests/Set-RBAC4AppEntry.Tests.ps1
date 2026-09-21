@@ -13,14 +13,14 @@ BeforeAll {
     function global:Get-UnifiedGroup { param([string]$Identity) }
     function global:Get-UnifiedGroupLinks { param([string]$Identity, [string]$LinkType) }
     function global:Add-UnifiedGroupLinks { param([string]$Identity, [string]$LinkType, [string]$Links) }
-    function global:Set-UnifiedGroup { param([string]$Identity, [string]$Notes) }
+    function global:Set-UnifiedGroup { param([string]$Identity) }
     function global:Get-ServicePrincipal { param([string]$Identity) }
     function global:Get-Recipient { param([string]$Identity) }
     function global:Get-ManagementRoleAssignment { param([string]$Identity, [string]$Role) }
     function global:New-ManagementRoleAssignment { param($App, $Role, $RecipientGroupScope, $Name) }
     function global:Remove-ManagementRoleAssignment { param([string]$Identity) }
     function global:Get-DistributionGroup { param([string]$Identity) }
-    function global:Set-DistributionGroup { param([string]$Identity, [string]$Notes) }
+    function global:Set-DistributionGroup { param([string]$Identity) }
     function global:Get-DistributionGroupMember { param([string]$Identity) }
     function global:Add-DistributionGroupMember { param([string]$Identity, [string]$Member) }
 
@@ -86,6 +86,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
         Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement Save-RBAC4AppChangeReferenceRecord { Join-Path $TestDrive "$ChangeReference.yaml" }
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
         Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
     }
@@ -156,20 +157,20 @@ Describe 'Set-RBAC4AppEntry reconcile' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
     }
 
-    It 'stores ChangeReference in the existing target group Notes' {
+    It 'stores ChangeReference for the existing target group in a local metadata file' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
             [pscustomobject]@{
                 DisplayName = 'g'
                 Identity    = $Identity
-                Notes       = 'Existing note'
             }
         }
 
         $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -ChangeReference 'CHG123456' -Confirm:$false
 
         $r.ChangeReference | Should -Be 'CHG123456'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1 -ParameterFilter {
-            $Identity -eq 'Um365RAo1-Contoso' -and $Notes -eq "Existing note$([System.Environment]::NewLine)RBAC4App-ChangeReference: CHG123456"
+        $r.ChangeReferencePath | Should -Be (Join-Path $TestDrive 'CHG123456.yaml')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
+            $ChangeReference -eq 'CHG123456' -and $AccessGroupType -eq 'M365Group' -and $ScopeGroupName -eq 'Um365RAo1-Contoso'
         }
     }
 

@@ -6,7 +6,7 @@ BeforeAll {
     function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
     function global:Get-UnifiedGroupLinks { }
-    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members, $Notes) }
+    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
     function global:Set-UnifiedGroup { }
     function global:Add-UnifiedGroupLinks { }
     function global:Get-Recipient { }
@@ -205,6 +205,7 @@ Describe 'Invoke-RBAC4AppConfig' {
         Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { [pscustomobject]@{ DisplayName = 'Contoso_SP' } }
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { [pscustomobject]@{ Name = 'AppMailSend-Contoso' } }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Save-RBAC4AppChangeReferenceRecord { Join-Path $TestDrive "$ChangeReference.yaml" }
     }
 
     It 'provisions scope group, registers SP, and creates role assignment from YAML' {
@@ -229,7 +230,7 @@ Describe 'Invoke-RBAC4AppConfig' {
         $res.RolesNormalized | Should -Contain 'Application Mail.Send'
     }
 
-    It 'applies ChangeReference from the config to the scope group Notes' {
+    It 'applies ChangeReference from the config to a local metadata file' {
         $configWithChangeReference = Join-Path $TestDrive 'test-config-change-reference.yml'
         ($script:testYaml -replace "Rbac:\r?\n", "Rbac:`n  ChangeReference: `"CHG123456`"`n") |
             Set-Content $configWithChangeReference -Encoding UTF8
@@ -237,8 +238,9 @@ Describe 'Invoke-RBAC4AppConfig' {
         $res = Invoke-RBAC4AppConfig -Path $configWithChangeReference -Confirm:$false
 
         $res.ChangeReference | Should -Be 'CHG123456'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
-            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        $res.ChangeReferencePath | Should -Be (Join-Path $TestDrive 'CHG123456.yaml')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
+            $ChangeReference -eq 'CHG123456' -and $AccessGroupType -eq 'M365Group' -and $ScopeGroupName -eq 'Um365RAo1-Contoso'
         }
     }
 

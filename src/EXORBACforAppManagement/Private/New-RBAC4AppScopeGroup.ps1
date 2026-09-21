@@ -52,20 +52,23 @@ function New-RBAC4AppScopeGroup {
         }
 
         'MailEnabledSecurityGroup' {
-            if ($PSBoundParameters.ContainsKey('ChangeReference')) {
-                Write-Warning -Message ("Change reference metadata cannot be written to MailEnabledSecurityGroup '{0}' because this module treats it as reference-only; store '{1}' in the on-premises source of authority." -f $Name, $ChangeReference)
-            }
             Write-Verbose -Message ("Validating existing mail-enabled security group '{0}' (reference-only; not created)." -f $Name)
             $existing = Get-Recipient -Identity $Name -ErrorAction SilentlyContinue
             if (-not $existing) {
                 throw "MailEnabledSecurityGroup '$Name' was not found. On-prem/hybrid-synced groups must already exist; this module does not create them. Supply an existing group via -AccessGroupName."
             }
             $existingOwner = @($existing.ManagedBy | Where-Object { $_ })
+            $metadataPath = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+                Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType $AccessGroupType -ScopeGroupName $Name
+            }
+            else { $null }
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $existing.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
+                ChangeReference = $ChangeReference
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $true
                 Group          = $existing
             }

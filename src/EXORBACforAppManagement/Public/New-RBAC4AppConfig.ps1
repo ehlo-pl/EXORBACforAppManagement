@@ -48,8 +48,9 @@ One or more recipients assigned as the scope group's owners. Defaults to 'GraphA
 Initial placeholder member passed during scope group creation. Defaults to 'GraphAPI-Dummy'.
 
 .PARAMETER ChangeReference
-Optional change or incident reference to persist on the scope group's Notes field when
-Invoke-RBAC4AppConfig provisions the Exchange Online objects.
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml when Invoke-RBAC4AppConfig provisions the Exchange Online
+objects.
 
 .PARAMETER OutputPath
 Directory to write the config file into. Defaults to the current working directory.

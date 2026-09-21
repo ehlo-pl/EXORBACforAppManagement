@@ -6,8 +6,8 @@ BeforeAll {
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
     function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
-    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members, $Notes) }
-    function global:Set-UnifiedGroup { param($Identity, $Notes) }
+    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
+    function global:Set-UnifiedGroup { param($Identity) }
     function global:Get-Recipient { }
 }
 
@@ -23,6 +23,7 @@ Describe 'New-RBAC4AppUnifiedGroup' {
         Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'owner@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Save-RBAC4AppChangeReferenceRecord { Join-Path $TestDrive "$ChangeReference.yaml" }
     }
 
     It 'creates and configures the group when it does not exist' {
@@ -92,38 +93,35 @@ Describe 'New-RBAC4AppUnifiedGroup' {
         $res.OwnerAdded     | Should -Be @('existing@contoso.com')
     }
 
-    It 'stores ChangeReference in Notes when creating the group' {
+    It 'stores ChangeReference in a local metadata file when creating the group' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
 
         $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'CHG123456' -Confirm:$false
 
         $res.ChangeReference | Should -Be 'CHG123456'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
-            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
-        }
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1 -ParameterFilter {
-            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        $res.ChangeReferencePath | Should -Be (Join-Path $TestDrive 'CHG123456.yaml')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
+            $ChangeReference -eq 'CHG123456' -and $AccessGroupType -eq 'M365Group' -and $ScopeGroupName -eq 'Um365RAo1-Contoso'
         }
     }
 
-    It 'updates ChangeReference in Notes without removing unrelated existing notes' {
+    It 'stores ChangeReference in a local metadata file when the group already exists' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
             [pscustomobject]@{
                 DisplayName = 'g'
                 Identity    = 'g'
                 ManagedBy   = @('existing@contoso.com')
-                Notes       = "Keep me`nRBAC4App-ChangeReference: OLD"
             }
         }
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { }
 
         $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'INC987654' -Confirm:$false
 
-        $res.NotesUpdated | Should -BeTrue
+        $res.ChangeReferencePath | Should -Be (Join-Path $TestDrive 'INC987654.yaml')
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1 -ParameterFilter {
-            $Notes -eq "Keep me$([System.Environment]::NewLine)RBAC4App-ChangeReference: INC987654"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
+            $ChangeReference -eq 'INC987654' -and $AccessGroupType -eq 'M365Group' -and $ScopeGroupName -eq 'Um365RAo1-Contoso'
         }
     }
 

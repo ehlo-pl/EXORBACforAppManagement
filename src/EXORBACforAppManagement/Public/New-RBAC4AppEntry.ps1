@@ -72,9 +72,8 @@ Kind of group that backs the RBAC scope. One of:
 Optional initial member passed during Unified Group creation.
 
 .PARAMETER ChangeReference
-Optional change or incident reference to persist on the scope group's Notes field. Exchange Online
-management role assignments do not expose a metadata/notes field, and encoding the reference in the
-assignment name would break deterministic idempotency and hit name-length limits.
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml without changing Exchange Online object names.
 
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Verbose -WhatIf
@@ -221,6 +220,7 @@ function New-RBAC4AppEntry {
             TenantId          = $tenantid
             AccessGroupType   = $AccessGroupType
             ChangeReference   = $ChangeReference
+            ChangeReferencePath = $null
             ScopeGroupName    = $null
             OwnerRequested    = @($ManagedBy)
             OwnerAdded        = $null
@@ -300,13 +300,12 @@ function New-RBAC4AppEntry {
             if ($PSBoundParameters.ContainsKey('ChangeReference')) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
             $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
             foreach ($w in $ugWarnings) {
-                if ([string]$w.Message -like '*already exists*' -or [string]$w.Message -like '*Change reference metadata cannot be written*') {
-                    $result.Warnings += [string]$w.Message
-                }
+                if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
             }
             if ($ugResult) {
                 $result.OwnerRequested = $ugResult.OwnerRequested
                 $result.OwnerAdded    = $ugResult.OwnerAdded
+                $result.ChangeReferencePath = $ugResult.ChangeReferencePath
             }
 
             # --- Read the group's current membership once (all types, read-only): seeds MembersFinal

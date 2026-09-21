@@ -90,9 +90,8 @@ Optional. Switch the role assignments to this explicit group name (sanitized via
 precedence over -NewGroupPrefix.
 
 .PARAMETER ChangeReference
-Optional change or incident reference to persist on the target scope group's Notes field. Exchange
-Online management role assignments do not expose a metadata/notes field, and encoding the reference
-in the assignment name would break deterministic idempotency and hit name-length limits.
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml without changing Exchange Online object names.
 
 .EXAMPLE
 Set-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -WhatIf -Verbose
@@ -221,6 +220,7 @@ function Set-RBAC4AppEntry {
             TenantId                  = $tenantid
             AccessGroupType           = $AccessGroupType
             ChangeReference           = $ChangeReference
+            ChangeReferencePath       = $null
             CurrentGroupName          = $null
             TargetGroupName           = $null
             GroupChanged              = $false
@@ -333,33 +333,19 @@ function Set-RBAC4AppEntry {
                     if ($PSBoundParameters.ContainsKey('ChangeReference')) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
                     $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
                     foreach ($w in $ugWarnings) {
-                        if ([string]$w.Message -like '*already exists*' -or [string]$w.Message -like '*Change reference metadata cannot be written*') {
-                            $result.Warnings += [string]$w.Message
-                        }
+                        if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
                     }
                     if ($ugResult) {
                         $result.ScopeGroupCreated = $true
                         $group = $ugResult.Group
+                        $result.ChangeReferencePath = $ugResult.ChangeReferencePath
                     }
                 }
             }
 
             if ($PSBoundParameters.ContainsKey('ChangeReference')) {
-                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                    $changeReferenceWarning = "Change reference metadata cannot be written to MailEnabledSecurityGroup '$targetGroup' because this module treats it as reference-only; store '$ChangeReference' in the on-premises source of authority."
-                    $result.Warnings += $changeReferenceWarning
-                    Write-Warning -Message $changeReferenceWarning
-                }
-                elseif ($group -and $result.ScopeGroupExisted) {
-                    $targetNotes = Merge-RBAC4AppChangeReferenceNote -ExistingNotes ([string]$group.Notes) -ChangeReference $ChangeReference
-                    if ([string]$group.Notes -ne $targetNotes -and $PSCmdlet.ShouldProcess($targetGroup, "Set change reference metadata '$ChangeReference'")) {
-                        if ($AccessGroupType -eq 'DistributionList') {
-                            Set-DistributionGroup -Identity $targetGroup -Notes $targetNotes -ErrorAction Stop
-                        }
-                        else {
-                            Set-UnifiedGroup -Identity $targetGroup -Notes $targetNotes -ErrorAction Stop
-                        }
-                    }
+                if ($group -and $result.ScopeGroupExisted) {
+                    $result.ChangeReferencePath = Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType $AccessGroupType -ScopeGroupName $targetGroup -ApplicationName $sp.DisplayName -AppId $sp.AppId -SpObjectId $sp.Id
                 }
             }
 

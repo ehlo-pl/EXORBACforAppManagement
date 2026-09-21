@@ -5,8 +5,8 @@ BeforeAll {
 
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
     function global:Get-DistributionGroup { }
-    function global:New-DistributionGroup { param($Name, $DisplayName, $Alias, $Type, [string[]]$ManagedBy, $Members, $Notes) }
-    function global:Set-DistributionGroup { param($Identity, $Notes) }
+    function global:New-DistributionGroup { param($Name, $DisplayName, $Alias, $Type, [string[]]$ManagedBy, $Members) }
+    function global:Set-DistributionGroup { param($Identity) }
     function global:Get-Recipient { }
 }
 
@@ -21,6 +21,7 @@ Describe 'New-RBAC4AppDistributionGroup' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'owner@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Save-RBAC4AppChangeReferenceRecord { Join-Path $TestDrive "$ChangeReference.yaml" }
     }
 
     It 'creates and configures the list when it does not exist' {
@@ -65,38 +66,35 @@ Describe 'New-RBAC4AppDistributionGroup' {
         $res.OwnerAdded     | Should -Be @('existing@contoso.com')
     }
 
-    It 'stores ChangeReference in Notes when creating the list' {
+    It 'stores ChangeReference in a local metadata file when creating the list' {
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
         Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
 
         $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'CHG123456' -Confirm:$false
 
         $res.ChangeReference | Should -Be 'CHG123456'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1 -ParameterFilter {
-            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
-        }
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 1 -ParameterFilter {
-            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        $res.ChangeReferencePath | Should -Be (Join-Path $TestDrive 'CHG123456.yaml')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
+            $ChangeReference -eq 'CHG123456' -and $AccessGroupType -eq 'DistributionList' -and $ScopeGroupName -eq 'UDLRAo1-Contoso'
         }
     }
 
-    It 'updates ChangeReference in Notes without removing unrelated existing notes' {
+    It 'stores ChangeReference in a local metadata file when the list already exists' {
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
             [pscustomobject]@{
                 DisplayName = 'g'
                 Identity    = 'g'
                 ManagedBy   = @('existing@contoso.com')
-                Notes       = "Keep me`nRBAC4App-ChangeReference: OLD"
             }
         }
         Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { }
 
         $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'INC987654' -Confirm:$false
 
-        $res.NotesUpdated | Should -BeTrue
+        $res.ChangeReferencePath | Should -Be (Join-Path $TestDrive 'INC987654.yaml')
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 0
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 1 -ParameterFilter {
-            $Notes -eq "Keep me$([System.Environment]::NewLine)RBAC4App-ChangeReference: INC987654"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
+            $ChangeReference -eq 'INC987654' -and $AccessGroupType -eq 'DistributionList' -and $ScopeGroupName -eq 'UDLRAo1-Contoso'
         }
     }
 

@@ -117,6 +117,7 @@ function Invoke-RBAC4AppConfig {
             TenantId            = $config.TenantId
             AccessGroupType     = $AccessGroupType
             ChangeReference     = $ChangeReference
+            ChangeReferencePath = $null
             ScopeGroupName      = $null
             OwnerRequested      = @($ManagedBy)
             OwnerAdded          = $null
@@ -156,13 +157,12 @@ function Invoke-RBAC4AppConfig {
             if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
             $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
             foreach ($w in $ugWarnings) {
-                if ([string]$w.Message -like '*already exists*' -or [string]$w.Message -like '*Change reference metadata cannot be written*') {
-                    $result.Warnings += [string]$w.Message
-                }
+                if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
             }
             if ($ugResult) {
                 $result.OwnerRequested = $ugResult.OwnerRequested
                 $result.OwnerAdded     = $ugResult.OwnerAdded
+                $result.ChangeReferencePath = $ugResult.ChangeReferencePath
             }
 
             # --- Read the group's current membership once (all types, read-only): seeds MembersFinal
