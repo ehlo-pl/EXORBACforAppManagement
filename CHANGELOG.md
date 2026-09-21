@@ -65,10 +65,11 @@ All notable changes to this project are documented here. The format is based on
   `CustomResourceScope` instead, the name of an auto-created `ManagementScope` object that follows
   the pattern `"<GroupName>_<GUID>"` (confirmed against a real tenant). Added the shared private
   helper `Resolve-RBAC4AppScopeGroupName`, which strips the GUID suffix to recover the group name
-  directly (no extra EXO call needed), and wired it into `Get-RegisteredAppWithPermission`.
-  **Note:** the same wrong-field read (`CustomRecipientWriteScope` for a `Group`-scoped assignment)
-  is still present in `Get-RBAC4AppEntry`'s `Scope` column and in the scope-matching logic of
-  `Set-`/`Remove-RBAC4AppEntry`; see `TODO.md`.
+  directly (no extra EXO call needed), and wired it into `Get-RegisteredAppWithPermission`,
+  `New-RBAC4AppEntry`, and `Invoke-RBAC4AppConfig`.
+  **Note:** the remaining direct wrong-field reads (`CustomRecipientWriteScope` for a
+  `Group`-scoped assignment) are `Get-RBAC4AppEntry`'s `Scope` column plus the scope-matching
+  logic of `Set-`/`Remove-RBAC4AppEntry`; see `TODO.md`.
 - `Get-RegisteredAppWithPermission` no longer fails with "Authentication needed. Please call
   Connect-MgGraph." when run in an Exchange-Online-only session. Microsoft Graph is now optional:
   without a connected session (or if connectivity is lost partway through), the function writes a

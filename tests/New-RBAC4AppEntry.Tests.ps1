@@ -180,6 +180,23 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         ($r.Warnings -join ';') | Should -Match "scoped to 'SomeOtherGroup', not 'Um365RAo1-Contoso'"
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
+
+    It 'records an error when a same-named assignment exists for a different role' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Calendars.Read'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+            }
+        }
+
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        ($r.Errors -join ';') | Should -Match "bound to role 'Application Calendars.Read', not 'Application Mail.Send'"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
 }
 
 Describe 'New-RBAC4AppEntry -AccessGroupType' {

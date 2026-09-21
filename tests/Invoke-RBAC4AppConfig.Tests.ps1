@@ -3,6 +3,7 @@
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
 
+    function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
     function global:Get-UnifiedGroupLinks { }
     function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
@@ -184,7 +185,7 @@ RbacScope:
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-UnifiedGroup', 'Get-UnifiedGroupLinks', 'New-UnifiedGroup', 'Set-UnifiedGroup', 'Add-UnifiedGroupLinks',
+    foreach ($n in 'Get-ConnectionInformation', 'Get-UnifiedGroup', 'Get-UnifiedGroupLinks', 'New-UnifiedGroup', 'Set-UnifiedGroup', 'Add-UnifiedGroupLinks',
                    'Get-Recipient', 'New-ServicePrincipal', 'Get-ServicePrincipal', 'New-ManagementRoleAssignment', 'Get-ManagementRoleAssignment', 'Get-DistributionGroupMember') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
@@ -192,6 +193,7 @@ AfterAll {
 
 Describe 'Invoke-RBAC4AppConfig' {
     BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
@@ -245,6 +247,23 @@ Describe 'Invoke-RBAC4AppConfig' {
 
         $res.RoleAssignments | Should -HaveCount 1
         ($res.Warnings -join ';') | Should -Match 'already exists and is scoped'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'records an error when a same-named assignment exists for a different role' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Calendars.Read'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+            }
+        }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+        ($res.Errors -join ';') | Should -Match "bound to role 'Application Calendars.Read', not 'Application Mail.Send'"
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
@@ -386,6 +405,34 @@ Describe 'Invoke-RBAC4AppConfig' {
                 }
             }
             { ConvertTo-RBAC4AppYaml -Config $config } | Should -Throw '*CR or LF*'
+        }
+    }
+
+    It 'derives the default GroupPrefix from AccessGroupType when the YAML omits it' {
+        InModuleScope EXORBACforAppManagement {
+            $distributionConfig = ConvertFrom-RBAC4AppYaml -Content @'
+SchemaVersion: "2.0"
+Application:
+  DisplayName: "Contoso"
+Rbac:
+  Roles:
+    - Application Mail.Send
+RbacScope:
+  AccessGroupType: DistributionList
+'@
+            $distributionConfig.RbacScope.GroupPrefix | Should -Be 'UDLRAo1P'
+
+            $mesgConfig = ConvertFrom-RBAC4AppYaml -Content @'
+SchemaVersion: "2.0"
+Application:
+  DisplayName: "Contoso"
+Rbac:
+  Roles:
+    - Application Mail.Send
+RbacScope:
+  AccessGroupType: MailEnabledSecurityGroup
+'@
+            $mesgConfig.RbacScope.GroupPrefix | Should -Be 'USRAo1P'
         }
     }
 }
