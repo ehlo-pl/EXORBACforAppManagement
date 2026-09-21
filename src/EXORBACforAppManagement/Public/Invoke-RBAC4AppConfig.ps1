@@ -224,8 +224,14 @@ function Invoke-RBAC4AppConfig {
                 # --- Skip creation if a role assignment with this deterministic name already
                 # exists, so re-running against an already-provisioned app is idempotent. Members
                 # were already added above regardless of this check.
-                $existingAssignment = Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue
-                if ($existingAssignment) {
+                $existingAssignments = @(Get-ManagementRoleAssignment -Identity $rbacNameBase -ErrorAction SilentlyContinue)
+                if ($existingAssignments.Count -gt 0) {
+                    if ($existingAssignments.Count -gt 1) {
+                        $existsMsg = "Role assignment '$rbacNameBase' lookup returned $($existingAssignments.Count) entries; expected 1. Resolve duplicate assignments before retrying."
+                        $result.Errors += $existsMsg
+                        continue
+                    }
+                    $existingAssignment = $existingAssignments[0]
                     if ([string]$existingAssignment.Role -and ([string]$existingAssignment.Role -ine $roleItem)) {
                         $existsMsg = "Role assignment '$rbacNameBase' already exists but is bound to role '$([string]$existingAssignment.Role)', not '$roleItem'."
                         $result.Errors += $existsMsg
