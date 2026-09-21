@@ -5,8 +5,8 @@ BeforeAll {
 
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
     function global:Get-DistributionGroup { }
-    function global:New-DistributionGroup { param($Name, $DisplayName, $Alias, $Type, [string[]]$ManagedBy, $Members) }
-    function global:Set-DistributionGroup { }
+    function global:New-DistributionGroup { param($Name, $DisplayName, $Alias, $Type, [string[]]$ManagedBy, $Members, $Notes) }
+    function global:Set-DistributionGroup { param($Identity, $Notes) }
     function global:Get-Recipient { }
 }
 
@@ -63,6 +63,41 @@ Describe 'New-RBAC4AppDistributionGroup' {
         $res.AlreadyExisted | Should -BeTrue
         $res.OwnerRequested | Should -Be @('owner@contoso.com')
         $res.OwnerAdded     | Should -Be @('existing@contoso.com')
+    }
+
+    It 'stores ChangeReference in Notes when creating the list' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+
+        $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'CHG123456' -Confirm:$false
+
+        $res.ChangeReference | Should -Be 'CHG123456'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1 -ParameterFilter {
+            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 1 -ParameterFilter {
+            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        }
+    }
+
+    It 'updates ChangeReference in Notes without removing unrelated existing notes' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            [pscustomobject]@{
+                DisplayName = 'g'
+                Identity    = 'g'
+                ManagedBy   = @('existing@contoso.com')
+                Notes       = "Keep me`nRBAC4App-ChangeReference: OLD"
+            }
+        }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { }
+
+        $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'INC987654' -Confirm:$false
+
+        $res.NotesUpdated | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 1 -ParameterFilter {
+            $Notes -eq "Keep me$([System.Environment]::NewLine)RBAC4App-ChangeReference: INC987654"
+        }
     }
 
     It 'does not create under -WhatIf' {

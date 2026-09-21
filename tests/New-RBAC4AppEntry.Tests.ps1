@@ -125,6 +125,14 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         }
     }
 
+    It 'passes ChangeReference through to the scope group helper' {
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -ChangeReference 'CHG123456' -Role 'Mail.Send' -WhatIf
+        $r.ChangeReference | Should -Be 'CHG123456'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1 -ParameterFilter {
+            $ChangeReference -eq 'CHG123456'
+        }
+    }
+
     It 'uses AccessGroupName as the Unified Group scope' {
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -AccessGroupName 'RBAC-AppScope-Contoso' -Role 'Mail.Send' -WhatIf
 

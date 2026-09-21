@@ -6,8 +6,8 @@ BeforeAll {
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
     function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
-    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
-    function global:Set-UnifiedGroup { }
+    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members, $Notes) }
+    function global:Set-UnifiedGroup { param($Identity, $Notes) }
     function global:Get-Recipient { }
 }
 
@@ -90,6 +90,41 @@ Describe 'New-RBAC4AppUnifiedGroup' {
         $res.AlreadyExisted | Should -BeTrue
         $res.OwnerRequested | Should -Be @('owner@contoso.com')
         $res.OwnerAdded     | Should -Be @('existing@contoso.com')
+    }
+
+    It 'stores ChangeReference in Notes when creating the group' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'CHG123456' -Confirm:$false
+
+        $res.ChangeReference | Should -Be 'CHG123456'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
+            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1 -ParameterFilter {
+            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        }
+    }
+
+    It 'updates ChangeReference in Notes without removing unrelated existing notes' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
+            [pscustomobject]@{
+                DisplayName = 'g'
+                Identity    = 'g'
+                ManagedBy   = @('existing@contoso.com')
+                Notes       = "Keep me`nRBAC4App-ChangeReference: OLD"
+            }
+        }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -ChangeReference 'INC987654' -Confirm:$false
+
+        $res.NotesUpdated | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1 -ParameterFilter {
+            $Notes -eq "Keep me$([System.Environment]::NewLine)RBAC4App-ChangeReference: INC987654"
+        }
     }
 
     It 'does not create under -WhatIf' {

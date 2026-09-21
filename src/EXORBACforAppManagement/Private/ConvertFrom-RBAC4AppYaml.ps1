@@ -48,7 +48,8 @@ function ConvertFrom-RBAC4AppYaml {
             DisplayName = ''
         }
         Rbac          = [pscustomobject]@{
-            Roles = [System.Collections.Generic.List[string]]::new()
+            Roles           = [System.Collections.Generic.List[string]]::new()
+            ChangeReference = ''
         }
         RbacScope     = [pscustomobject]@{
             AccessGroupType = 'M365Group'
@@ -105,7 +106,8 @@ function ConvertFrom-RBAC4AppYaml {
             }
             elseif ($section -eq 'Rbac') {
                 switch ($key) {
-                    'Roles' { $listKey = 'Roles' }
+                    'Roles'           { $listKey = 'Roles' }
+                    'ChangeReference' { $config.Rbac.ChangeReference = $value; $listKey = $null }
                 }
             }
             elseif ($section -eq 'RbacScope') {

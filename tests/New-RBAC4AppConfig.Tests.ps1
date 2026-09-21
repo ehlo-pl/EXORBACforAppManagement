@@ -60,6 +60,17 @@ Describe 'New-RBAC4AppConfig' {
         (Get-Content $outFile -Raw) | Should -Match 'Application Mail\.Send'
     }
 
+    It 'writes ChangeReference into the YAML config' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' `
+            -Role 'Mail.Send' -ChangeReference 'CHG123456' -OutputPath $TestDrive -Confirm:$false
+
+        (Get-Content $outFile -Raw) | Should -Match 'ChangeReference: "CHG123456"'
+    }
+
     It 'resolves SP by AppId' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Contoso' }
@@ -138,6 +149,7 @@ Describe 'New-RBAC4AppConfig' {
         $parsed.Application.SpObjectId     | Should -Be 'sp-obj-id'
         $parsed.Application.DisplayName    | Should -Be 'Contoso'
         $parsed.Rbac.Roles                 | Should -Contain 'Application Mail.Send'
+        $parsed.Rbac.ChangeReference       | Should -Be ''
         $parsed.RbacScope.Members          | Should -Contain 'shared@contoso.com'
         $parsed.RbacScope.ManagedBy        | Should -Contain 'owner1@contoso.com'
         $parsed.RbacScope.ManagedBy        | Should -Contain 'owner2@contoso.com'

@@ -106,6 +106,7 @@ function Invoke-RBAC4AppConfig {
         $ManagedBy       = @($config.RbacScope.ManagedBy)
         $BootstrapMember = $config.RbacScope.BootstrapMember
         $roles           = @($config.Rbac.Roles)
+        $ChangeReference = [string]$config.Rbac.ChangeReference
 
         $result = [ordered]@{
             ParameterSet        = 'ByConfig'
@@ -115,6 +116,7 @@ function Invoke-RBAC4AppConfig {
             SpObjectId          = $spId
             TenantId            = $config.TenantId
             AccessGroupType     = $AccessGroupType
+            ChangeReference     = $ChangeReference
             ScopeGroupName      = $null
             OwnerRequested      = @($ManagedBy)
             OwnerAdded          = $null
@@ -144,9 +146,19 @@ function Invoke-RBAC4AppConfig {
 
             # --- Ensure scope group
             Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
-            $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $umGroupName -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+            $scopeGroupParams = @{
+                AccessGroupType = $AccessGroupType
+                Name            = $umGroupName
+                ManagedBy       = $ManagedBy
+                BootstrapMember = $BootstrapMember
+                WarningVariable = 'ugWarnings'
+            }
+            if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+            $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
             foreach ($w in $ugWarnings) {
-                if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+                if ([string]$w.Message -like '*already exists*' -or [string]$w.Message -like '*Change reference metadata cannot be written*') {
+                    $result.Warnings += [string]$w.Message
+                }
             }
             if ($ugResult) {
                 $result.OwnerRequested = $ugResult.OwnerRequested

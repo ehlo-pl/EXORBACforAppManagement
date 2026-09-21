@@ -71,6 +71,11 @@ Kind of group that backs the RBAC scope. One of:
 .PARAMETER BootstrapMember
 Optional initial member passed during Unified Group creation.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist on the scope group's Notes field. Exchange Online
+management role assignments do not expose a metadata/notes field, and encoding the reference in the
+assignment name would break deterministic idempotency and hit name-length limits.
+
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Verbose -WhatIf
 
@@ -173,7 +178,11 @@ function New-RBAC4AppEntry {
 
         # Optional placeholder member (dont validate as email)
         [Parameter()]
-        [string] $BootstrapMember = "GraphAPI-Dummy"
+        [string] $BootstrapMember = "GraphAPI-Dummy",
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     begin {
@@ -211,6 +220,7 @@ function New-RBAC4AppEntry {
             SpObjectId        = $null
             TenantId          = $tenantid
             AccessGroupType   = $AccessGroupType
+            ChangeReference   = $ChangeReference
             ScopeGroupName    = $null
             OwnerRequested    = @($ManagedBy)
             OwnerAdded        = $null
@@ -280,9 +290,19 @@ function New-RBAC4AppEntry {
 
             # --- Ensure the scope group (delegated to New-RBAC4AppScopeGroup, which dispatches on type).
             Write-Verbose -Message ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $sp.DisplayName, $sp.Id)
-            $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $umGroupName -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+            $scopeGroupParams = @{
+                AccessGroupType = $AccessGroupType
+                Name            = $umGroupName
+                ManagedBy       = $ManagedBy
+                BootstrapMember = $BootstrapMember
+                WarningVariable = 'ugWarnings'
+            }
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+            $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
             foreach ($w in $ugWarnings) {
-                if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+                if ([string]$w.Message -like '*already exists*' -or [string]$w.Message -like '*Change reference metadata cannot be written*') {
+                    $result.Warnings += [string]$w.Message
+                }
             }
             if ($ugResult) {
                 $result.OwnerRequested = $ugResult.OwnerRequested

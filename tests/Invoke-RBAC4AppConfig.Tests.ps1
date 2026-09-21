@@ -6,7 +6,7 @@ BeforeAll {
     function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
     function global:Get-UnifiedGroupLinks { }
-    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
+    function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members, $Notes) }
     function global:Set-UnifiedGroup { }
     function global:Add-UnifiedGroupLinks { }
     function global:Get-Recipient { }
@@ -227,6 +227,19 @@ Describe 'Invoke-RBAC4AppConfig' {
     It 'normalises the role name from the YAML' {
         $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
         $res.RolesNormalized | Should -Contain 'Application Mail.Send'
+    }
+
+    It 'applies ChangeReference from the config to the scope group Notes' {
+        $configWithChangeReference = Join-Path $TestDrive 'test-config-change-reference.yml'
+        ($script:testYaml -replace "Rbac:\r?\n", "Rbac:`n  ChangeReference: `"CHG123456`"`n") |
+            Set-Content $configWithChangeReference -Encoding UTF8
+
+        $res = Invoke-RBAC4AppConfig -Path $configWithChangeReference -Confirm:$false
+
+        $res.ChangeReference | Should -Be 'CHG123456'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
+            $Notes -eq 'RBAC4App-ChangeReference: CHG123456'
+        }
     }
 
     It 'reports the pre-existing and newly-added members in MembersFinal' {

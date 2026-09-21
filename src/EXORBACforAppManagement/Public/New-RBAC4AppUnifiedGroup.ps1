@@ -29,6 +29,11 @@ created with at least one ManagedBy value).
 .PARAMETER BootstrapMember
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist on the scope group's Notes field. Management role
+assignments do not expose a notes/description field, so the reference is stored on the scoped group
+without changing deterministic role-assignment names.
+
 .EXAMPLE
 New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-ContosoMailApp' -WhatIf -Verbose
 
@@ -63,7 +68,11 @@ function New-RBAC4AppUnifiedGroup {
         [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
-        [string] $BootstrapMember = 'GraphAPI-Dummy'
+        [string] $BootstrapMember = 'GraphAPI-Dummy',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     process {
@@ -78,6 +87,14 @@ function New-RBAC4AppUnifiedGroup {
         $existingGroup = Get-UnifiedGroup -Identity $Name -ErrorAction SilentlyContinue
         if ($existingGroup) {
             $existingOwner = @($existingGroup.ManagedBy | Where-Object { $_ })
+            $notesUpdated = $false
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+                $targetNotes = Merge-RBAC4AppChangeReferenceNote -ExistingNotes ([string]$existingGroup.Notes) -ChangeReference $ChangeReference
+                if ([string]$existingGroup.Notes -ne $targetNotes -and $PSCmdlet.ShouldProcess($Name, "Set change reference metadata '$ChangeReference'")) {
+                    Set-UnifiedGroup -Identity $Name -Notes $targetNotes -ErrorAction Stop
+                    $notesUpdated = $true
+                }
+            }
             Write-Warning -Message ("UnifiedGroup '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Unified Group '{0}' already exists; skipping creation." -f $Name)
             Write-Debug -Message ("Existing Unified Group details: DisplayName='{0}'; Identity='{1}'; ManagedBy='{2}'" -f $existingGroup.DisplayName, $existingGroup.Identity, ($existingOwner -join ', '))
@@ -86,6 +103,8 @@ function New-RBAC4AppUnifiedGroup {
                 DisplayName    = $existingGroup.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
+                ChangeReference = $ChangeReference
+                NotesUpdated    = $notesUpdated
                 AlreadyExisted = $true
                 Group          = $existingGroup
             }
@@ -114,6 +133,10 @@ function New-RBAC4AppUnifiedGroup {
 
         $initialMembers = @()
         if ($BootstrapMember) { $initialMembers += $BootstrapMember }
+        $scopeNotes = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+            Merge-RBAC4AppChangeReferenceNote -ExistingNotes $null -ChangeReference $ChangeReference
+        }
+        else { $null }
         Write-Verbose -Message ("Unified Group '{0}' not found. Creating new group." -f $Name)
 
         # ---- Pre-call debug snapshot (minimal/essential creation parameters only) ----
@@ -132,14 +155,17 @@ function New-RBAC4AppUnifiedGroup {
         Write-Debug -Message ("[New-UnifiedGroup] ShouldProcess approved - invoking New-UnifiedGroup for '{0}'." -f $Name)
         $nugInvokeStart = [datetime]::UtcNow
         try {
-            $nug = New-UnifiedGroup `
-                -DisplayName $DisplayName `
-                -Name $Name `
-                -Alias $Name `
-                -AccessType Private `
-                -ManagedBy $resolvedOwner `
-                -Members $initialMembers `
-                -ErrorAction Stop
+            $newUnifiedGroupParams = @{
+                DisplayName = $DisplayName
+                Name        = $Name
+                Alias       = $Name
+                AccessType  = 'Private'
+                ManagedBy   = $resolvedOwner
+                Members     = $initialMembers
+                ErrorAction = 'Stop'
+            }
+            if ($scopeNotes) { $newUnifiedGroupParams['Notes'] = $scopeNotes }
+            $nug = New-UnifiedGroup @newUnifiedGroupParams
             $nugElapsed = ([datetime]::UtcNow - $nugInvokeStart).TotalSeconds
             Write-Debug -Message ("[New-UnifiedGroup] Cmdlet returned after {0:N2} seconds. Raw return type: '{1}'." -f $nugElapsed, $(if ($null -ne $nug) { $nug.GetType().FullName } else { '<null>' }))
         }
@@ -173,15 +199,19 @@ function New-RBAC4AppUnifiedGroup {
             Write-Debug -Message ("  -Language                               : en-us")
             Write-Debug -Message ("  -SubscriptionEnabled                    : False")
             Write-Debug -Message ("  -ConnectorsEnabled                      : False")
-            Set-UnifiedGroup -Identity $Name `
-                -IsMemberAllowedToEditContent $false `
-                -AutoSubscribeNewMembers:$false `
-                -AlwaysSubscribeMembersToCalendarEvents:$false `
-                -Language en-us `
-                -SubscriptionEnabled:$false `
-                -HiddenFromAddressListsEnabled:$true `
-                -ConnectorsEnabled:$false `
-                -ErrorAction Stop
+            $setUnifiedGroupParams = @{
+                Identity                         = $Name
+                IsMemberAllowedToEditContent    = $false
+                AutoSubscribeNewMembers         = $false
+                AlwaysSubscribeMembersToCalendarEvents = $false
+                Language                         = 'en-us'
+                SubscriptionEnabled              = $false
+                HiddenFromAddressListsEnabled    = $true
+                ConnectorsEnabled                = $false
+                ErrorAction                      = 'Stop'
+            }
+            if ($scopeNotes) { $setUnifiedGroupParams['Notes'] = $scopeNotes }
+            Set-UnifiedGroup @setUnifiedGroupParams
 
             $configuredGroup = Get-UnifiedGroup -Identity $Name -ErrorAction SilentlyContinue
             if ($configuredGroup) {
@@ -198,6 +228,8 @@ function New-RBAC4AppUnifiedGroup {
                     DisplayName    = $configuredGroup.DisplayName
                     OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
+                    ChangeReference = $ChangeReference
+                    NotesUpdated    = [bool]$scopeNotes
                     AlreadyExisted = $false
                     Group          = $configuredGroup
                 }
@@ -211,6 +243,8 @@ function New-RBAC4AppUnifiedGroup {
                 DisplayName    = $nug.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
+                ChangeReference = $ChangeReference
+                NotesUpdated    = [bool]$scopeNotes
                 AlreadyExisted = $false
                 Group          = $nug
             }

@@ -47,6 +47,10 @@ One or more recipients assigned as the scope group's owners. Defaults to 'GraphA
 .PARAMETER BootstrapMember
 Initial placeholder member passed during scope group creation. Defaults to 'GraphAPI-Dummy'.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist on the scope group's Notes field when
+Invoke-RBAC4AppConfig provisions the Exchange Online objects.
+
 .PARAMETER OutputPath
 Directory to write the config file into. Defaults to the current working directory.
 
@@ -108,6 +112,10 @@ function New-RBAC4AppConfig {
 
         [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference,
 
         [Parameter()]
         [string] $OutputPath,
@@ -185,7 +193,8 @@ function New-RBAC4AppConfig {
                 DisplayName = [string]$sp.DisplayName
             }
             Rbac          = [pscustomobject]@{
-                Roles = $normalizedRoles
+                Roles           = $normalizedRoles
+                ChangeReference = if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }
             }
             RbacScope     = [pscustomobject]@{
                 AccessGroupType = $AccessGroupType

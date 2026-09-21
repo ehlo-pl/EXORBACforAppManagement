@@ -42,6 +42,11 @@ created with at least one ManagedBy value).
 .PARAMETER BootstrapMember
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist on the scope group's Notes field. Management role
+assignments do not expose a notes/description field, so the reference is stored on the scoped group
+without changing deterministic role-assignment names.
+
 .EXAMPLE
 New-RBAC4AppDistributionGroup -AppName 'ContosoMailApp' -WhatIf -Verbose
 
@@ -93,7 +98,11 @@ function New-RBAC4AppDistributionGroup {
         [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
-        [string] $BootstrapMember = 'GraphAPI-Dummy'
+        [string] $BootstrapMember = 'GraphAPI-Dummy',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     process {
@@ -113,6 +122,14 @@ function New-RBAC4AppDistributionGroup {
         $existingGroup = Get-DistributionGroup -Identity $Name -ErrorAction SilentlyContinue
         if ($existingGroup) {
             $existingOwner = @($existingGroup.ManagedBy | Where-Object { $_ })
+            $notesUpdated = $false
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+                $targetNotes = Merge-RBAC4AppChangeReferenceNote -ExistingNotes ([string]$existingGroup.Notes) -ChangeReference $ChangeReference
+                if ([string]$existingGroup.Notes -ne $targetNotes -and $PSCmdlet.ShouldProcess($Name, "Set change reference metadata '$ChangeReference'")) {
+                    Set-DistributionGroup -Identity $Name -Notes $targetNotes -ErrorAction Stop
+                    $notesUpdated = $true
+                }
+            }
             Write-Warning -Message ("Distribution list '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Distribution list '{0}' already exists; skipping creation." -f $Name)
             return [pscustomobject]@{
@@ -120,6 +137,8 @@ function New-RBAC4AppDistributionGroup {
                 DisplayName    = $existingGroup.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
+                ChangeReference = $ChangeReference
+                NotesUpdated    = $notesUpdated
                 AlreadyExisted = $true
                 Group          = $existingGroup
             }
@@ -148,19 +167,26 @@ function New-RBAC4AppDistributionGroup {
 
         $initialMembers = @()
         if ($BootstrapMember) { $initialMembers += $BootstrapMember }
+        $scopeNotes = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+            Merge-RBAC4AppChangeReferenceNote -ExistingNotes $null -ChangeReference $ChangeReference
+        }
+        else { $null }
         Write-Verbose -Message ("Distribution list '{0}' not found. Creating new group." -f $Name)
 
         if (-not $PSCmdlet.ShouldProcess($Name, 'Create')) { return }
 
         try {
-            $ndg = New-DistributionGroup `
-                -Name $Name `
-                -DisplayName $DisplayName `
-                -Alias $Name `
-                -Type Distribution `
-                -ManagedBy $resolvedOwner `
-                -Members $initialMembers `
-                -ErrorAction Stop
+            $newDistributionGroupParams = @{
+                Name        = $Name
+                DisplayName = $DisplayName
+                Alias       = $Name
+                Type        = 'Distribution'
+                ManagedBy   = $resolvedOwner
+                Members     = $initialMembers
+                ErrorAction = 'Stop'
+            }
+            if ($scopeNotes) { $newDistributionGroupParams['Notes'] = $scopeNotes }
+            $ndg = New-DistributionGroup @newDistributionGroupParams
         }
         catch {
             Write-Verbose -Message ("[New-DistributionGroup] Failed for '{0}': {1}" -f $Name, $_.Exception.Message)
@@ -171,12 +197,16 @@ function New-RBAC4AppDistributionGroup {
             Write-Verbose -Message ("Distribution list '{0}' created successfully." -f $Name)
 
             Write-Verbose -Message ("Applying post-creation settings to distribution list '{0}'." -f $Name)
-            Set-DistributionGroup -Identity $Name `
-                -HiddenFromAddressListsEnabled $true `
-                -RequireSenderAuthenticationEnabled $true `
-                -MemberJoinRestriction Closed `
-                -MemberDepartRestriction Closed `
-                -ErrorAction Stop
+            $setDistributionGroupParams = @{
+                Identity                           = $Name
+                HiddenFromAddressListsEnabled      = $true
+                RequireSenderAuthenticationEnabled = $true
+                MemberJoinRestriction              = 'Closed'
+                MemberDepartRestriction            = 'Closed'
+                ErrorAction                        = 'Stop'
+            }
+            if ($scopeNotes) { $setDistributionGroupParams['Notes'] = $scopeNotes }
+            Set-DistributionGroup @setDistributionGroupParams
 
             $configuredGroup = Get-DistributionGroup -Identity $Name -ErrorAction SilentlyContinue
             if ($configuredGroup) {
@@ -185,6 +215,8 @@ function New-RBAC4AppDistributionGroup {
                     DisplayName    = $configuredGroup.DisplayName
                     OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
+                    ChangeReference = $ChangeReference
+                    NotesUpdated    = [bool]$scopeNotes
                     AlreadyExisted = $false
                     Group          = $configuredGroup
                 }
@@ -195,6 +227,8 @@ function New-RBAC4AppDistributionGroup {
                 DisplayName    = $ndg.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
+                ChangeReference = $ChangeReference
+                NotesUpdated    = [bool]$scopeNotes
                 AlreadyExisted = $false
                 Group          = $ndg
             }
