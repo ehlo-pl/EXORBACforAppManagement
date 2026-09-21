@@ -74,7 +74,8 @@ Describe 'Set-RBAC4AppEntry reconcile' {
                 Name                      = $Identity
                 Role                      = 'Application Mail.Send'
                 RecipientWriteScope       = 'Group'
-                CustomRecipientWriteScope = 'Um365RAo1-Contoso'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
             }
         }
         # Delegated module functions + mutating cmdlets.

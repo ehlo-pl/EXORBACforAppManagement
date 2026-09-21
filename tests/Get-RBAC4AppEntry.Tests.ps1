@@ -14,7 +14,7 @@ BeforeAll {
         [pscustomobject]@{ Name = 'Mail Recipients-Admin'; Role = 'Mail Recipients'; RoleAssigneeName = 'Org Management'; RoleAssigneeType = 'RoleGroup'; CustomRecipientWriteScope = $null; RecipientWriteScope = 'Organization'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'Mail Recipients-Admin' }
         [pscustomobject]@{ Name = 'AppCldR-Fabrikam'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = 'scope2'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $false; Guid = [guid]::NewGuid(); Identity = 'AppCldR-Fabrikam' }
         [pscustomobject]@{ Name = 'AppMailR-Helpdesk'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; CustomRecipientWriteScope = 'scope3'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailR-Helpdesk' }
-        [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; RecipientWriteScope = 'Group'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailboxSettings-Tailspin' }
+        [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailboxSettings-Tailspin' }
         [pscustomobject]@{ Name = 'AppMailWide-Northwind'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Northwind_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; RecipientWriteScope = 'Organization'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailWide-Northwind' }
     )
 }
@@ -48,6 +48,11 @@ Describe 'Get-RBAC4AppEntry (no filter)' {
     It 'projects the expected shape' {
         $r = Get-RBAC4AppEntry | Select-Object -First 1
         $r.PSObject.Properties.Name | Should -Be @('Name','Role','RoleAssigneeName','RoleAssigneeType','Scope','RecipientScope','Enabled','Guid','Identity')
+    }
+
+    It 'resolves Scope from CustomResourceScope for Group-scoped assignments' {
+        $r = Get-RBAC4AppEntry | Where-Object Name -eq 'AppMailboxSettings-Tailspin'
+        $r.Scope | Should -Be 'UDLRAo1P-Tailspin'
     }
 }
 

@@ -206,7 +206,7 @@ function Remove-RBAC4AppEntry {
             $scoped = @(Get-ManagementRoleAssignment -ErrorAction SilentlyContinue) | Where-Object {
                 $_ -and
                 ([string]$_.RecipientWriteScope -in @('Group','CustomRecipientScope')) -and
-                ([string]$_.CustomRecipientWriteScope -eq $umGroupName)
+                ([string](Resolve-RBAC4AppScopeGroupName -Assignment $_) -eq $umGroupName)
             }
             $result.AssignmentsScoped = @($scoped | ForEach-Object { [string]$_.Name })
 

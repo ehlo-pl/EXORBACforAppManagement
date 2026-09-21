@@ -40,8 +40,9 @@ Describe 'Remove-RBAC4AppEntry' {
                 Name                      = 'AppMailSend-Contoso'
                 Role                      = 'Application Mail.Send'
                 RoleAssigneeName          = 'Contoso_SP'
-                RecipientWriteScope       = 'CustomRecipientScope'
-                CustomRecipientWriteScope = 'Um365RAo1-Contoso'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
             })
         }
         # Only the bootstrap placeholder member.
@@ -66,8 +67,8 @@ Describe 'Remove-RBAC4AppEntry' {
     It 'aborts when a foreign assignment is scoped to the group' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' },
-                [pscustomobject]@{ Name = 'AppMailRead-Other'; Role = 'Application Mail.Read'; RoleAssigneeName = 'OtherApp_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' }
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' },
+                [pscustomobject]@{ Name = 'AppMailRead-Other'; Role = 'Application Mail.Read'; RoleAssigneeName = 'OtherApp_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }
             )
         }
 
@@ -139,8 +140,9 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
                 Name                      = 'AppMailSend-Contoso'
                 Role                      = 'Application Mail.Send'
                 RoleAssigneeName          = 'Contoso_SP'
-                RecipientWriteScope       = 'CustomRecipientScope'
-                CustomRecipientWriteScope = 'OnPrem-Scope'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'OnPrem-Scope_20d5848c-4d61-4b82-a44f-205adc37321f'
             })
         }
         Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
@@ -152,8 +154,8 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ DisplayName = 'OnPrem-Scope'; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'OnPrem-Scope' },
-                [pscustomobject]@{ Name = 'AppMailRead-Other'; Role = 'Application Mail.Read'; RoleAssigneeName = 'OtherApp_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'OnPrem-Scope' }
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'OnPrem-Scope_20d5848c-4d61-4b82-a44f-205adc37321f' },
+                [pscustomobject]@{ Name = 'AppMailRead-Other'; Role = 'Application Mail.Read'; RoleAssigneeName = 'OtherApp_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'OnPrem-Scope_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }
             )
         }
 
@@ -172,7 +174,7 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso' } }
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @([pscustomobject]@{ PrimarySmtpAddress = $null; Name = 'GraphAPI-Dummy' }) }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            @([pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'Um365RAo1-Contoso' })
+            @([pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' })
         }
 
         $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType DistributionList -Confirm:$false

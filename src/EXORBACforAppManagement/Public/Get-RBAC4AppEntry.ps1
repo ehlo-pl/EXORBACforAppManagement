@@ -174,7 +174,7 @@ function Get-RBAC4AppEntry {
                 Role             = $a.Role
                 RoleAssigneeName = $a.RoleAssigneeName
                 RoleAssigneeType = $a.RoleAssigneeType
-                Scope            = $a.CustomRecipientWriteScope
+                Scope            = Resolve-RBAC4AppScopeGroupName -Assignment $a
                 RecipientScope   = $a.RecipientWriteScope
                 Enabled          = $a.Enabled
                 Guid             = $a.Guid
