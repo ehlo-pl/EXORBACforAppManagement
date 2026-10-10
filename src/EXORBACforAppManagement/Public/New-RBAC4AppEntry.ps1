@@ -256,7 +256,11 @@ function New-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ScopeFilter
+        [string] $ScopeFilter,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     begin {
@@ -314,6 +318,8 @@ function New-RBAC4AppEntry {
             MembersAdded      = @()
             MembersFinal      = @()
             FilteredMembers   = @()
+            ChangeReference   = if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { $null }
+            ChangeReferencePath = $null
             RolesNormalized   = @()
             RoleAssignments   = @()
             RoleAssignmentsName = @()
@@ -384,13 +390,22 @@ function New-RBAC4AppEntry {
 
                 # --- Ensure the scope group (delegated to New-RBAC4AppScopeGroup, which dispatches on type).
                 Write-Verbose -Message ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $sp.DisplayName, $sp.Id)
-                $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $umGroupName -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+                $scopeGroupParams = @{
+                    AccessGroupType = $AccessGroupType
+                    Name            = $umGroupName
+                    ManagedBy       = $ManagedBy
+                    BootstrapMember = $BootstrapMember
+                    WarningVariable = 'ugWarnings'
+                }
+                if ($PSBoundParameters.ContainsKey('ChangeReference')) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+                $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
                 foreach ($w in $ugWarnings) {
                     if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
                 }
                 if ($ugResult) {
                     $result.OwnerRequested = $ugResult.OwnerRequested
                     $result.OwnerAdded    = $ugResult.OwnerAdded
+                    $result.ChangeReferencePath = $ugResult.ChangeReferencePath
                 }
 
                 # --- Read the group's current membership once (all types, read-only): seeds MembersFinal

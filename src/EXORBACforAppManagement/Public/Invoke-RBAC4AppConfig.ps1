@@ -156,6 +156,8 @@ function Invoke-RBAC4AppConfig {
             MembersAdded        = @()
             MembersFinal        = @()
             FilteredMembers     = @()
+            ChangeReference     = $ChangeReference
+            ChangeReferencePath = $null
             RolesNormalized     = @()
             RoleAssignments     = @()
             RoleAssignmentsName = @()
@@ -164,47 +166,39 @@ function Invoke-RBAC4AppConfig {
         }
 
         try {
-            # --- Derive scope group name
-            if ($AccessGroupName) {
-                $umGroupName = $AccessGroupName
-            }
-            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
-            }
-            else {
-                $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
-            }
-            $result.ScopeGroupName = $umGroupName
-
-            # --- Ensure scope group
-            Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
-            $scopeGroupParams = @{
-                AccessGroupType = $AccessGroupType
-                Name            = $umGroupName
-                ManagedBy       = $ManagedBy
-                BootstrapMember = $BootstrapMember
-                WarningVariable = 'ugWarnings'
-            }
-            if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
-            $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
-            foreach ($w in $ugWarnings) {
-                if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
-            }
-            if ($ugResult) {
-                $result.OwnerRequested = $ugResult.OwnerRequested
-                $result.OwnerAdded     = $ugResult.OwnerAdded
-                $result.ChangeReferencePath = $ugResult.ChangeReferencePath
-            }
+            $ugResult = $null
+            $umGroupName = $null
+            if ($isGroupKind) {
+                # --- Derive scope group name
+                if ($AccessGroupName) {
+                    $umGroupName = $AccessGroupName
+                }
+                elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
+                }
+                else {
+                    $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
+                }
+                $result.ScopeGroupName = $umGroupName
 
                 # --- Ensure scope group
                 Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
-                $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $umGroupName -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+                $scopeGroupParams = @{
+                    AccessGroupType = $AccessGroupType
+                    Name            = $umGroupName
+                    ManagedBy       = $ManagedBy
+                    BootstrapMember = $BootstrapMember
+                    WarningVariable = 'ugWarnings'
+                }
+                if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+                $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
                 foreach ($w in $ugWarnings) {
                     if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
                 }
                 if ($ugResult) {
                     $result.OwnerRequested = $ugResult.OwnerRequested
                     $result.OwnerAdded     = $ugResult.OwnerAdded
+                    $result.ChangeReferencePath = $ugResult.ChangeReferencePath
                 }
 
                 # --- Read the group's current membership once (all types, read-only): seeds MembersFinal

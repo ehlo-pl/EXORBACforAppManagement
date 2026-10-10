@@ -120,6 +120,10 @@ Value for -ScopeKind Tag. Defaults to the management scope name.
 .PARAMETER ScopeFilter
 Raw OPATH filter for -ScopeKind Filter.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml without changing Exchange Online object names.
+
 .EXAMPLE
 Set-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Confirm:$false
 
@@ -246,7 +250,11 @@ function Set-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ScopeFilter
+        [string] $ScopeFilter,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     begin {
@@ -308,6 +316,8 @@ function Set-RBAC4AppEntry {
             MembersAlreadyPresent     = @()
             MembersFinal              = @()
             FilteredMembers           = @()
+            ChangeReference           = if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { $null }
+            ChangeReferencePath       = $null
             RolesNormalized           = @()
             RoleAssignmentsCreated    = @()
             RoleAssignmentsRescoped   = @()
@@ -406,13 +416,22 @@ function Set-RBAC4AppEntry {
                         $result.Errors += "MailEnabledSecurityGroup '$targetGroup' does not exist and cannot be created (it is mastered on-premises)."
                     }
                     elseif ($PSCmdlet.ShouldProcess($targetGroup, "Create $AccessGroupType")) {
-                        $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $targetGroup -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+                        $scopeGroupParams = @{
+                            AccessGroupType = $AccessGroupType
+                            Name            = $targetGroup
+                            ManagedBy       = $ManagedBy
+                            BootstrapMember = $BootstrapMember
+                            WarningVariable = 'ugWarnings'
+                        }
+                        if ($PSBoundParameters.ContainsKey('ChangeReference')) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+                        $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
                         foreach ($w in $ugWarnings) {
                             if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
                         }
                         if ($ugResult) {
                             $result.ScopeGroupCreated = $true
                             $group = $ugResult.Group
+                            $result.ChangeReferencePath = $ugResult.ChangeReferencePath
                         }
                     }
                 }

@@ -75,6 +75,10 @@ Value for -ScopeKind Tag. When omitted, Invoke-RBAC4AppConfig uses the managemen
 .PARAMETER ScopeFilter
 Raw OPATH recipient restriction filter for -ScopeKind Filter.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to carry into the config file so Invoke-RBAC4AppConfig can
+persist it in the local metadata store when provisioning the scope group.
+
 .PARAMETER OutputPath
 Directory to write the config file into. Defaults to the current working directory.
 
@@ -166,6 +170,10 @@ function New-RBAC4AppConfig {
         [Parameter()]
         [ValidateNotNullOrEmpty()]
         [string] $ScopeFilter,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference,
 
         [Parameter()]
         [string] $OutputPath,
