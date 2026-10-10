@@ -1,4 +1,4 @@
-#requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
+﻿#requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..' 'src' 'EXORBACforAppManagement' 'EXORBACforAppManagement.psd1') -Force
@@ -12,6 +12,8 @@ BeforeAll {
     function global:Get-UnifiedGroupLinks { [CmdletBinding()] param([string]$Identity, [string]$LinkType) }
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
+    function global:Get-ManagementScope { [CmdletBinding()] param([string]$Identity) }
+    function global:Get-Recipient { [CmdletBinding()] param([string]$Identity, [string]$RecipientPreviewFilter, $ResultSize) }
 
     # EffectiveUserName/App are raw Get-ManagementRoleAssignment fields Exchange Online leaves
     # blank/placeholder for application-role assignments; AppMailSend-Contoso carries non-blank
@@ -35,7 +37,7 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember') {
+    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember','Get-ManagementScope','Get-Recipient') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -69,7 +71,7 @@ Describe 'Get-RBAC4AppEntry (no filter)' {
 
     It 'projects the expected shape' {
         $r = Get-RBAC4AppEntry | Select-Object -First 1
-        $r.PSObject.Properties.Name | Should -Be @('Name','Role','RoleAssigneeName','RoleAssigneeType','EffectiveUserName','App','DisplayName','AppId','ServicePrincipalId','Scope','ScopeGroupType','ScopeMembers','RecipientScope','Enabled','Guid','Identity')
+        $r.PSObject.Properties.Name | Should -Be @('Name','Role','RoleAssigneeName','RoleAssigneeType','EffectiveUserName','App','DisplayName','AppId','ServicePrincipalId','Scope','ManagementScope','ScopeKind','ScopeFilter','ScopeGroupType','ScopeMembers','RecipientScope','Enabled','Guid','Identity')
     }
 
     It 'passes EffectiveUserName/App through from the raw assignment as-is' {
@@ -324,5 +326,89 @@ Describe 'Get-RBAC4AppEntry -ByApplication with an unresolvable EXO service prin
         ($r | Where-Object DisplayName -eq 'Contoso').ServicePrincipalId | Should -BeNullOrEmpty
         ($r | Where-Object DisplayName -eq 'Contoso').DisplayName | Should -Be 'Contoso'
         ($warnings -join ';') | Should -Match "Could not resolve EXO assignee 'Contoso_SP'"
+    }
+}
+
+
+Describe 'Get-RBAC4AppEntry management scope resolution' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { $script:ExoServicePrincipals }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @(
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailSend-Contoso' }
+                [pscustomobject]@{ Name = 'AppMailRead-Contoso'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailRead-Contoso' }
+                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Fabrikam'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailSend-Fabrikam' }
+                [pscustomobject]@{ Name = 'AppMailSend-Tailspin'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Tailspin'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailSend-Tailspin' }
+            )
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope {
+            switch ($Identity) {
+                'MSRAo1P-Contoso'  { [pscustomobject]@{ Name = $Identity; RecipientFilter = "(MemberOfGroup -eq 'CN=UDLRAo1P-Contoso,OU=contoso,DC=prod')" } }
+                'MSRAo1P-Fabrikam' { [pscustomobject]@{ Name = $Identity; RecipientFilter = "((PrimarySmtpAddress -eq 'bob@fabrikam.com') -or (PrimarySmtpAddress -eq 'alice@fabrikam.com'))" } }
+                'MSRAo1P-Tailspin' { [pscustomobject]@{ Name = $Identity; RecipientFilter = "(CustomAttribute5 -eq 'TailspinApp')" } }
+            }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient {
+            if ($PesterBoundParameters.ContainsKey('RecipientPreviewFilter')) {
+                @([pscustomobject]@{ PrimarySmtpAddress = 'tagged@tailspin.com'; Name = 'tagged' })
+            }
+            elseif ($Identity -eq 'CN=UDLRAo1P-Contoso,OU=contoso,DC=prod') {
+                [pscustomobject]@{ Name = 'UDLRAo1P-Contoso'; DisplayName = 'UDLRAo1P-Contoso' }
+            }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            if ($Identity -eq 'UDLRAo1P-Contoso') { [pscustomobject]@{ Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' } }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @([pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' }) }
+    }
+
+    It 'resolves a Group-kind management scope to its group, type and members' {
+        $r = Get-RBAC4AppEntry | Where-Object Name -eq 'AppMailSend-Contoso'
+        $r.ManagementScope | Should -Be 'MSRAo1P-Contoso'
+        $r.ScopeKind | Should -Be 'Group'
+        $r.Scope | Should -Be 'UDLRAo1P-Contoso'
+        $r.ScopeGroupType | Should -Be 'DistributionList'
+        $r.ScopeMembers | Should -Be @('shared@contoso.com')
+    }
+
+    It 'reads a Recipients-kind scope members straight from the filter' {
+        $r = Get-RBAC4AppEntry | Where-Object Name -eq 'AppMailSend-Fabrikam'
+        $r.ScopeKind | Should -Be 'Recipients'
+        $r.Scope | Should -Be 'MSRAo1P-Fabrikam'
+        $r.ScopeGroupType | Should -BeNullOrEmpty
+        $r.ScopeMembers | Should -Be @('alice@fabrikam.com', 'bob@fabrikam.com')
+    }
+
+    It 'previews a Tag-kind scope via Get-Recipient -RecipientPreviewFilter' {
+        $r = Get-RBAC4AppEntry | Where-Object Name -eq 'AppMailSend-Tailspin'
+        $r.ScopeKind | Should -Be 'Tag'
+        $r.ScopeFilter | Should -Be "(CustomAttribute5 -eq 'TailspinApp')"
+        $r.ScopeMembers | Should -Be @('tagged@tailspin.com')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-Recipient -ParameterFilter { $RecipientPreviewFilter -eq "(CustomAttribute5 -eq 'TailspinApp')" -and $ResultSize -eq 1000 } -Times 1
+    }
+
+    It 'reads each distinct management scope only once' {
+        $null = Get-RBAC4AppEntry
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementScope -ParameterFilter { $Identity -eq 'MSRAo1P-Contoso' } -Times 1 -Exactly
+    }
+
+    It 'reports management scope names and kinds per application with -ByApplication' {
+        $contoso = Get-RBAC4AppEntry -ByApplication | Where-Object DisplayName -eq 'Contoso'
+        $contoso.ManagementScopeNames | Should -Be @('MSRAo1P-Contoso')
+        $contoso.ScopeKinds | Should -Be @('Group')
+        $contoso.ScopeGroupNames | Should -Be @('UDLRAo1P-Contoso')
+        $contoso.ScopeGroupMembers | Should -Be @('shared@contoso.com')
+    }
+
+    It 'reports a legacy group-scoped assignment as ScopeKind GroupDirect' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailSend-Contoso' }
+        }
+        $r = Get-RBAC4AppEntry
+        $r.ScopeKind | Should -Be 'GroupDirect'
+        $r.ManagementScope | Should -BeNullOrEmpty
+        $r.Scope | Should -Be 'UDLRAo1P-Contoso'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementScope -Times 0
     }
 }

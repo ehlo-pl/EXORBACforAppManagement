@@ -58,6 +58,13 @@ function ConvertFrom-RBAC4AppYaml {
             Members         = [System.Collections.Generic.List[string]]::new()
             ManagedBy       = [System.Collections.Generic.List[string]]::new()
             BootstrapMember = 'GraphAPI-Dummy'
+            ScopeKind             = 'Group'
+            ManagementScopeName   = ''
+            ManagementScopePrefix = ''
+            ScopeRecipients       = [System.Collections.Generic.List[string]]::new()
+            ScopeTagAttribute     = ''
+            ScopeTagValue         = ''
+            ScopeFilter           = ''
         }
     }
 
@@ -81,6 +88,8 @@ function ConvertFrom-RBAC4AppYaml {
                 $config.RbacScope.Members.Add($value)
             } elseif ($section -eq 'RbacScope' -and $listKey -eq 'ManagedBy') {
                 $config.RbacScope.ManagedBy.Add($value)
+            } elseif ($section -eq 'RbacScope' -and $listKey -eq 'ScopeRecipients') {
+                $config.RbacScope.ScopeRecipients.Add($value)
             }
             continue
         }
@@ -118,6 +127,13 @@ function ConvertFrom-RBAC4AppYaml {
                     'GroupPrefix'     { $config.RbacScope.GroupPrefix     = $value; $listKey = $null }
                     'AccessGroupName' { $config.RbacScope.AccessGroupName = $value; $listKey = $null }
                     'BootstrapMember' { $config.RbacScope.BootstrapMember = $value; $listKey = $null }
+                    'ScopeRecipients'       { $listKey = 'ScopeRecipients' }
+                    'ScopeKind'             { if ($value) { $config.RbacScope.ScopeKind = $value }; $listKey = $null }
+                    'ManagementScopeName'   { $config.RbacScope.ManagementScopeName   = $value; $listKey = $null }
+                    'ManagementScopePrefix' { $config.RbacScope.ManagementScopePrefix = $value; $listKey = $null }
+                    'ScopeTagAttribute'     { $config.RbacScope.ScopeTagAttribute     = $value; $listKey = $null }
+                    'ScopeTagValue'         { $config.RbacScope.ScopeTagValue         = $value; $listKey = $null }
+                    'ScopeFilter'           { $config.RbacScope.ScopeFilter           = $value; $listKey = $null }
                 }
             }
         }
