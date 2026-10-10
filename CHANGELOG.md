@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-10
+
+### Changed
+- Bumped the module version for the 0.8.3 release.
+- Cleaned up analyzer warnings in RBAC scope resolution and config invocation help.
+
 ## [0.8.2] - 2026-10-10
 
 ### Changed
