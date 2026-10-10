@@ -12,7 +12,7 @@
 RootModule = 'EXORBACforAppManagement.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.6.18'
+ModuleVersion = '0.8.0'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -130,4 +130,3 @@ PrivateData = @{
 # DefaultCommandPrefix = ''
 
 }
-

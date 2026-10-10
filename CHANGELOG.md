@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
 ### Added
 - `Get-RBAC4AppEntry`'s per-assignment output gained `EffectiveUserName` and `App` - the raw
   `Get-ManagementRoleAssignment` fields of the same name, passed through as-is. Exchange Online
