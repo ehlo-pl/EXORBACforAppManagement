@@ -18,7 +18,7 @@ The three functions form a **create → assign → read** flow and share the sam
 | [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read / inventory | Lists the EXO Application-role assignments, each resolved to its AppId/ServicePrincipalId and scope group name/type/members; `-ByApplication` groups them into one row per application. |
 | `Get-RegisteredAppWithPermission` | *(deprecated)* | Thin wrapper around `Get-RBAC4AppEntry -ByApplication -ScopeType All`; use the latter directly. |
 | [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, Unified Group, EXO service principal, role assignments) and returns an `IsValid` summary. |
-| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate | Migrates legacy Application Access Policies to RBAC for Applications, delegating to `New-RBAC4AppEntry`. |
+| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate / plan | Writes YAML/JSON RBAC configs from legacy Application Access Policies for later provisioning with `Invoke-RBAC4AppConfig`. |
 | [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry`). |
 | `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only distribution list (used by `New-RBAC4AppEntry` when `-AccessGroupType DistributionList`). |
 | [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | helper | Creates the EXO service principal pointer for an Entra app (used by `New-RBAC4AppEntry`). |
@@ -66,7 +66,7 @@ needs no Graph session, working around the MSAL/WAM assembly conflict between `M
 | `Remove-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
 | `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementScope` `Get-Recipient` *(resolves the assignee to AppId/ServicePrincipalId via `Get-ServicePrincipal`, and each management scope to its `ScopeKind`/`ScopeFilter` and members - group membership for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter` preview for Tag/Filter kinds; legacy group-direct assignments report `ScopeKind` `GroupDirect`; cached per run; `-ByApplication` groups the same data per application)* |
 | `Get-RegisteredAppWithPermission` *(deprecated)* | — | Delegates entirely to `Get-RBAC4AppEntry -ByApplication -ScopeType All` |
-| `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(+ all EXO cmdlets used by `New-RBAC4AppEntry`, which it calls with the SP identity it already resolved via Graph)* |
+| `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` `Get-MgContext` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(read-only; writes config files, does not provision RBAC)* |
 | `Invoke-RBAC4AppConfig` | — | `Get-ServicePrincipal` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`, same as `New-RBAC4AppEntry`)* |
 
 ## Two-session workflow
@@ -95,9 +95,9 @@ For a never-before-registered application, `New-RBAC4AppEntry` and `Set-RBAC4App
 bootstrap the Exchange Online service principal pointer directly in one Exchange-Online-only
 session — supply `-AppId`, `-SpObjectId`, and `-RegisteredAppName` together (see
 [`New-RBAC4AppEntry`](#new-rbac4appentry)) — as an alternative to the two-session config workflow.
-`Convert-ApplicationAccessPolicyToRBAC` is the one remaining function that genuinely needs both
-modules together in the same session, since it reads the app's Graph permission grants and then
-provisions RBAC in the same call.
+`Convert-ApplicationAccessPolicyToRBAC` still requires Graph and Exchange Online read access to
+collect permission grants, policies, and source group members. It now only writes config files;
+run `Invoke-RBAC4AppConfig` separately in an Exchange-Online-only session to provision RBAC.
 
 ### Typical two-session flow
 
@@ -412,12 +412,27 @@ Test-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Sen
 
 ### Convert-ApplicationAccessPolicyToRBAC
 
-Migrates legacy Exchange Online Application Access Policies to RBAC for Applications: derives the
-roles from the app's granted Microsoft Graph application permissions, copies the original scope
-group's members, and delegates to `New-RBAC4AppEntry`. `DenyAccess` policies are skipped.
+Generates schema 4.0 configs compatible with `New-RBAC4AppConfig` and `Invoke-RBAC4AppConfig`:
+derives roles from the app's granted Microsoft Graph application permissions and records the
+original scope group's members. No Exchange Online objects or policies are modified.
+`DenyAccess` policies and apps without convertible permissions are skipped; a failed membership
+read produces an error rather than an incomplete config.
+
+Use `-OutputPath` to select an existing output directory (default: current directory) and
+`-Format Json` for JSON instead of the default YAML. Each policy summary exposes `ConfigPath`
+instead of the former provisioning `RBACResult`. Filenames start with `rbac4app-` and include
+sanitized application/source-group names, AppId, timestamp, and a unique suffix so multiple
+policies and repeated runs do not overwrite one another.
 
 ```powershell
 Convert-ApplicationAccessPolicyToRBAC -WhatIf -Verbose
+
+# Collect configs with Graph and EXO read access:
+$results = Convert-ApplicationAccessPolicyToRBAC -OutputPath C:\rbac-configs -Confirm:$false
+$results | Select-Object AppId, ConfigPath, Warnings, Errors
+
+# In a separate Exchange-Online-only session, review and apply each generated file:
+Invoke-RBAC4AppConfig -Path 'C:\rbac-configs\<generated-file>.yml' -WhatIf
 ```
 
 ### New-RBAC4AppUnifiedGroup
