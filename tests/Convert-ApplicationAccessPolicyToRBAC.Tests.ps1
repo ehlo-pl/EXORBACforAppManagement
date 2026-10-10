@@ -186,6 +186,20 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         $r.ConfigPath | Should -BeNullOrEmpty
     }
 
+    It 'resolves relative output directories against the PowerShell location' {
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'relative')
+        Push-Location $TestDrive
+        try {
+            $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath './relative' -Confirm:$false
+            $r.Errors | Should -BeNullOrEmpty
+            Split-Path $r.ConfigPath -Parent | Should -Be $dir.FullName
+            Test-Path $r.ConfigPath | Should -BeTrue
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
     It 'skips policies without convertible roles' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipalAppRoleAssignment { @() }
         $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Confirm:$false -WarningAction SilentlyContinue

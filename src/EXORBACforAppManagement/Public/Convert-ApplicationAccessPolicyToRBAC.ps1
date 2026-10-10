@@ -118,6 +118,7 @@ function Convert-ApplicationAccessPolicyToRBAC {
 
     begin {
         if (-not $OutputPath) { $OutputPath = (Get-Location).Path }
+        $OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
         $legacyRoleMap = Get-LegacyScopeRoleMap
         # Cache resource service principals (e.g. Microsoft Graph) by ResourceId so the
         # AppRoleId -> permission value lookup only fetches each resource SP once.
