@@ -110,13 +110,20 @@ Per-assignment view (default), one object per matching assignment:
   AppId              - Application (client) id, from Get-ServicePrincipal (null when unresolved).
   ServicePrincipalId - Service principal object id, from Get-ServicePrincipal (null when
                        unresolved).
-  Scope              - Resolved recipient scope group name (via the private
-                       Resolve-RBAC4AppScopeGroupName/Resolve-RBAC4AppScope helpers), not the raw
-                       EXO scope fields. Null when the assignment has no group scope.
-  ScopeGroupType     - M365Group, DistributionList, or MailEnabledSecurityGroup for a
-                       Group-scoped assignment; null otherwise or when the group can't be resolved.
-  ScopeMembers       - Sorted, unique members (PrimarySmtpAddress, falling back to Name) of the
-                       scope group. Empty for non-Group scopes or an unresolvable group.
+  Scope              - Resolved scope: the scope group name for a group-based scope (ScopeKind
+                       Group or GroupDirect), otherwise the management scope name. Resolved via
+                       the private Resolve-RBAC4AppScope helper, not the raw EXO scope fields. Null
+                       when the assignment has no recipient scope.
+  ManagementScope    - Name of the management scope the assignment is bound to
+                       (-CustomResourceScope); null for legacy group-scoped assignments.
+  ScopeKind          - Group, Recipients, Tag, or Filter (classified from the management scope's
+                       RecipientFilter); GroupDirect for a legacy -RecipientGroupScope assignment.
+  ScopeFilter        - The management scope's RecipientFilter (null for GroupDirect).
+  ScopeGroupType     - M365Group, DistributionList, or MailEnabledSecurityGroup for a group-based
+                       scope; null otherwise or when the group can't be resolved.
+  ScopeMembers       - Sorted, unique recipients in scope (PrimarySmtpAddress, falling back to
+                       Name): the group's members, the Recipients list, or - for Tag/Filter - a
+                       Get-Recipient -RecipientPreviewFilter preview capped at 1000.
   RecipientScope     - Raw RecipientWriteScope value (Group, CustomRecipientScope, ...).
   Enabled            - Whether the assignment is enabled.
   Guid               - Assignment Guid.
@@ -129,11 +136,14 @@ Per-application view (-ByApplication), one object per distinct application:
   AppId                   - Application (client) id (null when unresolved).
   ServicePrincipalId      - Service principal object id (null when unresolved).
   ExoServicePrincipal     - The raw Exchange Online assignee name (e.g. Contoso_SP).
+  ManagementScopeNames    - Sorted, unique management scope name(s) the app's assignments are
+                            bound to (empty for legacy group-scoped assignments).
+  ScopeKinds              - Sorted, unique ScopeKind values across the app's assignments.
   ScopeGroupNames         - Sorted, unique resolved scope group name(s) across the app's
                             assignments. Empty when an assignment has no group scope or its scope
                             group could not be resolved.
-  ScopeGroupMembers       - Sorted, unique members across every resolved scope group in
-                            ScopeGroupNames.
+  ScopeGroupMembers       - Sorted, unique in-scope recipients across every resolved scope
+                            (group members, Recipients lists, Tag/Filter previews).
   Roles                   - Sorted, unique application roles the app holds.
   RoleAssignmentNames     - Sorted, unique management role assignment names.
   EffectiveUserNames      - Sorted, unique non-blank EffectiveUserName values across the app's
@@ -146,8 +156,8 @@ Per-application view (-ByApplication), one object per distinct application:
 
 .NOTES
 Requires a connected Exchange Online session only (Get-ManagementRoleAssignment,
-Get-ServicePrincipal, Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-DistributionGroup,
-Get-DistributionGroupMember). No Microsoft Graph session is needed; the application filter
+Get-ServicePrincipal, Get-ManagementScope, Get-Recipient, Get-UnifiedGroup, Get-UnifiedGroupLinks,
+Get-DistributionGroup, Get-DistributionGroupMember). No Microsoft Graph session is needed; the application filter
 only matches applications already registered via Register-EXOServicePrincipal,
 New-RBAC4AppEntry, or Invoke-RBAC4AppConfig. Companion to New-RBAC4AppEntry.
 
@@ -157,7 +167,10 @@ Performance / behavior notes:
   (EXO does the role filtering).
 - The EXO service principal directory (Get-ServicePrincipal) is read once per call and matched
   client-side by exact DisplayName against each distinct assignee.
-- Scope group resolution (Resolve-RBAC4AppScope) adds up to two read calls
+- Scope resolution (Resolve-RBAC4AppScope) first probes Get-ManagementScope for assignments bound
+  to a named management scope (one call per distinct scope; a Group-kind scope adds one
+  Get-Recipient to resolve the group DN, a Tag/Filter scope one capped
+  Get-RecipientPreviewFilter preview). Group resolution then adds up to two read calls
   (Get-UnifiedGroup/Get-DistributionGroup, then Get-UnifiedGroupLinks/Get-DistributionGroupMember)
   per distinct Group-scoped scope name, cached for the duration of the call so a group shared by
   several assignments/applications is only read once.
@@ -306,7 +319,9 @@ function Get-RBAC4AppEntry {
                 $apps = @($assignmentGroup.Group.App | Where-Object { $_ } | Sort-Object -Unique)
 
                 $scopes = @($assignmentGroup.Group | ForEach-Object { Resolve-RBAC4AppScope -Assignment $_ -Cache $scopeCache })
-                $scopeNames = @($scopes | Where-Object { $_.ScopeName } | ForEach-Object { $_.ScopeName } | Sort-Object -Unique)
+                $scopeNames = @($scopes | Where-Object { $_.ScopeGroupName } | ForEach-Object { $_.ScopeGroupName } | Sort-Object -Unique)
+                $managementScopeNames = @($scopes | Where-Object { $_.ManagementScope } | ForEach-Object { $_.ManagementScope } | Sort-Object -Unique)
+                $scopeKinds = @($scopes | Where-Object { $_.ScopeKind } | ForEach-Object { $_.ScopeKind } | Sort-Object -Unique)
                 $scopeMembers = @($scopes | ForEach-Object { $_.Members } | Where-Object { $_ } | Sort-Object -Unique)
 
                 [pscustomobject][ordered]@{
@@ -314,6 +329,8 @@ function Get-RBAC4AppEntry {
                     AppId                   = if ($resolvedSp) { [string]$resolvedSp.AppId } else { $null }
                     ServicePrincipalId      = if ($resolvedSp) { [string]$resolvedSp.ObjectId } else { $null }
                     ExoServicePrincipal     = $assigneeName
+                    ManagementScopeNames    = $managementScopeNames
+                    ScopeKinds              = $scopeKinds
                     ScopeGroupNames         = $scopeNames
                     ScopeGroupMembers       = $scopeMembers
                     Roles                   = $rolesForApp
@@ -344,6 +361,9 @@ function Get-RBAC4AppEntry {
                 AppId              = if ($resolvedSp) { [string]$resolvedSp.AppId } else { $null }
                 ServicePrincipalId = if ($resolvedSp) { [string]$resolvedSp.ObjectId } else { $null }
                 Scope              = $scope.ScopeName
+                ManagementScope    = $scope.ManagementScope
+                ScopeKind          = $scope.ScopeKind
+                ScopeFilter        = $scope.ScopeFilter
                 ScopeGroupType     = $scope.ScopeGroupType
                 ScopeMembers       = $scope.Members
                 RecipientScope     = $a.RecipientWriteScope

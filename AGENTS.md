@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 `EXORBACforAppManagement` — a PowerShell module for managing Exchange Online (EXO) Role-Based Access
-Control for Entra (Azure AD) applications. It packages thirteen public functions plus shared private
+Control for Entra (Azure AD) applications. It packages fourteen public functions plus shared private
 helpers, with Pester tests, a build script, and GitHub Actions CI.
 
 Only three functions touch Microsoft Graph at all: `New-RegisteredApp` (creates the Entra app
@@ -40,6 +40,9 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppDistributionGroup`** — ensures/creates and configures a scoped Exchange-Online-only
   distribution list; the `DistributionList` counterpart to `New-RBAC4AppUnifiedGroup`, returning the
   same summary shape.
+- **`New-RBAC4AppManagementScope`** — ensures an EXO management scope exists with a given
+  `RecipientRestrictionFilter`: creates it, updates it on drift (`Set-ManagementScope`), or leaves an
+  equivalent one alone (`-NoUpdate` only warns). Used by every function that binds role assignments.
 - **`Register-EXOServicePrincipal`** — creates the EXO service principal pointer for an Entra app
   (extracted from `New-RBAC4AppEntry`, which now delegates to it).
 - **`Convert-ApplicationAccessPolicyToRBAC`** — migrates legacy Application Access Policies to RBAC
@@ -72,7 +75,7 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
   `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
-  writes a config file (schema version `3.0`, with top-level `Rbac:`/`RbacScope:` sections) in
+  writes a config file (schema version `4.0` - `3.0` is still read as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections) in
   either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
   `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
   (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and
@@ -87,20 +90,22 @@ Together the first three form a create → assign → read flow:
 
 ```
 src/EXORBACforAppManagement/
-  EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 13 public)
+  EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 14 public)
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
   Public/                        # New-RBAC4AppEntry, New-RegisteredApp, Get-RBAC4AppEntry,
                                  # Get-RegisteredAppWithPermission, New-RBAC4AppUnifiedGroup,
                                  # New-RBAC4AppDistributionGroup, Register-EXOServicePrincipal,
                                  # Convert-ApplicationAccessPolicyToRBAC, Test-RBAC4AppEntry,
                                  # Remove-RBAC4AppEntry, Set-RBAC4AppEntry, New-RBAC4AppConfig,
-                                 # Invoke-RBAC4AppConfig
+                                 # Invoke-RBAC4AppConfig, New-RBAC4AppManagementScope
   Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole,
                                  # Get-AppRoleMap, Get-LegacyScopeRoleMap,
                                  # Resolve-AppRolePermissionValue, Resolve-RBAC4AppServicePrincipal,
                                  # Resolve-RBAC4AppScopeGroupName, Resolve-RBAC4AppScope,
                                  # New-RBAC4AppScopeGroup, ConvertTo-RBAC4AppYaml,
-                                 # ConvertFrom-RBAC4AppYaml
+                                 # ConvertFrom-RBAC4AppYaml, ConvertTo-/ConvertFrom-RBAC4AppRecipientFilter,
+                                 # Get-RBAC4AppManagementScopeName, Test-RBAC4AppRecipientFilterEqual,
+                                 # Get-RBAC4AppAssignmentScopeState, Get-RBAC4AppScopeKindWarning
 tests/                           # Pester v5 tests (one *.Tests.ps1 per area)
 build.ps1                        # Init / Clean / Analyze / Test / Build tasks
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)
@@ -203,8 +208,9 @@ intercept them. Add new stubs the same way when a function starts calling a new 
 
 - **`New-RBAC4AppEntry` workflow:** resolve SP → ensure Unified Group (delegated to
   `New-RBAC4AppUnifiedGroup`) → add members → ensure EXO service principal (delegated to
-  `Register-EXOServicePrincipal`) → one `New-ManagementRoleAssignment` per role (scoped to the
-  Unified Group via `-RecipientGroupScope`). Unified Group name is `"{GroupPrefix}-{SP.DisplayName}"`
+  `Register-EXOServicePrincipal`) → ensure the management scope (delegated to
+  `New-RBAC4AppManagementScope`) → one `New-ManagementRoleAssignment` per role bound to that scope via
+  `-CustomResourceScope`. The group steps run only for `-ScopeKind Group`. Unified Group name is `"{GroupPrefix}-{SP.DisplayName}"`
   sanitized by the private `Get-SafeName`. Output is one `[pscustomobject]` summary, also exported to
   `$env:TEMP\<name>_<timestamp>.clixml`; per-item errors are surfaced in `Errors`, not thrown. The
   summary reports the owner as `OwnerRequested`/`OwnerAdded` (read from the
@@ -212,10 +218,26 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   captures the delegated functions' warnings via `-WarningVariable` to keep the summary `Warnings`
   (e.g. the group "already exists" note).
 
+- **Management scopes (`-ScopeKind`):** role assignments are never bound to a group directly
+  (`-RecipientGroupScope` is legacy). `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry` and both config
+  functions take `-ScopeKind` - `Group` (default; filter `MemberOfGroup -eq '<group DN>'`, direct
+  members only), `Recipients` (`-ScopeRecipients` → `PrimarySmtpAddress -eq ...` joined by `-or`),
+  `Tag` (`-ScopeTagAttribute` default `CustomAttribute1`, `-ScopeTagValue` default the scope name;
+  the module never stamps the attribute), or `Filter` (raw `-ScopeFilter` OPATH). The scope name is
+  `-ManagementScopeName` or `"{ManagementScopePrefix}-{DisplayName}"` (prefix `MSRAo1P`, via the
+  private `Get-RBAC4AppManagementScopeName`, max 64 chars). The private
+  `ConvertTo-RBAC4AppRecipientFilter` builds the filter, `ConvertFrom-RBAC4AppRecipientFilter`
+  parses it back into a kind (used by `Get-`), `Test-RBAC4AppRecipientFilterEqual` compares filters
+  loosely (case/whitespace/parentheses), and `Get-RBAC4AppAssignmentScopeState` classifies an
+  existing assignment as `Target`, `LegacyGroup` (bound to a group via `RecipientWriteScope=Group`),
+  or `Other`. `New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn on `LegacyGroup` and leave it;
+  `Set-RBAC4AppEntry` re-binds it (the migration path); `Test-` reports it invalid; `Remove-` also
+  removes the management scope when no other assignment references it.
+
 - **Scope group type (`-AccessGroupType`):** `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry`,
   `New-RBAC4AppConfig`, and `Convert-ApplicationAccessPolicyToRBAC` take `-AccessGroupType`
-  (`DistributionList` default, `M365Group`, `MailEnabledSecurityGroup`). The EXO
-  `-RecipientGroupScope` role-assignment step is identical for all three (it accepts any group id);
+  (`DistributionList` default, `M365Group`, `MailEnabledSecurityGroup`). The
+  management-scope `MemberOfGroup` filter and role-assignment step are identical for all three;
   only provisioning/read/membership/teardown differ. The private `New-RBAC4AppScopeGroup` dispatcher
   routes creation to `New-RBAC4AppUnifiedGroup` (M365Group) or `New-RBAC4AppDistributionGroup`
   (DistributionList), or validates existence only for `MailEnabledSecurityGroup`
@@ -263,9 +285,12 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   (per-assignment or, with `-ByApplication`, per-application) is enriched via a single
   `Get-ServicePrincipal` directory read (`DisplayName`/`AppId`/`ServicePrincipalId`, matched by
   exact assignee name - the same both-forms `_SP` rule `Resolve-RBAC4AppServicePrincipal` uses) and
-  via the private `Resolve-RBAC4AppScope` (wraps `Resolve-RBAC4AppScopeGroupName`, adds a
-  `Get-UnifiedGroup`/`Get-DistributionGroup` group-type probe and membership read, cached per
-  distinct scope name for the call). `-ByApplication` groups the enriched per-assignment rows by
+  via the private `Resolve-RBAC4AppScope` (reads the management scope via `Get-ManagementScope`,
+  parses its filter into `ScopeKind`/`ScopeFilter`, and resolves members - the group's membership
+  for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter`
+  preview for Tag/Filter; a legacy group-bound assignment reports `ScopeKind` `GroupDirect`; cached
+  per distinct scope name for the call). Rows expose `ManagementScope`/`ScopeKind`/`ScopeFilter`;
+  `-ByApplication` adds `ManagementScopeNames`/`ScopeKinds`. `-ByApplication` groups the enriched per-assignment rows by
   assignee - this is the former standalone `Get-RegisteredAppWithPermission` function, now a
   deprecated wrapper (`Get-RBAC4AppEntry -ByApplication -ScopeType All`) around this switch. Each
   row also carries `EffectiveUserName`/`App` straight from the raw `Get-ManagementRoleAssignment`

@@ -1,22 +1,21 @@
 <#
 .SYNOPSIS
-Migrates legacy Exchange Online Application Access Policies to RBAC for Applications.
+Generates RBAC configuration files from legacy Exchange Online Application Access Policies.
 
 .DESCRIPTION
 Convert-ApplicationAccessPolicyToRBAC reads existing Application Access Policy entries
-(via Get-ApplicationAccessPolicy) and recreates the equivalent access as RBAC for
-Applications assignments by delegating to New-RBAC4AppEntry.
+(via Get-ApplicationAccessPolicy) and writes schema 4.0 configuration files, like
+New-RBAC4AppConfig, for later provisioning with Invoke-RBAC4AppConfig.
 
 For each RestrictAccess policy it resolves the Entra service principal, derives the
 Exchange Online application roles from the app's granted Microsoft Graph application
 permissions (filtered to the set that Application Access Policies supported and mapped to
 their App RBAC role names via the private Get-LegacyScopeRoleMap), copies the members of
-the original policy scope group, and calls New-RBAC4AppEntry to create a new scoped
-Unified Group and the matching role assignments. DenyAccess policies have no additive RBAC
-equivalent and are skipped with a warning.
+the original policy scope group, and records the group settings and roles in YAML or JSON.
+No Exchange Online objects are created or changed. DenyAccess policies have no additive RBAC equivalent and are
+skipped with a warning.
 
-The function supports -WhatIf and -Confirm through SupportsShouldProcess; -WhatIf
-propagates into the delegated New-RBAC4AppEntry call.
+The function supports -WhatIf and -Confirm through SupportsShouldProcess; -WhatIf writes no files.
 
 .PARAMETER AppId
 Application (client) id. When supplied, only Application Access Policies for that app are
@@ -33,20 +32,26 @@ such as Mail.Send are normalized to Application Mail.Send. When supplied, role d
 from the app's Graph permissions is skipped.
 
 .PARAMETER ManagedBy
-One or more recipients that will be assigned as the new scope group's owners. Passed through to
-New-RBAC4AppEntry.
+One or more recipients recorded as the new scope group's owners in the config.
 
 .PARAMETER GroupPrefix
-Prefix used when building the new scope group name. Passed through to New-RBAC4AppEntry. When
+Prefix recorded for building the new scope group name. When
 omitted, defaults to 'UDLRAo1P' (DistributionList) or 'Um365RAo1P' (M365Group) based on
 -AccessGroupType.
 
 .PARAMETER AccessGroupType
-Kind of group to create for the new RBAC scope. Passed through to New-RBAC4AppEntry
+Kind of group to create later for the new RBAC scope.
 (M365Group or DistributionList). Defaults to DistributionList (matching New-RBAC4AppEntry).
 MailEnabledSecurityGroup is not offered here: conversion mints a new scope group per policy,
 whereas a MailEnabledSecurityGroup references a single pre-existing on-prem/hybrid-synced group
 by name.
+
+.PARAMETER OutputPath
+Directory to write config files into. Defaults to the current working directory.
+
+.PARAMETER Format
+Config format: Yaml (default, .yml) or Json (.json). Files use the rbac4app prefix,
+sanitized application and source group names, AppId, timestamp, and a unique suffix.
 
 .EXAMPLE
 Convert-ApplicationAccessPolicyToRBAC -WhatIf -Verbose
@@ -56,25 +61,25 @@ Shows the planned conversion for every Application Access Policy without making 
 .EXAMPLE
 Get-ApplicationAccessPolicy | Convert-ApplicationAccessPolicyToRBAC
 
-Converts every Application Access Policy piped in from Get-ApplicationAccessPolicy.
+Writes a config for every convertible Application Access Policy piped in.
 
 .EXAMPLE
 Convert-ApplicationAccessPolicyToRBAC -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Send'
 
-Converts the policies for one app, assigning the explicit Application Mail.Send role
+Generates configs for one app, recording the explicit Application Mail.Send role
 instead of deriving roles from the app's Graph permission grants.
 
 .OUTPUTS
 PSCustomObject
 
 Returns one summary object per processed policy with the resolved identity, access right,
-scope group, derived roles, skipped permissions, copied members, the New-RBAC4AppEntry
-result, warnings, and errors.
+scope group, derived roles, skipped permissions, copied members, ConfigPath, warnings, and errors.
+Pass ConfigPath to Invoke-RBAC4AppConfig in an Exchange-Online-only session.
 
 .NOTES
 Requires connected Microsoft Graph (Get-MgServicePrincipal,
-Get-MgServicePrincipalAppRoleAssignment) and Exchange Online
-(Get-ApplicationAccessPolicy, plus the cmdlets used by New-RBAC4AppEntry) sessions.
+Get-MgServicePrincipalAppRoleAssignment, Get-MgContext) and Exchange Online
+(Get-ApplicationAccessPolicy, Get-DistributionGroupMember) read access.
 #>
 function Convert-ApplicationAccessPolicyToRBAC {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High', DefaultParameterSetName = 'All')]
@@ -101,10 +106,19 @@ function Convert-ApplicationAccessPolicyToRBAC {
 
         [Parameter()]
         [ValidateSet('M365Group', 'DistributionList')]
-        [string] $AccessGroupType = 'DistributionList'
+        [string] $AccessGroupType = 'DistributionList',
+
+        [Parameter()]
+        [string] $OutputPath,
+
+        [Parameter()]
+        [ValidateSet('Yaml', 'Json')]
+        [string] $Format = 'Yaml'
     )
 
     begin {
+        if (-not $OutputPath) { $OutputPath = (Get-Location).Path }
+        $OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
         $legacyRoleMap = Get-LegacyScopeRoleMap
         # Cache resource service principals (e.g. Microsoft Graph) by ResourceId so the
         # AppRoleId -> permission value lookup only fetches each resource SP once.
@@ -163,7 +177,7 @@ function Convert-ApplicationAccessPolicyToRBAC {
                 DerivedRoles       = @()
                 SkippedPermissions = @()
                 MembersCopied      = @()
-                RBACResult         = $null
+                ConfigPath         = $null
                 Warnings           = @()
                 Errors             = @()
             }
@@ -230,36 +244,54 @@ function Convert-ApplicationAccessPolicyToRBAC {
                         $memberWarn = "Could not read members of scope group '$($pol.ScopeName)': $($_.Exception.Message)"
                         $result.Warnings += $memberWarn
                         Write-Warning -Message $memberWarn
+                        throw $memberWarn
                     }
                 }
                 $result.MembersCopied = @($members)
 
-                # --- Delegate to New-RBAC4AppEntry (-WhatIf propagates)
-                if ($PSCmdlet.ShouldProcess(
-                        "AppId $polAppId ($($sp.DisplayName))",
-                        "Convert Application Access Policy to RBAC roles: $($rolesNormalized -join ', ')")) {
-
-                    # AppId, SpObjectId, and RegisteredAppName (as DisplayName) are all passed
-                    # through: New-RBAC4AppEntry resolves the application against Exchange
-                    # Online's own service principal pointer and no longer touches Microsoft
-                    # Graph itself, so for an app that has never been registered in Exchange
-                    # Online it needs all three identifiers - which Convert-ApplicationAccessPolicyToRBAC
-                    # already has from its own Graph-based resolution above - to bootstrap it.
-                    $rbacParams = @{
-                        AppId              = $polAppId
-                        SpObjectId         = $sp.Id
-                        RegisteredAppName  = $sp.DisplayName
-                        Role               = $rolesNormalized
-                        ManagedBy          = $ManagedBy
-                        GroupPrefix        = $GroupPrefix
-                        AccessGroupType    = $AccessGroupType
-                        ErrorAction        = 'Stop'
+                # --- Build the same schema consumed by Invoke-RBAC4AppConfig
+                $tenantId = ''
+                try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId }
+                catch { Write-Verbose "TenantId unavailable: $($_.Exception.Message)" }
+                $config = [pscustomobject]@{
+                    SchemaVersion = '4.0'
+                    GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
+                    TenantId      = $tenantId
+                    Application   = [pscustomobject]@{
+                        AppId       = [string]$sp.AppId
+                        SpObjectId  = [string]$sp.Id
+                        DisplayName = [string]$sp.DisplayName
                     }
-                    if ($members.Count -gt 0) { $rbacParams['Members'] = $members }
+                    Rbac = [pscustomobject]@{ Roles = $rolesNormalized }
+                    RbacScope = [pscustomobject]@{
+                        AccessGroupType       = $AccessGroupType
+                        GroupPrefix           = $GroupPrefix
+                        AccessGroupName       = ''
+                        Members               = $members
+                        ManagedBy             = $ManagedBy
+                        BootstrapMember       = 'GraphAPI-Dummy'
+                        ScopeKind             = 'Group'
+                        ManagementScopeName   = ''
+                        ManagementScopePrefix = 'MSRAo1P'
+                        ScopeRecipients       = @()
+                        ScopeTagAttribute     = 'CustomAttribute1'
+                        ScopeTagValue         = ''
+                        ScopeFilter           = ''
+                    }
+                }
+                $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
+                $safeName = Get-SafeName -s $sp.DisplayName -max 40
+                $safeScope = Get-SafeName -s $pol.ScopeName -max 40
+                $safeAppId = Get-SafeName -s $polAppId -max 36
+                $timestamp = (Get-Date).ToString('yyyyMMddHHmmss')
+                $uniqueId = [guid]::NewGuid().ToString('N')
+                $outFile = Join-Path $OutputPath "rbac4app-$safeName-$safeScope-$safeAppId-$timestamp-$uniqueId.$extension"
+                $serialized = if ($Format -eq 'Json') { $config | ConvertTo-Json -Depth 6 } else { ConvertTo-RBAC4AppYaml -Config $config }
 
-                    $result.RBACResult = New-RBAC4AppEntry @rbacParams
-                    foreach ($w in @($result.RBACResult.Warnings)) { $result.Warnings += $w }
-                    foreach ($e in @($result.RBACResult.Errors))   { $result.Errors   += $e }
+                if ($PSCmdlet.ShouldProcess($outFile, "Write RBAC4App config ($Format) from Application Access Policy")) {
+                    [System.IO.File]::WriteAllText($outFile, $serialized, [System.Text.Encoding]::UTF8)
+                    $result.ConfigPath = $outFile
+                    Write-Verbose "Config written to '$outFile'."
                 }
 
                 [pscustomobject]$result

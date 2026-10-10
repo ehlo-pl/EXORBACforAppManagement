@@ -9,6 +9,21 @@ All notable changes to this project are documented here. The format is based on
 ## [0.8.0] - 2026-10-10
 
 ### Added
+- **Management-scope based assignments.** Role assignments are now bound to a named Exchange Online
+  management scope (`New-ManagementScope -RecipientRestrictionFilter` + `New-ManagementRoleAssignment
+  -CustomResourceScope`) instead of directly to the scope group (`-RecipientGroupScope`).
+  `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry`, `New-RBAC4AppConfig`, and `Invoke-RBAC4AppConfig`
+  gained `-ScopeKind` (`Group` default, `Recipients`, `Tag`, `Filter`), `-ManagementScopeName`,
+  `-ManagementScopePrefix` (default `MSRAo1P`), `-ScopeRecipients`, `-ScopeTagAttribute` (default
+  `CustomAttribute1`), `-ScopeTagValue`, and `-ScopeFilter`, so an app can be scoped to a group's
+  members, specific mailboxes/UPNs, a CustomAttribute tag, or a raw OPATH filter.
+- New public `New-RBAC4AppManagementScope` (ensure/create/update a management scope; `-NoUpdate`
+  only warns on drift) and private helpers `ConvertTo-`/`ConvertFrom-RBAC4AppRecipientFilter`,
+  `Get-RBAC4AppManagementScopeName`, `Test-RBAC4AppRecipientFilterEqual`,
+  `Get-RBAC4AppAssignmentScopeState`, `Get-RBAC4AppScopeKindWarning`.
+- Config schema `4.0` (`RbacScope` gains `ScopeKind`, `ManagementScopeName`,
+  `ManagementScopePrefix`, `ScopeRecipients`, `ScopeTagAttribute`, `ScopeTagValue`, `ScopeFilter`).
+  `Invoke-RBAC4AppConfig` still accepts `3.0` files, treating them as `ScopeKind: Group`.
 - `Get-RBAC4AppEntry`'s per-assignment output gained `EffectiveUserName` and `App` - the raw
   `Get-ManagementRoleAssignment` fields of the same name, passed through as-is. Exchange Online
   leaves both blank/placeholder for application-role assignments in practice, but they are now
@@ -16,6 +31,13 @@ All notable changes to this project are documented here. The format is based on
   application as sorted, unique, non-blank `EffectiveUserNames`/`Apps` arrays.
 
 ### Changed
+- **Breaking:** `Get-RBAC4AppEntry` rows gained `ManagementScope`, `ScopeKind`, `ScopeFilter`
+  (`-ByApplication`: `ManagementScopeNames`, `ScopeKinds`); legacy group-bound assignments report
+  `ScopeKind` `GroupDirect`. `Test-RBAC4AppEntry` treats legacy group-bound assignments as not
+  valid; `Set-RBAC4AppEntry` re-binds them to the management scope (the migration path);
+  `Remove-RBAC4AppEntry` also removes the management scope when nothing else references it.
+  `New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn about, but do not touch, legacy assignments.
+- Module version bumped to `0.7.0`; 14 exported functions.
 - **`Get-RegisteredAppWithPermission` merged into `Get-RBAC4AppEntry`.** `Get-RBAC4AppEntry` gained
   a `-ByApplication` switch that returns the former app-centric inventory view (one row per
   distinct registered application) instead of the default one-row-per-assignment view.

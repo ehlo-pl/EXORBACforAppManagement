@@ -12,7 +12,10 @@ BeforeAll {
     function global:Get-Recipient { }
     function global:New-ServicePrincipal { }
     function global:Get-ServicePrincipal { }
-    function global:New-ManagementRoleAssignment { }
+    function global:New-ManagementRoleAssignment { param($App, $Role, $CustomResourceScope, $RecipientGroupScope, $Name) }
+    function global:Get-ManagementScope { param($Identity) }
+    function global:New-ManagementScope { param($Name, $RecipientRestrictionFilter) }
+    function global:Set-ManagementScope { param($Identity, $RecipientRestrictionFilter) }
     function global:Get-ManagementRoleAssignment { }
     function global:Get-DistributionGroupMember { }
 
@@ -179,6 +182,47 @@ RbacScope:
     $script:configPathJsonBadExtension = Join-Path $TestDrive 'test-config-json-as-yml.yml'
     $script:testJsonConfig | ConvertTo-Json -Depth 6 | Set-Content $script:configPathJsonBadExtension -Encoding UTF8
 
+    $script:testYamlRecipients = @(
+        'SchemaVersion: "4.0"'
+        'TenantId: "tenant-123"'
+        'Application:'
+        '  AppId: "11111111-1111-1111-1111-111111111111"'
+        '  SpObjectId: "22222222-2222-2222-2222-222222222222"'
+        '  DisplayName: "Contoso"'
+        'Rbac:'
+        '  Roles:'
+        '    - "Application Mail.Send"'
+        'RbacScope:'
+        '  AccessGroupType: "DistributionList"'
+        '  GroupPrefix: "UDLRAo1P"'
+        '  AccessGroupName: ""'
+        '  Members:'
+        '    - "GraphAPI-Dummy"'
+        '  ManagedBy:'
+        '    - "GraphAPI-Dummy-owner"'
+        '  BootstrapMember: "GraphAPI-Dummy"'
+        '  ScopeKind: "Recipients"'
+        '  ManagementScopeName: ""'
+        '  ManagementScopePrefix: "MSRAo1P"'
+        '  ScopeRecipients:'
+        '    - "alice@contoso.com"'
+        '    - "bob@contoso.com"'
+        '  ScopeTagAttribute: "CustomAttribute1"'
+        '  ScopeTagValue: ""'
+        '  ScopeFilter: ""'
+    ) -join [Environment]::NewLine
+    $script:configPathRecipients = Join-Path $TestDrive 'test-config-recipients.yml'
+    Set-Content $script:configPathRecipients -Value $script:testYamlRecipients -Encoding UTF8
+
+    $script:configPathTagJson = Join-Path $TestDrive 'test-config-tag.json'
+    [pscustomobject]@{
+        SchemaVersion = '4.0'
+        TenantId      = 'tenant-123'
+        Application   = [pscustomobject]@{ AppId = '11111111-1111-1111-1111-111111111111'; SpObjectId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Contoso' }
+        Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Read') }
+        RbacScope     = [pscustomobject]@{ ScopeKind = 'Tag'; ManagementScopeName = 'Contoso-Scope'; ScopeTagAttribute = 'CustomAttribute7'; ScopeTagValue = '' }
+    } | ConvertTo-Json -Depth 6 | Set-Content $script:configPathTagJson -Encoding UTF8
+
     Set-Content (Join-Path $TestDrive 'test-config-malformed.json') -Value '{ not valid json' -Encoding UTF8
     $script:configPathMalformedJson = Join-Path $TestDrive 'test-config-malformed.json'
 }
@@ -186,7 +230,8 @@ RbacScope:
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
     foreach ($n in 'Get-ConnectionInformation', 'Get-UnifiedGroup', 'Get-UnifiedGroupLinks', 'New-UnifiedGroup', 'Set-UnifiedGroup', 'Add-UnifiedGroupLinks',
-                   'Get-Recipient', 'New-ServicePrincipal', 'Get-ServicePrincipal', 'New-ManagementRoleAssignment', 'Get-ManagementRoleAssignment', 'Get-DistributionGroupMember') {
+                   'Get-Recipient', 'New-ServicePrincipal', 'Get-ServicePrincipal', 'New-ManagementRoleAssignment', 'Get-ManagementRoleAssignment', 'Get-DistributionGroupMember',
+                   'Get-ManagementScope', 'New-ManagementScope', 'Set-ManagementScope') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -199,7 +244,10 @@ Describe 'Invoke-RBAC4AppConfig' {
         Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
         Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
-        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; DistinguishedName = 'CN=Um365RAo1-Contoso,DC=prod' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementScope { [pscustomobject]@{ Name = $Name; RecipientFilter = $RecipientRestrictionFilter } }
+        Mock -ModuleName EXORBACforAppManagement Set-ManagementScope { }
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
         Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { [pscustomobject]@{ DisplayName = 'Contoso_SP' } }
@@ -217,6 +265,55 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ServicePrincipal -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
+    }
+
+    It 'treats a 3.0 config as ScopeKind Group and binds the assignment to a MemberOfGroup management scope' {
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+        $res.ScopeKind             | Should -Be 'Group'
+        $res.ManagementScopeName   | Should -Be 'MSRAo1P-Contoso'
+        $res.ManagementScopeFilter | Should -Be "MemberOfGroup -eq 'CN=Um365RAo1-Contoso,DC=prod'"
+        $res.ManagementScopeCreated | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 1 -ParameterFilter { $Name -eq 'MSRAo1P-Contoso' }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter {
+            $CustomResourceScope -eq 'MSRAo1P-Contoso' -and -not $RecipientGroupScope
+        }
+    }
+
+    It 'provisions a 4.0 Recipients-kind config without touching any group' {
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { param($Identity) [pscustomobject]@{ PrimarySmtpAddress = $Identity } }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPathRecipients -Confirm:$false
+
+        $res.Errors           | Should -BeNullOrEmpty
+        $res.ScopeKind        | Should -Be 'Recipients'
+        $res.AccessGroupType  | Should -BeNullOrEmpty
+        $res.ScopeGroupName   | Should -BeNullOrEmpty
+        $res.ManagementScopeFilter | Should -Be "(PrimarySmtpAddress -eq 'alice@contoso.com') -or (PrimarySmtpAddress -eq 'bob@contoso.com')"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-DistributionGroupMember -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter { $CustomResourceScope -eq 'MSRAo1P-Contoso' }
+    }
+
+    It 'provisions a 4.0 Tag-kind JSON config, defaulting the tag value to the scope name' {
+        $res = Invoke-RBAC4AppConfig -Path $script:configPathTagJson -Confirm:$false
+
+        $res.Errors              | Should -BeNullOrEmpty
+        $res.ManagementScopeName | Should -Be 'Contoso-Scope'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 1 -ParameterFilter {
+            $Name -eq 'Contoso-Scope' -and $RecipientRestrictionFilter -eq "CustomAttribute7 -eq 'Contoso-Scope'"
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
+    }
+
+    It 'warns about a legacy group-scoped assignment instead of re-creating it' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
+        }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+        ($res.Warnings -join ';') | Should -Match 'legacy -RecipientGroupScope.*Set-RBAC4AppEntry'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
     It 'adds members via Add-UnifiedGroupLinks for M365Group and tracks them in MembersAdded' {
@@ -253,9 +350,9 @@ Describe 'Invoke-RBAC4AppConfig' {
         $res.MembersFinal | Should -Contain 'shared@contoso.com'
     }
 
-    It 'skips creating a role assignment that already exists and is scoped to the target group' {
+    It 'skips creating a role assignment that already exists and is bound to the management scope' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' }
         }
 
         $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
@@ -287,6 +384,7 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup          -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks     -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope       -Times 0
     }
 
     It 'auto-detects JSON from a .json extension and provisions the same as the equivalent YAML' {
@@ -395,6 +493,44 @@ Describe 'Invoke-RBAC4AppConfig' {
             $parsed.RbacScope.Members          | Should -Contain 'user@contoso.com'
             $parsed.RbacScope.ManagedBy        | Should -Contain 'owner1@contoso.com'
             $parsed.RbacScope.ManagedBy        | Should -Contain 'owner"2@contoso.com'
+            $parsed.RbacScope.ScopeKind        | Should -Be 'Group'
+        }
+    }
+
+    It 'round-trips the 4.0 management scope settings through the yaml helpers' {
+        InModuleScope EXORBACforAppManagement {
+            $config = [pscustomobject]@{
+                SchemaVersion = '4.0'
+                GeneratedAt   = '2026-09-20T10:00:00.0000000Z'
+                TenantId      = 'tid-abc'
+                Application   = [pscustomobject]@{ AppId = 'aaa'; SpObjectId = 'bbb'; DisplayName = 'App' }
+                Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
+                RbacScope     = [pscustomobject]@{
+                    AccessGroupType       = 'DistributionList'
+                    GroupPrefix           = 'UDLRAo1P'
+                    AccessGroupName       = ''
+                    Members               = @('GraphAPI-Dummy')
+                    ManagedBy             = @('GraphAPI-Dummy-owner')
+                    BootstrapMember       = 'GraphAPI-Dummy'
+                    ScopeKind             = 'Filter'
+                    ManagementScopeName   = 'Custom-Scope'
+                    ManagementScopePrefix = 'MSRAo1P'
+                    ScopeRecipients       = @('alice@contoso.com', 'bob@contoso.com')
+                    ScopeTagAttribute     = 'CustomAttribute3'
+                    ScopeTagValue         = 'tag'
+                    ScopeFilter           = "Department -eq 'Sales' -and CustomAttribute2 -eq `"x`""
+                }
+            }
+            $parsed = ConvertFrom-RBAC4AppYaml -Content (ConvertTo-RBAC4AppYaml -Config $config)
+            $parsed.SchemaVersion                   | Should -Be '4.0'
+            $parsed.RbacScope.ScopeKind             | Should -Be 'Filter'
+            $parsed.RbacScope.ManagementScopeName   | Should -Be 'Custom-Scope'
+            $parsed.RbacScope.ManagementScopePrefix | Should -Be 'MSRAo1P'
+            @($parsed.RbacScope.ScopeRecipients)    | Should -Be @('alice@contoso.com', 'bob@contoso.com')
+            $parsed.RbacScope.ScopeTagAttribute     | Should -Be 'CustomAttribute3'
+            $parsed.RbacScope.ScopeTagValue         | Should -Be 'tag'
+            $parsed.RbacScope.ScopeFilter           | Should -Be "Department -eq 'Sales' -and CustomAttribute2 -eq `"x`""
+            @($parsed.RbacScope.Members)            | Should -Be @('GraphAPI-Dummy')
         }
     }
 

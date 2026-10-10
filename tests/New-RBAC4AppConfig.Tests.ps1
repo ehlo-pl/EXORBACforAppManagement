@@ -143,7 +143,9 @@ Describe 'New-RBAC4AppConfig' {
         (Test-Path $outFile) | Should -BeTrue
 
         $parsed = Get-Content $outFile -Raw | ConvertFrom-Json
-        $parsed.SchemaVersion              | Should -Be '3.0'
+        $parsed.SchemaVersion              | Should -Be '4.0'
+        $parsed.RbacScope.ScopeKind        | Should -Be 'Group'
+        $parsed.RbacScope.ManagementScopePrefix | Should -Be 'MSRAo1P'
         $parsed.TenantId                   | Should -Be 'tenant-id-123'
         $parsed.Application.AppId          | Should -Be 'app-client-id'
         $parsed.Application.SpObjectId     | Should -Be 'sp-obj-id'
@@ -153,6 +155,42 @@ Describe 'New-RBAC4AppConfig' {
         $parsed.RbacScope.Members          | Should -Contain 'shared@contoso.com'
         $parsed.RbacScope.ManagedBy        | Should -Contain 'owner1@contoso.com'
         $parsed.RbacScope.ManagedBy        | Should -Contain 'owner2@contoso.com'
+    }
+
+    It 'writes the management scope settings for -ScopeKind Recipients and round-trips them' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Recipients `
+            -ScopeRecipients 'alice@contoso.com', 'bob@contoso.com' -ManagementScopeName 'Contoso-Scope' `
+            -OutputPath $TestDrive -Confirm:$false
+
+        $content = Get-Content $outFile -Raw
+        $content | Should -Match 'SchemaVersion: "4.0"'
+        $content | Should -Match 'ScopeKind: "Recipients"'
+        $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
+        $parsed.RbacScope.ScopeKind           | Should -Be 'Recipients'
+        $parsed.RbacScope.ManagementScopeName | Should -Be 'Contoso-Scope'
+        @($parsed.RbacScope.ScopeRecipients)  | Should -Be @('alice@contoso.com', 'bob@contoso.com')
+    }
+
+    It 'requires -ScopeRecipients for -ScopeKind Recipients' {
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Recipients -OutputPath $TestDrive -Confirm:$false } |
+            Should -Throw '*-ScopeRecipients is required*'
+    }
+
+    It 'rejects -ManagementScopeName together with -ManagementScopePrefix' {
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ManagementScopeName 'a' -ManagementScopePrefix 'b' -OutputPath $TestDrive -Confirm:$false } |
+            Should -Throw '*cannot be used together*'
+    }
+
+    It 'warns when a group-only parameter is supplied for a non-Group scope kind' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $null = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Tag -Members 'x@contoso.com' `
+            -OutputPath $TestDrive -Confirm:$false -WarningVariable w -WarningAction SilentlyContinue
+        ($w -join ';') | Should -Match '-Members only applies to -ScopeKind Group'
     }
 
     It '-Format Json writes nothing under -WhatIf' {
