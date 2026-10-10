@@ -42,6 +42,10 @@ created with at least one ManagedBy value).
 .PARAMETER BootstrapMember
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml without changing Exchange Online object names.
+
 .EXAMPLE
 New-RBAC4AppDistributionGroup -AppName 'ContosoMailApp' -WhatIf -Verbose
 
@@ -93,7 +97,11 @@ function New-RBAC4AppDistributionGroup {
         [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
-        [string] $BootstrapMember = 'GraphAPI-Dummy'
+        [string] $BootstrapMember = 'GraphAPI-Dummy',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     process {
@@ -113,6 +121,10 @@ function New-RBAC4AppDistributionGroup {
         $existingGroup = Get-DistributionGroup -Identity $Name -ErrorAction SilentlyContinue
         if ($existingGroup) {
             $existingOwner = @($existingGroup.ManagedBy | Where-Object { $_ })
+            $metadataPath = $null
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+                $metadataPath = Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType 'DistributionList' -ScopeGroupName $Name
+            }
             Write-Warning -Message ("Distribution list '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Distribution list '{0}' already exists; skipping creation." -f $Name)
             return [pscustomobject]@{
@@ -120,6 +132,8 @@ function New-RBAC4AppDistributionGroup {
                 DisplayName    = $existingGroup.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
+                ChangeReference = $ChangeReference
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $true
                 Group          = $existingGroup
             }
@@ -148,19 +162,25 @@ function New-RBAC4AppDistributionGroup {
 
         $initialMembers = @()
         if ($BootstrapMember) { $initialMembers += $BootstrapMember }
+        $metadataPath = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+            Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType 'DistributionList' -ScopeGroupName $Name
+        }
+        else { $null }
         Write-Verbose -Message ("Distribution list '{0}' not found. Creating new group." -f $Name)
 
         if (-not $PSCmdlet.ShouldProcess($Name, 'Create')) { return }
 
         try {
-            $ndg = New-DistributionGroup `
-                -Name $Name `
-                -DisplayName $DisplayName `
-                -Alias $Name `
-                -Type Distribution `
-                -ManagedBy $resolvedOwner `
-                -Members $initialMembers `
-                -ErrorAction Stop
+            $newDistributionGroupParams = @{
+                Name        = $Name
+                DisplayName = $DisplayName
+                Alias       = $Name
+                Type        = 'Distribution'
+                ManagedBy   = $resolvedOwner
+                Members     = $initialMembers
+                ErrorAction = 'Stop'
+            }
+            $ndg = New-DistributionGroup @newDistributionGroupParams
         }
         catch {
             Write-Verbose -Message ("[New-DistributionGroup] Failed for '{0}': {1}" -f $Name, $_.Exception.Message)
@@ -171,12 +191,15 @@ function New-RBAC4AppDistributionGroup {
             Write-Verbose -Message ("Distribution list '{0}' created successfully." -f $Name)
 
             Write-Verbose -Message ("Applying post-creation settings to distribution list '{0}'." -f $Name)
-            Set-DistributionGroup -Identity $Name `
-                -HiddenFromAddressListsEnabled $true `
-                -RequireSenderAuthenticationEnabled $true `
-                -MemberJoinRestriction Closed `
-                -MemberDepartRestriction Closed `
-                -ErrorAction Stop
+            $setDistributionGroupParams = @{
+                Identity                           = $Name
+                HiddenFromAddressListsEnabled      = $true
+                RequireSenderAuthenticationEnabled = $true
+                MemberJoinRestriction              = 'Closed'
+                MemberDepartRestriction            = 'Closed'
+                ErrorAction                        = 'Stop'
+            }
+            Set-DistributionGroup @setDistributionGroupParams
 
             $configuredGroup = Get-DistributionGroup -Identity $Name -ErrorAction SilentlyContinue
             if ($configuredGroup) {
@@ -185,6 +208,8 @@ function New-RBAC4AppDistributionGroup {
                     DisplayName    = $configuredGroup.DisplayName
                     OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
+                    ChangeReference = $ChangeReference
+                    ChangeReferencePath = $metadataPath
                     AlreadyExisted = $false
                     Group          = $configuredGroup
                 }
@@ -195,6 +220,8 @@ function New-RBAC4AppDistributionGroup {
                 DisplayName    = $ndg.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
+                ChangeReference = $ChangeReference
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $false
                 Group          = $ndg
             }

@@ -255,7 +255,8 @@ function New-RBAC4AppConfig {
                 DisplayName = [string]$sp.DisplayName
             }
             Rbac          = [pscustomobject]@{
-                Roles = $normalizedRoles
+                Roles           = $normalizedRoles
+                ChangeReference = if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }
             }
             RbacScope     = [pscustomobject]@{
                 AccessGroupType = $AccessGroupType

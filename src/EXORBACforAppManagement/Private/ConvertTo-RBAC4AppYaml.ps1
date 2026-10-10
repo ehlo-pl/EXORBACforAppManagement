@@ -32,6 +32,7 @@
     $lines.Add("  DisplayName: $(ConvertTo-RBAC4AppYamlScalar $Config.Application.DisplayName)")
     $lines.Add('')
     $lines.Add('Rbac:')
+    $lines.Add("  ChangeReference: $(ConvertTo-RBAC4AppYamlScalar $Config.Rbac.ChangeReference)")
     $lines.Add('  Roles:')
     foreach ($role in @($Config.Rbac.Roles)) {
         $lines.Add("    - $(ConvertTo-RBAC4AppYamlScalar $role)")

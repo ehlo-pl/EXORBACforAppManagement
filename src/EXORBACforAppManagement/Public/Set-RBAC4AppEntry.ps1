@@ -418,6 +418,12 @@ function Set-RBAC4AppEntry {
                 }
             }
 
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+                if ($group -and $result.ScopeGroupExisted) {
+                    $result.ChangeReferencePath = Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType $AccessGroupType -ScopeGroupName $targetGroup -ApplicationName $sp.DisplayName -AppId $sp.AppId -SpObjectId $sp.Id
+                }
+            }
+
             # --- Ensure the Exchange Online service principal pointer (matched by AppId, then name).
             $exoSpDisplay = "{0}_SP" -f $sp.DisplayName
             $result.ExoServicePrincipalName = $exoSpDisplay

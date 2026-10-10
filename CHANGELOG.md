@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
 ### Added
 - **Management-scope based assignments.** Role assignments are now bound to a named Exchange Online
   management scope (`New-ManagementScope -RecipientRestrictionFilter` + `New-ManagementRoleAssignment

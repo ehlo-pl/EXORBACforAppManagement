@@ -31,16 +31,24 @@ function New-RBAC4AppScopeGroup {
         [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
-        [string] $BootstrapMember = 'GraphAPI-Dummy'
+        [string] $BootstrapMember = 'GraphAPI-Dummy',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     switch ($AccessGroupType) {
         'M365Group' {
-            return New-RBAC4AppUnifiedGroup -Name $Name -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember
+            $params = @{ Name = $Name; ManagedBy = $ManagedBy; BootstrapMember = $BootstrapMember }
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) { $params['ChangeReference'] = $ChangeReference }
+            return New-RBAC4AppUnifiedGroup @params
         }
 
         'DistributionList' {
-            return New-RBAC4AppDistributionGroup -Name $Name -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember
+            $params = @{ Name = $Name; ManagedBy = $ManagedBy; BootstrapMember = $BootstrapMember }
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) { $params['ChangeReference'] = $ChangeReference }
+            return New-RBAC4AppDistributionGroup @params
         }
 
         'MailEnabledSecurityGroup' {
@@ -50,11 +58,17 @@ function New-RBAC4AppScopeGroup {
                 throw "MailEnabledSecurityGroup '$Name' was not found. On-prem/hybrid-synced groups must already exist; this module does not create them. Supply an existing group via -AccessGroupName."
             }
             $existingOwner = @($existing.ManagedBy | Where-Object { $_ })
+            $metadataPath = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+                Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType $AccessGroupType -ScopeGroupName $Name
+            }
+            else { $null }
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $existing.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
+                ChangeReference = $ChangeReference
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $true
                 Group          = $existing
             }

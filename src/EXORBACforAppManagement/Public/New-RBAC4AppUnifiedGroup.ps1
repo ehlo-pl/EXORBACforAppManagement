@@ -29,6 +29,10 @@ created with at least one ManagedBy value).
 .PARAMETER BootstrapMember
 Optional initial member passed during group creation. Defaults to the GraphAPI-Dummy placeholder.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml without changing Exchange Online object names.
+
 .EXAMPLE
 New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-ContosoMailApp' -WhatIf -Verbose
 
@@ -63,7 +67,11 @@ function New-RBAC4AppUnifiedGroup {
         [string[]] $ManagedBy = @('GraphAPI-Dummy-owner'),
 
         [Parameter()]
-        [string] $BootstrapMember = 'GraphAPI-Dummy'
+        [string] $BootstrapMember = 'GraphAPI-Dummy',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ChangeReference
     )
 
     process {
@@ -78,6 +86,10 @@ function New-RBAC4AppUnifiedGroup {
         $existingGroup = Get-UnifiedGroup -Identity $Name -ErrorAction SilentlyContinue
         if ($existingGroup) {
             $existingOwner = @($existingGroup.ManagedBy | Where-Object { $_ })
+            $metadataPath = $null
+            if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+                $metadataPath = Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType 'M365Group' -ScopeGroupName $Name
+            }
             Write-Warning -Message ("UnifiedGroup '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Unified Group '{0}' already exists; skipping creation." -f $Name)
             Write-Debug -Message ("Existing Unified Group details: DisplayName='{0}'; Identity='{1}'; ManagedBy='{2}'" -f $existingGroup.DisplayName, $existingGroup.Identity, ($existingOwner -join ', '))
@@ -86,6 +98,8 @@ function New-RBAC4AppUnifiedGroup {
                 DisplayName    = $existingGroup.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
+                ChangeReference = $ChangeReference
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $true
                 Group          = $existingGroup
             }
@@ -114,6 +128,10 @@ function New-RBAC4AppUnifiedGroup {
 
         $initialMembers = @()
         if ($BootstrapMember) { $initialMembers += $BootstrapMember }
+        $metadataPath = if ($PSBoundParameters.ContainsKey('ChangeReference')) {
+            Save-RBAC4AppChangeReferenceRecord -ChangeReference $ChangeReference -Source $MyInvocation.MyCommand.Name -AccessGroupType 'M365Group' -ScopeGroupName $Name
+        }
+        else { $null }
         Write-Verbose -Message ("Unified Group '{0}' not found. Creating new group." -f $Name)
 
         # ---- Pre-call debug snapshot (minimal/essential creation parameters only) ----
@@ -132,14 +150,16 @@ function New-RBAC4AppUnifiedGroup {
         Write-Debug -Message ("[New-UnifiedGroup] ShouldProcess approved - invoking New-UnifiedGroup for '{0}'." -f $Name)
         $nugInvokeStart = [datetime]::UtcNow
         try {
-            $nug = New-UnifiedGroup `
-                -DisplayName $DisplayName `
-                -Name $Name `
-                -Alias $Name `
-                -AccessType Private `
-                -ManagedBy $resolvedOwner `
-                -Members $initialMembers `
-                -ErrorAction Stop
+            $newUnifiedGroupParams = @{
+                DisplayName = $DisplayName
+                Name        = $Name
+                Alias       = $Name
+                AccessType  = 'Private'
+                ManagedBy   = $resolvedOwner
+                Members     = $initialMembers
+                ErrorAction = 'Stop'
+            }
+            $nug = New-UnifiedGroup @newUnifiedGroupParams
             $nugElapsed = ([datetime]::UtcNow - $nugInvokeStart).TotalSeconds
             Write-Debug -Message ("[New-UnifiedGroup] Cmdlet returned after {0:N2} seconds. Raw return type: '{1}'." -f $nugElapsed, $(if ($null -ne $nug) { $nug.GetType().FullName } else { '<null>' }))
         }
@@ -173,15 +193,18 @@ function New-RBAC4AppUnifiedGroup {
             Write-Debug -Message ("  -Language                               : en-us")
             Write-Debug -Message ("  -SubscriptionEnabled                    : False")
             Write-Debug -Message ("  -ConnectorsEnabled                      : False")
-            Set-UnifiedGroup -Identity $Name `
-                -IsMemberAllowedToEditContent $false `
-                -AutoSubscribeNewMembers:$false `
-                -AlwaysSubscribeMembersToCalendarEvents:$false `
-                -Language en-us `
-                -SubscriptionEnabled:$false `
-                -HiddenFromAddressListsEnabled:$true `
-                -ConnectorsEnabled:$false `
-                -ErrorAction Stop
+            $setUnifiedGroupParams = @{
+                Identity                         = $Name
+                IsMemberAllowedToEditContent    = $false
+                AutoSubscribeNewMembers         = $false
+                AlwaysSubscribeMembersToCalendarEvents = $false
+                Language                         = 'en-us'
+                SubscriptionEnabled              = $false
+                HiddenFromAddressListsEnabled    = $true
+                ConnectorsEnabled                = $false
+                ErrorAction                      = 'Stop'
+            }
+            Set-UnifiedGroup @setUnifiedGroupParams
 
             $configuredGroup = Get-UnifiedGroup -Identity $Name -ErrorAction SilentlyContinue
             if ($configuredGroup) {
@@ -198,6 +221,8 @@ function New-RBAC4AppUnifiedGroup {
                     DisplayName    = $configuredGroup.DisplayName
                     OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
+                    ChangeReference = $ChangeReference
+                    ChangeReferencePath = $metadataPath
                     AlreadyExisted = $false
                     Group          = $configuredGroup
                 }
@@ -211,6 +236,8 @@ function New-RBAC4AppUnifiedGroup {
                 DisplayName    = $nug.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
+                ChangeReference = $ChangeReference
+                ChangeReferencePath = $metadataPath
                 AlreadyExisted = $false
                 Group          = $nug
             }

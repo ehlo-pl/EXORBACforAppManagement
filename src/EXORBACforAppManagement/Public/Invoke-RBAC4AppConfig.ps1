@@ -113,6 +113,7 @@ function Invoke-RBAC4AppConfig {
         $ManagedBy       = @($config.RbacScope.ManagedBy)
         $BootstrapMember = $config.RbacScope.BootstrapMember
         $roles           = @($config.Rbac.Roles)
+        $ChangeReference = [string]$config.Rbac.ChangeReference
 
         # --- Management scope settings (schema 4.0; absent from 3.0 -> Group kind, default prefix)
         $ScopeKind = if ([string]$config.RbacScope.ScopeKind) { [string]$config.RbacScope.ScopeKind } else { 'Group' }
@@ -163,20 +164,37 @@ function Invoke-RBAC4AppConfig {
         }
 
         try {
-            $ugResult = $null
-            $umGroupName = $null
-            if ($isGroupKind) {
-                # --- Derive scope group name
-                if ($AccessGroupName) {
-                    $umGroupName = $AccessGroupName
-                }
-                elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                    throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
-                }
-                else {
-                    $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
-                }
-                $result.ScopeGroupName = $umGroupName
+            # --- Derive scope group name
+            if ($AccessGroupName) {
+                $umGroupName = $AccessGroupName
+            }
+            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
+            }
+            else {
+                $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
+            }
+            $result.ScopeGroupName = $umGroupName
+
+            # --- Ensure scope group
+            Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
+            $scopeGroupParams = @{
+                AccessGroupType = $AccessGroupType
+                Name            = $umGroupName
+                ManagedBy       = $ManagedBy
+                BootstrapMember = $BootstrapMember
+                WarningVariable = 'ugWarnings'
+            }
+            if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+            $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
+            foreach ($w in $ugWarnings) {
+                if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+            }
+            if ($ugResult) {
+                $result.OwnerRequested = $ugResult.OwnerRequested
+                $result.OwnerAdded     = $ugResult.OwnerAdded
+                $result.ChangeReferencePath = $ugResult.ChangeReferencePath
+            }
 
                 # --- Ensure scope group
                 Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)

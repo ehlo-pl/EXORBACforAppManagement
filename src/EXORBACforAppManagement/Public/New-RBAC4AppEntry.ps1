@@ -111,6 +111,10 @@ Kind of group that backs the RBAC scope. One of:
 .PARAMETER BootstrapMember
 Optional initial member passed during Unified Group creation.
 
+.PARAMETER ChangeReference
+Optional change or incident reference to persist in a local metadata file under
+~\.EXORBACforAppManagement\<change>.yaml without changing Exchange Online object names.
+
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Verbose -WhatIf
 
