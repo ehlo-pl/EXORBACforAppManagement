@@ -12,17 +12,22 @@ place:
   1. the Exchange Online service principal pointer is resolvable (ServicePrincipalExists) - this
      is the same lookup used to resolve the application in the first place, so it is only ever
      false when the whole command fails to resolve an identity and errors out,
-  2. the scoped Unified Group "{GroupPrefix}-{DisplayName}" (sanitized via the same Get-SafeName
-     rule) exists,
+  2. for -ScopeKind Group (default), the scope group "{GroupPrefix}-{DisplayName}" (sanitized via
+     the same Get-SafeName rule) exists,
   3. the Exchange Online service principal pointer named exactly "{DisplayName}_SP" - by that
      deterministic name, or by AppId - exists (ExoServicePrincipalExists; distinct from #1, which
      resolves the application by whichever identity the caller supplied), and
-  4. one Exchange Online management role assignment exists per requested role, named the same way
-     New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}") and bound to the expected
-     role.
+  4. the management scope "{ManagementScopePrefix}-{DisplayName}" (or -ManagementScopeName) exists
+     and its RecipientRestrictionFilter matches the one New-RBAC4AppEntry would build for the
+     selected -ScopeKind, and
+  5. one Exchange Online management role assignment exists per requested role, named the same way
+     New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}"), bound to the expected role
+     and to that management scope (-CustomResourceScope). Assignments still scoped directly to the
+     group (legacy -RecipientGroupScope) are reported in RoleAssignmentsLegacyScoped and count as
+     missing; run Set-RBAC4AppEntry to migrate them.
 
-When -Members is supplied, the requested recipients are also verified against the Unified Group's
-membership. The function is read-only: it makes no changes and does not support -WhatIf.
+When -Members is supplied (ScopeKind Group only), the requested recipients are also verified
+against the scope group's membership. The function is read-only: it makes no changes and does not support -WhatIf.
 
 The defaults for -Role and -GroupPrefix mirror New-RBAC4AppEntry, so a plain
 "Test-RBAC4AppEntry -RegisteredAppName <app>" validates the default creation.
@@ -60,6 +65,28 @@ Kind of group that backs the RBAC scope (M365Group, DistributionList, or
 MailEnabledSecurityGroup). Defaults to DistributionList (matching New-RBAC4AppEntry). Controls
 which cmdlets are used to read the group and its membership.
 
+.PARAMETER ScopeKind
+How the management scope's recipient filter is built: Group (default; MemberOfGroup of the scope
+group), Recipients, Tag, or Filter. Mirrors New-RBAC4AppEntry.
+
+.PARAMETER ManagementScopeName
+Explicit management scope name. Cannot be combined with -ManagementScopePrefix.
+
+.PARAMETER ManagementScopePrefix
+Prefix of the generated management scope name "{Prefix}-{DisplayName}". Default 'MSRAo1P'.
+
+.PARAMETER ScopeRecipients
+Mailboxes/UPNs/SMTP addresses expected in the scope filter (-ScopeKind Recipients).
+
+.PARAMETER ScopeTagAttribute
+CustomAttribute1..15 expected in the scope filter (-ScopeKind Tag). Default CustomAttribute1.
+
+.PARAMETER ScopeTagValue
+Value expected in the scope filter (-ScopeKind Tag). Defaults to the management scope name.
+
+.PARAMETER ScopeFilter
+Raw OPATH filter expected on the scope (-ScopeKind Filter).
+
 .EXAMPLE
 Test-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App'
 
@@ -81,13 +108,13 @@ Reports which components are still missing before/after a run.
 PSCustomObject
 
 A summary object with the resolved identity, per-component existence flags
-(ServicePrincipalExists, ScopeGroupExists, ExoServicePrincipalExists), the expected/found/missing
-role assignments, optional membership results, an overall IsValid flag, a Missing list, and any
+(ServicePrincipalExists, ScopeGroupExists, ExoServicePrincipalExists, ManagementScopeExists,
+ManagementScopeFilterMatches), the expected/found/missing/legacy-scoped role assignments, optional membership results, an overall IsValid flag, a Missing list, and any
 Warnings/Errors.
 
 .NOTES
 Requires a connected Exchange Online session only (Get-ServicePrincipal, Get-ConnectionInformation,
-Get-UnifiedGroup, Get-ManagementRoleAssignment, and, when -Members is supplied, Get-Recipient and
+Get-UnifiedGroup, Get-ManagementScope, Get-ManagementRoleAssignment, and, when -Members is supplied, Get-Recipient and
 Get-UnifiedGroupLinks). No Microsoft Graph session is needed; the application is resolved against
 the Exchange Online service principal pointer already registered via Register-EXOServicePrincipal,
 New-RBAC4AppEntry, or Invoke-RBAC4AppConfig. Read-only companion to New-RBAC4AppEntry.
@@ -127,7 +154,34 @@ function Test-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'DistributionList'
+        [string] $AccessGroupType = 'DistributionList',
+
+        [Parameter()]
+        [ValidateSet('Group', 'Recipients', 'Tag', 'Filter')]
+        [string] $ScopeKind = 'Group',
+
+        [Parameter()]
+        [ValidateLength(1, 64)]
+        [string] $ManagementScopeName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ManagementScopePrefix = 'MSRAo1P',
+
+        [Parameter()]
+        [string[]] $ScopeRecipients,
+
+        [Parameter()]
+        [ValidatePattern('^CustomAttribute([1-9]|1[0-5])$')]
+        [string] $ScopeTagAttribute = 'CustomAttribute1',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ScopeTagValue,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ScopeFilter
     )
 
     begin {
@@ -154,16 +208,23 @@ function Test-RBAC4AppEntry {
             AppId                   = $null
             SpObjectId              = $null
             TenantId                = $tenantid
-            AccessGroupType         = $AccessGroupType
+            ScopeKind               = $ScopeKind
+            AccessGroupType         = if ($ScopeKind -eq 'Group') { $AccessGroupType } else { $null }
             ServicePrincipalExists  = $false
             ScopeGroupName          = $null
             ScopeGroupExists        = $false
             ExoServicePrincipalName = $null
             ExoServicePrincipalExists = $false
+            ManagementScopeName     = $null
+            ManagementScopeExists   = $false
+            ManagementScopeFilter   = $null
+            ManagementScopeExpectedFilter = $null
+            ManagementScopeFilterMatches  = $false
             RolesExpected           = @()
             RoleAssignmentsExpected = @()
             RoleAssignmentsFound    = @()
             RoleAssignmentsMissing  = @()
+            RoleAssignmentsLegacyScoped = @()
             MembersExpected         = @()
             MembersPresent          = @()
             MembersMissing          = @()
@@ -174,6 +235,19 @@ function Test-RBAC4AppEntry {
         }
 
         try {
+            if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+                throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
+            }
+            if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
+                throw "-ScopeRecipients is required when -ScopeKind is Recipients."
+            }
+            if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
+                throw "-ScopeFilter is required when -ScopeKind is Filter."
+            }
+            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
+                $result.Warnings += $ignoredMsg
+            }
+
             # --- Resolve the service principal depending on parameter set.
             $sp = $null
             switch ($PSCmdlet.ParameterSetName) {
@@ -199,6 +273,11 @@ function Test-RBAC4AppEntry {
             $result.SpObjectId             = $sp.Id
 
             # --- Scope group existence (same name rule as New-RBAC4AppEntry; read cmdlet per type).
+            # Only relevant for -ScopeKind Group; other kinds have no backing group.
+            $umGroupName = $null
+            $group = $null
+            if ($ScopeKind -eq 'Group') {
+            #REINDENT-START
             if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
                 $umGroupName = $AccessGroupName
             }
@@ -220,6 +299,8 @@ function Test-RBAC4AppEntry {
             else {
                 $result.Missing += "$AccessGroupType '$umGroupName'"
             }
+            #REINDENT-END
+            }
 
             # --- Exchange Online service principal pointer existence (matched by AppId, then name).
             $exoSpDisplay = "{0}_SP" -f $sp.DisplayName
@@ -232,6 +313,47 @@ function Test-RBAC4AppEntry {
             }
             else {
                 $result.Missing += "Exchange Online service principal '$exoSpDisplay'"
+            }
+
+            # --- Management scope existence and filter (same name/filter rules as New-RBAC4AppEntry).
+            $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $sp.DisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
+            $result.ManagementScopeName = $scopeName
+            $scopeObj = $null
+            try { $scopeObj = Get-ManagementScope -Identity $scopeName -ErrorAction Stop | Select-Object -First 1 }
+            catch { Write-Verbose -Message "Management scope '$scopeName' not found: $($_.Exception.Message)" }
+
+            $expectedFilter = $null
+            if ($ScopeKind -ne 'Group' -or $group) {
+                $filterArgs = @{
+                    ScopeKind              = $ScopeKind
+                    GroupIdentity          = $umGroupName
+                    GroupDistinguishedName = if ($group) { [string]$group.DistinguishedName } else { $null }
+                    Recipients             = $ScopeRecipients
+                    TagAttribute           = $ScopeTagAttribute
+                    TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
+                    Filter                 = $ScopeFilter
+                }
+                $fWarnings = @()
+                try { $expectedFilter = ConvertTo-RBAC4AppRecipientFilter @filterArgs -WarningVariable fWarnings -WarningAction SilentlyContinue }
+                catch { $result.Warnings += "Could not build the expected management scope filter: $($_.Exception.Message)" }
+                foreach ($w in @($fWarnings)) { if ($w) { $result.Warnings += [string]$w.Message } }
+            }
+            $result.ManagementScopeExpectedFilter = $expectedFilter
+
+            if ($scopeObj) {
+                $result.ManagementScopeExists = $true
+                $currentFilter = [string]$scopeObj.RecipientFilter
+                if (-not $currentFilter) { $currentFilter = [string]$scopeObj.RecipientRestrictionFilter }
+                $result.ManagementScopeFilter = $currentFilter
+                if ($expectedFilter -and (Test-RBAC4AppRecipientFilterEqual -Reference $currentFilter -Difference $expectedFilter)) {
+                    $result.ManagementScopeFilterMatches = $true
+                }
+                else {
+                    $result.Missing += "Management scope '$scopeName' filter (expected: $expectedFilter; current: $currentFilter)"
+                }
+            }
+            else {
+                $result.Missing += "Management scope '$scopeName'"
             }
 
             # --- Role assignment existence, by the deterministic name New-RBAC4AppEntry builds.
@@ -251,6 +373,7 @@ function Test-RBAC4AppEntry {
 
                 $assignment = Get-ManagementRoleAssignment -Identity $expectedName -ErrorAction SilentlyContinue
                 $assignmentMatches = $false
+                $assignmentLegacy = $false
                 foreach ($candidate in @($assignment | Where-Object { $_ })) {
                     $assignee = [string]$candidate.RoleAssigneeName
                     $assigneeMatches = $false
@@ -258,26 +381,31 @@ function Test-RBAC4AppEntry {
                         if ($assignee -and $assignee -like "*$n*") { $assigneeMatches = $true; break }
                     }
 
-                    $scopeName = Resolve-RBAC4AppScopeGroupName -Assignment $candidate
-                    if (([string]$candidate.Role -eq $roleItem) -and
-                        $assigneeMatches -and
-                        ([string]$scopeName -eq $umGroupName)) {
+                    if (([string]$candidate.Role -ne $roleItem) -or -not $assigneeMatches) { continue }
+                    $state = (Get-RBAC4AppAssignmentScopeState -Assignment $candidate -ManagementScopeName $scopeName -LegacyGroupName $umGroupName).State
+                    if ($state -eq 'Target') {
                         $assignmentMatches = $true
                         break
                     }
+                    if ($state -eq 'LegacyGroup') { $assignmentLegacy = $true }
                 }
 
                 if ($assignmentMatches) {
                     $result.RoleAssignmentsFound += $expectedName
                 }
+                elseif ($assignmentLegacy) {
+                    $result.RoleAssignmentsMissing += $expectedName
+                    $result.RoleAssignmentsLegacyScoped += $expectedName
+                    $result.Missing += "Role assignment '$expectedName' ($roleItem) is scoped directly to group '$umGroupName' (legacy -RecipientGroupScope); run Set-RBAC4AppEntry to migrate it onto management scope '$scopeName'"
+                }
                 else {
                     $result.RoleAssignmentsMissing += $expectedName
-                    $result.Missing += "Role assignment '$expectedName' ($roleItem)"
+                    $result.Missing += "Role assignment '$expectedName' ($roleItem) bound to management scope '$scopeName'"
                 }
             }
 
             # --- Optional membership check.
-            if ($PSBoundParameters.ContainsKey('Members')) {
+            if ($ScopeKind -eq 'Group' -and $PSBoundParameters.ContainsKey('Members')) {
                 $requested = @($Members | Where-Object { $_ })
                 $result.MembersExpected = $requested
 
@@ -311,7 +439,9 @@ function Test-RBAC4AppEntry {
             }
 
             $result.IsValid = $result.ServicePrincipalExists -and
-                              $result.ScopeGroupExists -and
+                              (($ScopeKind -ne 'Group') -or $result.ScopeGroupExists) -and
+                              $result.ManagementScopeExists -and
+                              $result.ManagementScopeFilterMatches -and
                               $result.ExoServicePrincipalExists -and
                               ($result.RoleAssignmentsMissing.Count -eq 0) -and
                               ($result.MembersMissing.Count -eq 0)

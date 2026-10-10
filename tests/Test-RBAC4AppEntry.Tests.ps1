@@ -15,15 +15,18 @@ BeforeAll {
     function global:Get-UnifiedGroupLinks { [CmdletBinding()] param([string]$Identity, [string]$LinkType) }
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
+    function global:Get-ManagementScope { [CmdletBinding()] param([string]$Identity) }
 
     # The EXO service principal pointer that both SP resolution (Resolve-RBAC4AppServicePrincipal)
     # and Test-RBAC4AppEntry's own ExoServicePrincipalExists check read via Get-ServicePrincipal.
+    $script:GroupDn = 'CN=grp,OU=contoso,DC=prod'
+    $script:ScopeObj = [pscustomobject]@{ Name = 'MSRAo1P-Contoso'; RecipientFilter = "MemberOfGroup -eq 'CN=grp,OU=contoso,DC=prod'" }
     $script:ExoSp = [pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111'; ObjectId = '22222222-2222-2222-2222-222222222222' }
 }
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-ConnectionInformation','Get-UnifiedGroup','Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-Recipient','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember') {
+    foreach ($n in 'Get-ConnectionInformation','Get-UnifiedGroup','Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-Recipient','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember','Get-ManagementScope') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -31,7 +34,8 @@ AfterAll {
 Describe 'Test-RBAC4AppEntry' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
-        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso' } }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso'; DistinguishedName = $script:GroupDn } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { $script:ScopeObj }
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
         # Non-parameter-filtered so individual It blocks can fully override it (a parameter-filtered
         # mock would otherwise keep matching ahead of a plain override).
@@ -41,9 +45,9 @@ Describe 'Test-RBAC4AppEntry' {
                     Name                      = $Identity
                     Role                      = 'Application Mail.Send'
                     RoleAssigneeName          = 'Contoso_SP'
-                    RecipientWriteScope       = 'Group'
+                    RecipientWriteScope       = 'CustomRecipientScope'
                     CustomRecipientWriteScope = $null
-                    CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+                    CustomResourceScope       = 'MSRAo1P-Contoso'
                     Identity                  = $Identity
                 }
             }
@@ -139,6 +143,64 @@ Describe 'Test-RBAC4AppEntry' {
         $r.IsValid | Should -BeFalse
     }
 
+    It 'reports the management scope name and filter' {
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
+        $r.ScopeKind | Should -Be 'Group'
+        $r.ManagementScopeName | Should -Be 'MSRAo1P-Contoso'
+        $r.ManagementScopeExists | Should -BeTrue
+        $r.ManagementScopeFilterMatches | Should -BeTrue
+        $r.ManagementScopeExpectedFilter | Should -Be "MemberOfGroup -eq 'CN=grp,OU=contoso,DC=prod'"
+    }
+
+    It 'flags a missing management scope' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { throw 'not found' }
+
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
+        $r.ManagementScopeExists | Should -BeFalse
+        $r.IsValid | Should -BeFalse
+        $r.Missing | Should -Contain "Management scope 'MSRAo1P-Contoso'"
+    }
+
+    It 'flags a management scope whose filter has drifted' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { [pscustomobject]@{ Name = 'MSRAo1P-Contoso'; RecipientFilter = "MemberOfGroup -eq 'CN=other,DC=prod'" } }
+
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
+        $r.ManagementScopeExists | Should -BeTrue
+        $r.ManagementScopeFilterMatches | Should -BeFalse
+        $r.IsValid | Should -BeFalse
+    }
+
+    It 'reports a legacy group-scoped assignment as missing with a migration hint' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = $Identity
+                Role                      = 'Application Mail.Send'
+                RoleAssigneeName          = 'Contoso_SP'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+            }
+        }
+
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
+        $r.RoleAssignmentsLegacyScoped | Should -Be @('AppMailSend-Contoso')
+        $r.RoleAssignmentsMissing | Should -Be @('AppMailSend-Contoso')
+        $r.IsValid | Should -BeFalse
+        ($r.Missing -join ';') | Should -Match 'Set-RBAC4AppEntry'
+    }
+
+    It 'validates a -ScopeKind Recipients setup without any group' {
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = $Identity; Name = $Identity } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { [pscustomobject]@{ Name = 'MSRAo1P-Contoso'; RecipientFilter = "(PrimarySmtpAddress -eq 'alice@contoso.com') -or (PrimarySmtpAddress -eq 'bob@contoso.com')" } }
+
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -ScopeKind Recipients -ScopeRecipients 'bob@contoso.com','alice@contoso.com'
+        $r.ScopeGroupName | Should -BeNullOrEmpty
+        $r.AccessGroupType | Should -BeNullOrEmpty
+        $r.ManagementScopeFilterMatches | Should -BeTrue
+        $r.IsValid | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroup -Times 0
+    }
+
     It 'does not count an assignment scoped to a different group' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             [pscustomobject]@{
@@ -197,16 +259,17 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
                     Name                      = $Identity
                     Role                      = 'Application Mail.Send'
                     RoleAssigneeName          = 'Contoso_SP'
-                    RecipientWriteScope       = 'Group'
+                    RecipientWriteScope       = 'CustomRecipientScope'
                     CustomRecipientWriteScope = $null
-                    CustomResourceScope       = 'UDLRAo1P-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+                    CustomResourceScope       = 'MSRAo1P-Contoso'
                 }
             }
         }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { $script:ScopeObj }
     }
 
     It 'DistributionList: reads existence via Get-DistributionGroup and membership via Get-DistributionGroupMember' {
-        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso' } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso'; DistinguishedName = $script:GroupDn } }
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' } }
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @([pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' }) }
 
