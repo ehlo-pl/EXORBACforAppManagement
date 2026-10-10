@@ -18,14 +18,23 @@ New-RBAC4AppEntry provisions into the desired state, changing only what is neede
   3. the requested -Members are added to the group if they are not already members (additive only -
      existing members are never removed), and
   4. one Exchange Online management role assignment exists per requested role, named the same way
-     New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}") and scoped to the target group.
-     A missing assignment is created; an assignment that exists but is scoped to a different group is
-     re-scoped (removed and recreated with the same name) - this is how the scoping group is changed.
+     New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}") and bound to the application's
+     management scope (-CustomResourceScope). A missing assignment is created; an assignment bound
+     elsewhere - including a legacy assignment scoped directly to the group (-RecipientGroupScope,
+     pre-0.7) - is re-pointed in place with Set-ManagementRoleAssignment -CustomResourceScope
+     (falling back to remove + recreate under the same name). This is the migration path from the
+     old group-scoped model.
+  5. the management scope ("{ManagementScopePrefix}-{DisplayName}", or -ManagementScopeName) exists
+     with the filter for -ScopeKind (Group: MemberOfGroup -eq '<target group DN>'; Recipients;
+     Tag; Filter - see New-RBAC4AppEntry). It is created when missing and its filter is updated
+     when it drifted.
 
 Changing the scoping group: supply -NewGroupName (an explicit group name) or -NewGroupPrefix (builds
-"{NewGroupPrefix}-{DisplayName}"). The target group is ensured to exist and the role assignments are
-re-scoped onto it. The old group is left in place (use Remove-RBAC4AppEntry to tear it down once it
-is no longer in use); members are not migrated.
+"{NewGroupPrefix}-{DisplayName}"). The target group is ensured to exist and the management scope's
+filter is re-pointed at it (the scope and the role assignments keep their names). The old group is
+left in place (use Remove-RBAC4AppEntry to tear it down once it is no longer in use); members are
+not migrated. Switching -ScopeKind (e.g. from Group to Recipients) likewise just rewrites the
+scope's filter.
 
 For an application that has never been registered in Exchange Online (its service principal pointer
 does not exist yet), none of -RegisteredAppName, -AppId, or -SpObjectId alone is enough to resolve
@@ -89,6 +98,39 @@ Ignored when -NewGroupName is supplied.
 Optional. Switch the role assignments to this explicit group name (sanitized via Get-SafeName). Takes
 precedence over -NewGroupPrefix.
 
+.PARAMETER ScopeKind
+Group (default), Recipients, Tag, or Filter - see New-RBAC4AppEntry. Group parameters apply to
+Group only.
+
+.PARAMETER ManagementScopeName
+Explicit management scope name. Cannot be combined with -ManagementScopePrefix.
+
+.PARAMETER ManagementScopePrefix
+Prefix of the generated management scope name. Default 'MSRAo1P'.
+
+.PARAMETER ScopeRecipients
+Mailboxes/UPNs for -ScopeKind Recipients.
+
+.PARAMETER ScopeTagAttribute
+CustomAttribute1..15 for -ScopeKind Tag. Default CustomAttribute1.
+
+.PARAMETER ScopeTagValue
+Value for -ScopeKind Tag. Defaults to the management scope name.
+
+.PARAMETER ScopeFilter
+Raw OPATH filter for -ScopeKind Filter.
+
+.EXAMPLE
+Set-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Confirm:$false
+
+Migrates assignments created by an older version (scoped directly to the group) onto the
+'MSRAo1P-ContosoMailApp' management scope.
+
+.EXAMPLE
+Set-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -ScopeKind Recipients -ScopeRecipients 'alice@contoso.com'
+
+Rewrites the application's management scope so it only covers alice@contoso.com.
+
 .EXAMPLE
 Set-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -WhatIf -Verbose
 
@@ -117,7 +159,7 @@ IsValid flag, and any Warnings/Errors.
 .NOTES
 Requires a connected Exchange Online session only (Get-ServicePrincipal, Get-ConnectionInformation,
 Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-DistributionGroupMember, Get-Recipient,
-Get-ManagementRoleAssignment, New-ManagementRoleAssignment, Remove-ManagementRoleAssignment, plus
+Get-ManagementRoleAssignment, New-/Set-/Remove-ManagementRoleAssignment, Get-/New-/Set-ManagementScope, plus
 the cmdlets used by the delegated New-RBAC4AppUnifiedGroup / Register-EXOServicePrincipal). No
 Microsoft Graph session is needed. Reconcile companion to Test-RBAC4AppEntry and New-RBAC4AppEntry.
 #>
@@ -177,7 +219,34 @@ function Set-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $NewGroupName
+        [string] $NewGroupName,
+
+        [Parameter()]
+        [ValidateSet('Group', 'Recipients', 'Tag', 'Filter')]
+        [string] $ScopeKind = 'Group',
+
+        [Parameter()]
+        [ValidateLength(1, 64)]
+        [string] $ManagementScopeName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ManagementScopePrefix = 'MSRAo1P',
+
+        [Parameter()]
+        [string[]] $ScopeRecipients,
+
+        [Parameter()]
+        [ValidatePattern('^CustomAttribute([1-9]|1[0-5])$')]
+        [string] $ScopeTagAttribute = 'CustomAttribute1',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ScopeTagValue,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ScopeFilter
     )
 
     begin {
@@ -193,6 +262,15 @@ function Set-RBAC4AppEntry {
             -not $PSBoundParameters.ContainsKey('AppId') -and
             -not $PSBoundParameters.ContainsKey('SpObjectId')) {
             throw "One of -RegisteredAppName, -AppId, or -SpObjectId must be supplied."
+        }
+        if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+            throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
+        }
+        if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
+            throw "-ScopeRecipients is required when -ScopeKind is Recipients."
+        }
+        if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
+            throw "-ScopeFilter is required when -ScopeKind is Filter."
         }
 
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
@@ -210,7 +288,13 @@ function Set-RBAC4AppEntry {
             AppId                     = $null
             SpObjectId                = $null
             TenantId                  = $tenantid
-            AccessGroupType           = $AccessGroupType
+            ScopeKind                 = $ScopeKind
+            ManagementScopeName       = $null
+            ManagementScopeFilter     = $null
+            ManagementScopeExisted    = $false
+            ManagementScopeCreated    = $false
+            ManagementScopeUpdated    = $false
+            AccessGroupType           = if ($ScopeKind -eq 'Group') { $AccessGroupType } else { $null }
             CurrentGroupName          = $null
             TargetGroupName           = $null
             GroupChanged              = $false
@@ -272,54 +356,64 @@ function Set-RBAC4AppEntry {
             $result.AppId           = $sp.AppId
             $result.SpObjectId      = $sp.Id
 
-            # --- Determine the current and target scope group names (same name rule as New-RBAC4AppEntry).
-            # A MailEnabledSecurityGroup is on-prem/hybrid-synced: its name is referenced, never generated.
-            if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
-                $currentGroup = $AccessGroupName
-            }
-            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
-            }
-            else {
-                $currentGroup = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
+                $result.Warnings += $ignoredMsg
+                Write-Warning -Message $ignoredMsg
             }
 
-            if ($PSBoundParameters.ContainsKey('NewGroupName')) {
-                $targetGroup = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $NewGroupName } else { Get-SafeName -s $NewGroupName }
-            }
-            elseif ($PSBoundParameters.ContainsKey('NewGroupPrefix')) {
-                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                    throw "-NewGroupPrefix cannot be used with -AccessGroupType MailEnabledSecurityGroup; on-prem/hybrid-synced group names are referenced, not generated. Use -NewGroupName with an existing group."
+            $group = $null
+            $currentGroup = $null
+            $targetGroup = $null
+            if ($ScopeKind -eq 'Group') {
+                # --- Determine the current and target scope group names (same name rule as New-RBAC4AppEntry).
+                # A MailEnabledSecurityGroup is on-prem/hybrid-synced: its name is referenced, never generated.
+                if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
+                    $currentGroup = $AccessGroupName
                 }
-                $targetGroup = Get-SafeName -s ("{0}-{1}" -f $NewGroupPrefix, $sp.DisplayName)
-            }
-            else {
-                $targetGroup = $currentGroup
-            }
-            $result.CurrentGroupName = $currentGroup
-            $result.TargetGroupName  = $targetGroup
-            $result.GroupChanged     = ($targetGroup -ne $currentGroup)
+                elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+                }
+                else {
+                    $currentGroup = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+                }
 
-            # --- Ensure the target scope group exists (delegated to New-RBAC4AppScopeGroup; read per type).
-            $group = switch ($AccessGroupType) {
-                'DistributionList'         { Get-DistributionGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
-                'MailEnabledSecurityGroup' { Get-Recipient -Identity $targetGroup -ErrorAction SilentlyContinue }
-                default                    { Get-UnifiedGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
-            }
-            $result.ScopeGroupExisted = [bool]$group
-            if (-not $group) {
-                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                    # On-prem/hybrid-synced groups cannot be created in the cloud.
-                    $result.Errors += "MailEnabledSecurityGroup '$targetGroup' does not exist and cannot be created (it is mastered on-premises)."
+                if ($PSBoundParameters.ContainsKey('NewGroupName')) {
+                    $targetGroup = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $NewGroupName } else { Get-SafeName -s $NewGroupName }
                 }
-                elseif ($PSCmdlet.ShouldProcess($targetGroup, "Create $AccessGroupType")) {
-                    $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $targetGroup -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
-                    foreach ($w in $ugWarnings) {
-                        if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+                elseif ($PSBoundParameters.ContainsKey('NewGroupPrefix')) {
+                    if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                        throw "-NewGroupPrefix cannot be used with -AccessGroupType MailEnabledSecurityGroup; on-prem/hybrid-synced group names are referenced, not generated. Use -NewGroupName with an existing group."
                     }
-                    if ($ugResult) {
-                        $result.ScopeGroupCreated = $true
-                        $group = $ugResult.Group
+                    $targetGroup = Get-SafeName -s ("{0}-{1}" -f $NewGroupPrefix, $sp.DisplayName)
+                }
+                else {
+                    $targetGroup = $currentGroup
+                }
+                $result.CurrentGroupName = $currentGroup
+                $result.TargetGroupName  = $targetGroup
+                $result.GroupChanged     = ($targetGroup -ne $currentGroup)
+
+                # --- Ensure the target scope group exists (delegated to New-RBAC4AppScopeGroup; read per type).
+                $group = switch ($AccessGroupType) {
+                    'DistributionList'         { Get-DistributionGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
+                    'MailEnabledSecurityGroup' { Get-Recipient -Identity $targetGroup -ErrorAction SilentlyContinue }
+                    default                    { Get-UnifiedGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
+                }
+                $result.ScopeGroupExisted = [bool]$group
+                if (-not $group) {
+                    if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                        # On-prem/hybrid-synced groups cannot be created in the cloud.
+                        $result.Errors += "MailEnabledSecurityGroup '$targetGroup' does not exist and cannot be created (it is mastered on-premises)."
+                    }
+                    elseif ($PSCmdlet.ShouldProcess($targetGroup, "Create $AccessGroupType")) {
+                        $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $targetGroup -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+                        foreach ($w in $ugWarnings) {
+                            if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+                        }
+                        if ($ugResult) {
+                            $result.ScopeGroupCreated = $true
+                            $group = $ugResult.Group
+                        }
                     }
                 }
             }
@@ -338,88 +432,122 @@ function Set-RBAC4AppEntry {
                 $result.ExoServicePrincipalCreated = $true
             }
 
-            # --- Read the target group's current membership once (all types, read-only): used for
-            # the "already present" check below and to seed MembersFinal, reused rather than
-            # re-queried after any additions (EXO reads can lag writes).
-            $existingLinks = if ($AccessGroupType -eq 'M365Group') {
-                @(Get-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -ErrorAction SilentlyContinue)
-            }
-            else {
-                @(Get-DistributionGroupMember -Identity $targetGroup -ErrorAction SilentlyContinue)
-            }
-            $existingMemberIdentities = @($existingLinks | ForEach-Object {
-                    if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
-                } | Where-Object { $_ } | Select-Object -Unique)
-
-            # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
-            # here, so warn about any group-modifying parameter that was requested but ignored.
-            if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
-                    $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -ManagedBy was ignored."
-                    $result.Warnings += $skipOwnerMsg
-                    Write-Warning -Message $skipOwnerMsg
+            if ($ScopeKind -eq 'Group') {
+                # --- Read the target group's current membership once (all types, read-only): used for
+                # the "already present" check below and to seed MembersFinal, reused rather than
+                # re-queried after any additions (EXO reads can lag writes).
+                $existingLinks = if ($AccessGroupType -eq 'M365Group') {
+                    @(Get-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -ErrorAction SilentlyContinue)
                 }
-                if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
-                    $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -BootstrapMember was ignored."
-                    $result.Warnings += $skipBootstrapMsg
-                    Write-Warning -Message $skipBootstrapMsg
+                else {
+                    @(Get-DistributionGroupMember -Identity $targetGroup -ErrorAction SilentlyContinue)
                 }
-            }
+                $existingMemberIdentities = @($existingLinks | ForEach-Object {
+                        if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
+                    } | Where-Object { $_ } | Select-Object -Unique)
 
-            # --- Members (additive): add any requested member not already in the target group.
-            # Skipped for MailEnabledSecurityGroup: membership is mastered on-premises.
-            if ($PSBoundParameters.ContainsKey('Members') -and $AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                $result.MembersRequested = @($Members | Where-Object { $_ })
-                $skipMembersMsg = "Membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -Members was ignored."
-                $result.Warnings += $skipMembersMsg
-                Write-Warning -Message $skipMembersMsg
-            }
-            elseif ($PSBoundParameters.ContainsKey('Members')) {
-                $requested = @($Members | Where-Object { $_ })
-                $result.MembersRequested = $requested
-
-                $currentUserUpn = $null
-                try { $currentUserUpn = Get-ConnectionInformation -ErrorAction Stop | Select-Object -First 1 -ExpandProperty UserPrincipalName }
-                catch {
-                    $result.Warnings += "Could not retrieve current connection user via Get-ConnectionInformation; connection user filtering will be skipped. Error: $($_.Exception.Message)"
+                # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
+                # here, so warn about any group-modifying parameter that was requested but ignored.
+                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
+                        $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -ManagedBy was ignored."
+                        $result.Warnings += $skipOwnerMsg
+                        Write-Warning -Message $skipOwnerMsg
+                    }
+                    if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
+                        $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -BootstrapMember was ignored."
+                        $result.Warnings += $skipBootstrapMsg
+                        Write-Warning -Message $skipBootstrapMsg
+                    }
                 }
 
-                $linkAddresses = @($existingLinks | ForEach-Object { [string]$_.PrimarySmtpAddress; [string]$_.Name } | Where-Object { $_ })
+                # --- Members (additive): add any requested member not already in the target group.
+                # Skipped for MailEnabledSecurityGroup: membership is mastered on-premises.
+                if ($PSBoundParameters.ContainsKey('Members') -and $AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    $result.MembersRequested = @($Members | Where-Object { $_ })
+                    $skipMembersMsg = "Membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -Members was ignored."
+                    $result.Warnings += $skipMembersMsg
+                    Write-Warning -Message $skipMembersMsg
+                }
+                elseif ($PSBoundParameters.ContainsKey('Members')) {
+                    $requested = @($Members | Where-Object { $_ })
+                    $result.MembersRequested = $requested
 
-                foreach ($member in $requested) {
-                    if ($currentUserUpn -and ($member -ieq $currentUserUpn)) {
-                        $result.FilteredMembers += [string]$member
-                        $filterWarning = "Current connection user '$currentUserUpn' was found in the members list and has been filtered out."
-                        $result.Warnings += $filterWarning
-                        Write-Warning -Message $filterWarning
-                        continue
+                    $currentUserUpn = $null
+                    try { $currentUserUpn = Get-ConnectionInformation -ErrorAction Stop | Select-Object -First 1 -ExpandProperty UserPrincipalName }
+                    catch {
+                        $result.Warnings += "Could not retrieve current connection user via Get-ConnectionInformation; connection user filtering will be skipped. Error: $($_.Exception.Message)"
                     }
 
-                    $rec = Get-Recipient -Identity $member -ErrorAction SilentlyContinue
-                    if (-not $rec) {
-                        $result.Warnings += "Recipient not found for '$member' (skipped)."
-                        continue
-                    }
-                    $needle = [string]$rec.PrimarySmtpAddress
+                    $linkAddresses = @($existingLinks | ForEach-Object { [string]$_.PrimarySmtpAddress; [string]$_.Name } | Where-Object { $_ })
 
-                    if (($linkAddresses -contains $needle) -or ($linkAddresses -contains [string]$rec.Name)) {
-                        $result.MembersAlreadyPresent += $needle
-                        continue
-                    }
-
-                    if ($PSCmdlet.ShouldProcess("$AccessGroupType $targetGroup", "Add member $needle")) {
-                        if ($AccessGroupType -eq 'DistributionList') {
-                            Add-DistributionGroupMember -Identity $targetGroup -Member $needle -ErrorAction Stop
+                    foreach ($member in $requested) {
+                        if ($currentUserUpn -and ($member -ieq $currentUserUpn)) {
+                            $result.FilteredMembers += [string]$member
+                            $filterWarning = "Current connection user '$currentUserUpn' was found in the members list and has been filtered out."
+                            $result.Warnings += $filterWarning
+                            Write-Warning -Message $filterWarning
+                            continue
                         }
-                        else {
-                            Add-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -Links $needle -ErrorAction Stop
+
+                        $rec = Get-Recipient -Identity $member -ErrorAction SilentlyContinue
+                        if (-not $rec) {
+                            $result.Warnings += "Recipient not found for '$member' (skipped)."
+                            continue
                         }
-                        $result.MembersAdded += $needle
+                        $needle = [string]$rec.PrimarySmtpAddress
+
+                        if (($linkAddresses -contains $needle) -or ($linkAddresses -contains [string]$rec.Name)) {
+                            $result.MembersAlreadyPresent += $needle
+                            continue
+                        }
+
+                        if ($PSCmdlet.ShouldProcess("$AccessGroupType $targetGroup", "Add member $needle")) {
+                            if ($AccessGroupType -eq 'DistributionList') {
+                                Add-DistributionGroupMember -Identity $targetGroup -Member $needle -ErrorAction Stop
+                            }
+                            else {
+                                Add-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -Links $needle -ErrorAction Stop
+                            }
+                            $result.MembersAdded += $needle
+                        }
                     }
                 }
+
+                $result.MembersFinal = @($existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
             }
 
-            $result.MembersFinal = @($existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
+            # --- Ensure the management scope exists with the desired filter (created when missing,
+            # updated when its filter drifted - e.g. after a group change). Same name across group
+            # changes: the scope is re-pointed rather than the assignments re-created.
+            $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $sp.DisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
+            $result.ManagementScopeName = $scopeName
+            $scopeOk = $false
+            try {
+                $groupDn = if ($group) { [string]$group.DistinguishedName } else { $null }
+                $filterArgs = @{
+                    ScopeKind              = $ScopeKind
+                    GroupIdentity          = $targetGroup
+                    GroupDistinguishedName = $groupDn
+                    Recipients             = $ScopeRecipients
+                    TagAttribute           = $ScopeTagAttribute
+                    TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
+                    Filter                 = $ScopeFilter
+                    AllowUnresolved        = ($ScopeKind -eq 'Group' -and [bool]$WhatIfPreference)
+                }
+                $scopeFilterText = ConvertTo-RBAC4AppRecipientFilter @filterArgs
+                $result.ManagementScopeFilter = $scopeFilterText
+                $scopeResult = New-RBAC4AppManagementScope -Name $scopeName -RecipientRestrictionFilter $scopeFilterText
+                $result.ManagementScopeExisted = [bool]$scopeResult.AlreadyExisted
+                $result.ManagementScopeCreated = [bool]$scopeResult.Created
+                $result.ManagementScopeUpdated = [bool]$scopeResult.FilterUpdated
+                $filterInSync = Test-RBAC4AppRecipientFilterEqual -Reference $scopeResult.PreviousFilter -Difference $scopeFilterText
+                $scopeOk = $result.ManagementScopeCreated -or $result.ManagementScopeUpdated -or
+                    ($result.ManagementScopeExisted -and $filterInSync)
+            }
+            catch {
+                $result.Errors += "Failed to reconcile management scope '$scopeName': $($_.Exception.Message)"
+            }
 
             # --- Role assignments: ensure one per role, scoped to the target group.
             $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }
@@ -437,22 +565,32 @@ function Set-RBAC4AppEntry {
                 $rbacName = Get-SafeName -s ("{0}-{1}" -f $shortRoleName, $sp.DisplayName) -max 63
 
                 try {
-                    $existing = Get-ManagementRoleAssignment -Identity $rbacName -ErrorAction SilentlyContinue
-                    $existingScope = if ($existing) { Resolve-RBAC4AppScopeGroupName -Assignment $existing } else { $null }
-                    $scopedToTarget = $existing -and
-                        ([string]$existing.RecipientWriteScope -in @('Group','CustomRecipientScope')) -and
-                        ([string]$existingScope -eq $targetGroup)
+                    $existing = Get-ManagementRoleAssignment -Identity $rbacName -ErrorAction SilentlyContinue | Select-Object -First 1
+                    $scopeState = if ($existing) {
+                        Get-RBAC4AppAssignmentScopeState -Assignment $existing -ManagementScopeName $scopeName -LegacyGroupName $currentGroup
+                    }
 
-                    if ($existing -and $scopedToTarget) {
+                    if ($existing -and $scopeState.State -eq 'Target') {
                         # Already in desired state.
                         $result.RoleAssignmentsUnchanged += $rbacName
                     }
+                    elseif (-not $scopeOk -and -not $WhatIfPreference) {
+                        $result.Warnings += "Role assignment '$rbacName' was not reconciled because management scope '$scopeName' is not in the desired state."
+                        $rolesAllSatisfied = $false
+                    }
                     elseif ($existing) {
-                        # Exists but scoped elsewhere (repair / group change): re-scope by recreating.
-                        $action = "Re-scope role '$roleItem' for App '$($sp.DisplayName)' to '$targetGroup'"
+                        # Exists but bound elsewhere (legacy direct group scope, or another scope):
+                        # re-point it at the management scope in place; fall back to remove+recreate.
+                        $action = "Re-scope role '$roleItem' for App '$($sp.DisplayName)' from '$($scopeState.CurrentScope)' to management scope '$scopeName'"
                         if ($PSCmdlet.ShouldProcess($rbacName, $action)) {
-                            Remove-ManagementRoleAssignment -Identity $rbacName -Confirm:$false -ErrorAction Stop
-                            $null = New-ManagementRoleAssignment -App $sp.Id -Role $roleItem -RecipientGroupScope $targetGroup -Name $rbacName -ErrorAction Stop
+                            try {
+                                Set-ManagementRoleAssignment -Identity $rbacName -CustomResourceScope $scopeName -Confirm:$false -ErrorAction Stop
+                            }
+                            catch {
+                                Write-Verbose -Message ("Set-ManagementRoleAssignment failed for '{0}' ({1}); removing and recreating it." -f $rbacName, $_.Exception.Message)
+                                Remove-ManagementRoleAssignment -Identity $rbacName -Confirm:$false -ErrorAction Stop
+                                $null = New-ManagementRoleAssignment -App $sp.Id -Role $roleItem -CustomResourceScope $scopeName -Name $rbacName -ErrorAction Stop
+                            }
                             $result.RoleAssignmentsRescoped += $rbacName
                         }
                         else {
@@ -461,9 +599,9 @@ function Set-RBAC4AppEntry {
                     }
                     else {
                         # Missing: create.
-                        $action = "Assign '$roleItem' to App '$($sp.DisplayName)' scoped to '$targetGroup'"
+                        $action = "Assign '$roleItem' to App '$($sp.DisplayName)' scoped to management scope '$scopeName'"
                         if ($PSCmdlet.ShouldProcess($rbacName, $action)) {
-                            $null = New-ManagementRoleAssignment -App $sp.Id -Role $roleItem -RecipientGroupScope $targetGroup -Name $rbacName -ErrorAction Stop
+                            $null = New-ManagementRoleAssignment -App $sp.Id -Role $roleItem -CustomResourceScope $scopeName -Name $rbacName -ErrorAction Stop
                             $result.RoleAssignmentsCreated += $rbacName
                         }
                         else {
@@ -478,9 +616,9 @@ function Set-RBAC4AppEntry {
             }
 
             # IsValid: every component is present after this run (true unchanged state, or actually applied).
-            $groupOk = $result.ScopeGroupExisted -or $result.ScopeGroupCreated
+            $groupOk = ($ScopeKind -ne 'Group') -or $result.ScopeGroupExisted -or $result.ScopeGroupCreated
             $exoOk   = $result.ExoServicePrincipalExisted -or $result.ExoServicePrincipalCreated
-            $result.IsValid = ($result.Errors.Count -eq 0) -and $groupOk -and $exoOk -and $rolesAllSatisfied
+            $result.IsValid = ($result.Errors.Count -eq 0) -and $groupOk -and $exoOk -and $scopeOk -and $rolesAllSatisfied
 
             [pscustomobject]$result
         }

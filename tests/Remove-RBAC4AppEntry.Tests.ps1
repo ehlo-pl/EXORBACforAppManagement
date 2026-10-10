@@ -18,13 +18,15 @@ BeforeAll {
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-DistributionGroupMember { [CmdletBinding()] param([string]$Identity) }
     function global:Remove-DistributionGroup { [CmdletBinding(SupportsShouldProcess)] param([string]$Identity) }
+    function global:Get-ManagementScope { [CmdletBinding()] param([string]$Identity) }
+    function global:Remove-ManagementScope { [CmdletBinding(SupportsShouldProcess)] param([string]$Identity) }
 
     $script:ExoSp = [pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111'; ObjectId = '22222222-2222-2222-2222-222222222222' }
 }
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-ConnectionInformation','Get-ServicePrincipal','Get-UnifiedGroup','Get-ManagementRoleAssignment','Get-UnifiedGroupLinks','Remove-ManagementRoleAssignment','Remove-UnifiedGroup','Get-Recipient','Get-DistributionGroup','Get-DistributionGroupMember','Remove-DistributionGroup') {
+    foreach ($n in 'Get-ConnectionInformation','Get-ServicePrincipal','Get-UnifiedGroup','Get-ManagementRoleAssignment','Get-UnifiedGroupLinks','Remove-ManagementRoleAssignment','Remove-UnifiedGroup','Get-Recipient','Get-DistributionGroup','Get-DistributionGroupMember','Remove-DistributionGroup','Get-ManagementScope','Remove-ManagementScope') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -49,9 +51,11 @@ Describe 'Remove-RBAC4AppEntry' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @([pscustomobject]@{ PrimarySmtpAddress = $null; Name = 'GraphAPI-Dummy' }) }
         Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
         Mock -ModuleName EXORBACforAppManagement Remove-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { [pscustomobject]@{ Name = 'MSRAo1P-Contoso'; RecipientFilter = "MemberOfGroup -eq 'CN=g,DC=prod'" } }
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementScope { }
     }
 
-    It 'removes own assignments and the group when clean' {
+    It 'removes own assignments, the management scope and the group when clean' {
         $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
 
         $r.IsRemoved | Should -BeTrue
@@ -60,8 +64,55 @@ Describe 'Remove-RBAC4AppEntry' {
         $r.ForeignAssignments | Should -BeNullOrEmpty
         $r.AssignmentsRemoved | Should -Be @('AppMailSend-Contoso')
         $r.GroupRemoved | Should -BeTrue
+        $r.ManagementScopeName | Should -Be 'MSRAo1P-Contoso'
+        $r.ManagementScopeExisted | Should -BeTrue
+        $r.ManagementScopeRemoved | Should -BeTrue
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment -Times 1
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementScope -Times 1 -ParameterFilter { $Identity -eq 'MSRAo1P-Contoso' }
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 1
+    }
+
+    It 'removes an assignment bound to the management scope (-CustomResourceScope)' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @([pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' })
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeTrue
+        $r.AssignmentsRemoved | Should -Be @('AppMailSend-Contoso')
+        $r.ManagementScopeRemoved | Should -BeTrue
+    }
+
+    It 'aborts when a foreign assignment is bound to the management scope' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @(
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' },
+                [pscustomobject]@{ Name = 'AppMailRead-Other'; Role = 'Application Mail.Read'; RoleAssigneeName = 'OtherApp_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' }
+            )
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeFalse
+        $r.ForeignAssignments | Should -Be @('AppMailRead-Other')
+        $r.Reason | Should -Match 'MSRAo1P-Contoso'
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementScope -Times 0
+    }
+
+    It 'tears down a -ScopeKind Recipients setup without touching any group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @([pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' })
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -ScopeKind Recipients -Confirm:$false
+
+        $r.IsRemoved | Should -BeTrue
+        $r.ScopeGroupName | Should -BeNullOrEmpty
+        $r.ManagementScopeRemoved | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement Get-UnifiedGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
     }
 
     It 'aborts when a foreign assignment is scoped to the group' {
@@ -168,6 +219,8 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
         Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
         Mock -ModuleName EXORBACforAppManagement Remove-UnifiedGroup { }
         Mock -ModuleName EXORBACforAppManagement Remove-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { throw 'not found' }
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementScope { }
     }
 
     It 'MailEnabledSecurityGroup: detaches assignments but never deletes the group, even with a foreign assignment' {
@@ -188,6 +241,24 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-DistributionGroup -Times 0
+    }
+
+    It 'MailEnabledSecurityGroup: leaves the management scope in place while a foreign assignment uses it' {
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ DisplayName = 'OnPrem-Scope'; ManagedBy = @() } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { [pscustomobject]@{ Name = 'MSRAo1P-Contoso' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @(
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' },
+                [pscustomobject]@{ Name = 'AppMailRead-Other'; Role = 'Application Mail.Read'; RoleAssigneeName = 'OtherApp_SP'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' }
+            )
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -Confirm:$false
+
+        $r.AssignmentsRemoved | Should -Be @('AppMailSend-Contoso')
+        $r.ManagementScopeRemoved | Should -BeFalse
+        ($r.Warnings -join ';') | Should -Match 'still used'
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementScope -Times 0
     }
 
     It 'DistributionList: removes the group with Remove-DistributionGroup, not Remove-UnifiedGroup' {

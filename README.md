@@ -2,7 +2,9 @@
 
 A PowerShell module for governing **Exchange Online (EXO) Role-Based Access Control for Entra
 (Azure AD) applications**. It registers applications, assigns resource-scoped EXO *Application*
-role permissions (e.g. `Application Mail.Send`) scoped to a Microsoft 365 group, and reads those
+role permissions (e.g. `Application Mail.Send`) bound to a named Exchange Online **management scope**
+(built from a scope group's members, an explicit mailbox list, a CustomAttribute tag, or a raw OPATH
+filter), and reads those
 assignments back.
 
 The three functions form a **create → assign → read** flow and share the same
@@ -11,7 +13,8 @@ The three functions form a **create → assign → read** flow and share the sam
 | Function | Step | What it does |
 | --- | --- | --- |
 | [`New-RegisteredApp`](#new-registeredapp) | create | Creates an Entra app registration and (by default) its service principal. NOTE: required high privledges, I use it only in testing environment - as on production it's covered by separation of duty and done by 3rd party to my team pipeline |
-| [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Creates a scoped Unified Group, ensures the EXO service principal, and assigns EXO Application roles scoped to that group. |
+| [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Ensures the scope source (group, recipients, tag, or filter), the management scope, the EXO service principal, and assigns EXO Application roles bound to that management scope. |
+| `New-RBAC4AppManagementScope` | helper | Ensures an EXO management scope exists with a given `RecipientRestrictionFilter` (creates, updates on drift, or leaves an equivalent one alone; `-NoUpdate` only warns). |
 | [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read / inventory | Lists the EXO Application-role assignments, each resolved to its AppId/ServicePrincipalId and scope group name/type/members; `-ByApplication` groups them into one row per application. |
 | `Get-RegisteredAppWithPermission` | *(deprecated)* | Thin wrapper around `Get-RBAC4AppEntry -ByApplication -ScopeType All`; use the latter directly. |
 | [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, Unified Group, EXO service principal, role assignments) and returns an `IsValid` summary. |
@@ -38,7 +41,7 @@ The three functions form a **create → assign → read** flow and share the sam
     `New-RBAC4AppEntry` itself: `Get-ServicePrincipal` resolves the application (matching the
     pointer `Register-EXOServicePrincipal` creates — no Graph lookup), `Get-ConnectionInformation`
     reads the tenant id / current user, plus the usual `Get-UnifiedGroup`, `New-UnifiedGroup`,
-    `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`, `New-ServicePrincipal`, `Get-Recipient`,
+    `Set-UnifiedGroup`, `Add-UnifiedGroupLinks`, `New-ServicePrincipal`, `Get-Recipient`, `Get-ManagementScope`, `New-ManagementScope`, `Set-ManagementScope`, `Remove-ManagementScope`,
     `New-ManagementRoleAssignment`, `Get-ManagementRoleAssignment`.
 
 ### Per-function module requirements
@@ -55,12 +58,13 @@ needs no Graph session, working around the MSAL/WAM assembly conflict between `M
 | `New-RBAC4AppConfig` | `Get-MgServicePrincipal` `Get-MgContext` | — |
 | `New-RBAC4AppUnifiedGroup` | — | `Get-UnifiedGroup` `New-UnifiedGroup` `Set-UnifiedGroup` `Get-Recipient` `Get-ConnectionInformation` *(debug trace only)* |
 | `New-RBAC4AppDistributionGroup` | — | `Get-DistributionGroup` `New-DistributionGroup` `Set-DistributionGroup` `Get-Recipient` |
+| `New-RBAC4AppManagementScope` | — | `Get-ManagementScope` `New-ManagementScope` `Set-ManagementScope` |
 | `Register-EXOServicePrincipal` | — | `Get-ServicePrincipal` `New-ServicePrincipal` *(skips creation if one already matches by AppId/DisplayName)* |
 | `New-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(resolves the app via `Get-ServicePrincipal`, or bootstraps a never-before-registered pointer when `-AppId`, `-SpObjectId`, and `-RegisteredAppName` are all supplied; skips a role assignment already scoped to the target group; + delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
 | `Set-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` *(same bootstrap fallback as `New-RBAC4AppEntry` when the pointer doesn't exist yet)* |
 | `Test-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` |
 | `Remove-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
-| `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` *(resolves the assignee to AppId/ServicePrincipalId via `Get-ServicePrincipal`, and each scope group's name from CustomResourceScope/CustomRecipientWriteScope plus its type and membership, cached per run; `-ByApplication` groups the same data per application)* |
+| `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementScope` `Get-Recipient` *(resolves the assignee to AppId/ServicePrincipalId via `Get-ServicePrincipal`, and each management scope to its `ScopeKind`/`ScopeFilter` and members - group membership for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter` preview for Tag/Filter kinds; legacy group-direct assignments report `ScopeKind` `GroupDirect`; cached per run; `-ByApplication` groups the same data per application)* |
 | `Get-RegisteredAppWithPermission` *(deprecated)* | — | Delegates entirely to `Get-RBAC4AppEntry -ByApplication -ScopeType All` |
 | `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(+ all EXO cmdlets used by `New-RBAC4AppEntry`, which it calls with the SP identity it already resolved via Graph)* |
 | `Invoke-RBAC4AppConfig` | — | `Get-ServicePrincipal` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`, same as `New-RBAC4AppEntry`)* |
@@ -137,7 +141,7 @@ The same schema applies verbatim to the JSON format (see
 ```yaml
 # RBAC4App configuration — generated by New-RBAC4AppConfig
 # Feed to Invoke-RBAC4AppConfig in a session with only ExchangeOnlineManagement connected.
-SchemaVersion: "3.0"
+SchemaVersion: "4.0"
 GeneratedAt: "2026-09-20T10:30:00Z"
 TenantId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
@@ -159,9 +163,18 @@ RbacScope:
   ManagedBy:
     - GraphAPI-Dummy-owner
   BootstrapMember: GraphAPI-Dummy
+  ScopeKind: Group                    # Group (default) | Recipients | Tag | Filter
+  ManagementScopeName: ""             # explicit scope name; mutually exclusive with ManagementScopePrefix
+  ManagementScopePrefix: MSRAo1P      # scope name = "{prefix}-{DisplayName}"
+  ScopeRecipients: []                 # required for ScopeKind Recipients (list of mailboxes/UPNs)
+  ScopeTagAttribute: CustomAttribute1 # Tag kind
+  ScopeTagValue: ""                   # Tag kind; defaults to the scope name
+  ScopeFilter: ""                     # required for ScopeKind Filter (raw OPATH)
 ```
 
-`SchemaVersion` must be `"3.0"`: `Invoke-RBAC4AppConfig` refuses an older config (e.g. a `"2.0"` file
+`SchemaVersion` must be `"4.0"` or `"3.0"`. A `"3.0"` file (no scope keys) is treated as
+`ScopeKind: Group` with the default `MSRAo1P` prefix, so it now also provisions a management scope.
+`Invoke-RBAC4AppConfig` refuses an older config (e.g. a `"2.0"` file
 where `RbacScope.ManagedBy` is still a single scalar value rather than a list) with an error pointing
 back at `New-RBAC4AppConfig` to regenerate it.
 
@@ -228,8 +241,11 @@ Resolves the application against the Exchange Online service principal pointer a
 for it (by `-RegisteredAppName`, `-AppId`, or `-SpObjectId` — no Microsoft Graph session needed),
 creates a scoped group named `"{GroupPrefix}-{DisplayName}"` (a distribution list by default; see
 [Choosing the scope group type](#choosing-the-scope-group-type--accessgrouptype-) below), adds
-members, ensures the EXO service principal, and creates one role assignment per role — each scoped
-to the group via `-RecipientGroupScope`. Short role names such as `Mail.Send` are normalized to
+members, ensures the EXO service principal, ensures a management scope (default name
+`"MSRAo1P-{DisplayName}"`) whose `RecipientRestrictionFilter` targets that group's members, and
+creates one role assignment per role — each bound to the management scope via
+`-CustomResourceScope`. See [Choosing the scope kind](#choosing-the-scope-kind--scopekind-) for
+scoping to specific mailboxes, a tag, or a raw filter instead of a group. Short role names such as `Mail.Send` are normalized to
 `Application Mail.Send`.
 
 ```powershell
@@ -259,6 +275,44 @@ This works transparently when piped straight from `New-RegisteredApp` — its ou
 / `AppId` / `ServicePrincipalId` properties bind to all three by name. Otherwise, use
 `New-RBAC4AppConfig` + `Invoke-RBAC4AppConfig` (see [Two-session workflow](#two-session-workflow)).
 `Set-RBAC4AppEntry` accepts the same three-identifier bootstrap.
+
+#### Choosing the scope kind (`-ScopeKind`)
+
+Role assignments are never bound to a group directly; they always point at a named management scope
+(`New-ManagementScope -RecipientRestrictionFilter`, then `New-ManagementRoleAssignment
+-CustomResourceScope`). `-ScopeKind` decides how that scope's filter is built:
+
+| `-ScopeKind` | Filter | Group created? | Extra parameters |
+| --- | --- | --- | --- |
+| `Group` (default) | `MemberOfGroup -eq '<group DN>'` (direct members only) | yes, per `-AccessGroupType` | `-AccessGroupType`, `-AccessGroupName`, `-GroupPrefix`, `-Members`, `-ManagedBy`, `-BootstrapMember` |
+| `Recipients` | `(PrimarySmtpAddress -eq 'a@x') -or ...` | no | `-ScopeRecipients` (required; each is resolved via `Get-Recipient`) |
+| `Tag` | `<CustomAttributeN> -eq '<value>'` | no | `-ScopeTagAttribute` (default `CustomAttribute1`), `-ScopeTagValue` (default: the scope name). The module does **not** stamp the attribute on mailboxes. |
+| `Filter` | the raw OPATH you pass | no | `-ScopeFilter` (required) |
+
+The scope name defaults to `"{ManagementScopePrefix}-{DisplayName}"` (prefix `MSRAo1P`); pass
+`-ManagementScopeName` (max 64 chars) to override it. Group-only parameters passed with a non-Group
+kind are ignored with a warning. An existing scope with an equivalent filter is left alone; a
+drifted one is updated via `Set-ManagementScope`.
+
+```powershell
+# Specific mailboxes, no group at all:
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -ScopeKind Recipients `
+    -ScopeRecipients 'shared1@contoso.com','shared2@contoso.com' -Role 'Mail.Send'
+
+# Every mailbox tagged CustomAttribute7 = ContosoMailApp:
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -ScopeKind Tag `
+    -ScopeTagAttribute CustomAttribute7 -ScopeTagValue 'ContosoMailApp' -Role 'Mail.Send'
+
+# Raw OPATH filter with a custom scope name:
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -ScopeKind Filter `
+    -ScopeFilter "Department -eq 'Finance'" -ManagementScopeName 'Finance-MailApp' -Role 'Mail.Send'
+```
+
+**Migrating legacy assignments.** Assignments created by earlier versions (bound directly to the
+group via `-RecipientGroupScope`) are reported by `Get-RBAC4AppEntry` with `ScopeKind` `GroupDirect`.
+`New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn about them but leave them alone; run
+`Set-RBAC4AppEntry` to re-bind them to the management scope. `Test-RBAC4AppEntry` reports them as
+not valid, and `Remove-RBAC4AppEntry` also removes the management scope once nothing else uses it.
 
 #### Choosing the scope group type (`-AccessGroupType`)
 
@@ -306,7 +360,9 @@ Returns EXO management role assignments for Application roles (`Application *`).
 it returns all of them; filter by application and/or role, plus optional `-Enabled`,
 `-RoleAssigneeType`, and `-ScopeType`. Every row resolves the assignee back to its Exchange Online
 service principal pointer (`Get-ServicePrincipal`) to expose `AppId`/`ServicePrincipalId`, and
-resolves its recipient scope to the real scope group name, group type, and current membership.
+resolves its recipient scope to the management scope name (`ManagementScope`), its `ScopeKind`
+(`Group`/`Recipients`/`Tag`/`Filter`, or `GroupDirect` for a legacy group-bound assignment),
+`ScopeFilter`, and - for group kinds - the scope group name, type, and current membership.
 The raw `EffectiveUserName`/`App` fields from `Get-ManagementRoleAssignment` are also passed
 through as-is - Exchange Online typically leaves both blank/placeholder for application-role
 assignments, but they're surfaced for completeness rather than dropped.
@@ -326,7 +382,7 @@ Get-RBAC4AppEntry -ByApplication                                  # one row per 
 
 `-ByApplication` returns the app-centric inventory view instead — one row per distinct registered
 application, aggregating that application's roles, assignment names, and resolved scope group
-names/members onto a single object. This is the former `Get-RegisteredAppWithPermission` function,
+names/members (plus `ManagementScopeNames`/`ScopeKinds`) onto a single object. This is the former `Get-RegisteredAppWithPermission` function,
 now merged in as a switch.
 
 ```powershell
@@ -447,8 +503,9 @@ Get-ChildItem C:\rbac-configs\*.yml, C:\rbac-configs\*.json | Invoke-RBAC4AppCon
 src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
-  Public/                        # 13 exported functions (see table above)
-  Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole, ConvertTo/From-RBAC4AppYaml
+  Public/                        # 14 exported functions (see table above)
+  Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole, ConvertTo/From-RBAC4AppYaml,
+                                 # ConvertTo/From-RBAC4AppRecipientFilter, Get-RBAC4AppManagementScopeName, ...
 tests/                           # Pester v5 tests
 build.ps1                        # Init / Clean / Analyze / Test / Build
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)

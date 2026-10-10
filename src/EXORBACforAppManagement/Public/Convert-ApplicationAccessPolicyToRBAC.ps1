@@ -11,9 +11,10 @@ For each RestrictAccess policy it resolves the Entra service principal, derives 
 Exchange Online application roles from the app's granted Microsoft Graph application
 permissions (filtered to the set that Application Access Policies supported and mapped to
 their App RBAC role names via the private Get-LegacyScopeRoleMap), copies the members of
-the original policy scope group, and calls New-RBAC4AppEntry to create a new scoped
-Unified Group and the matching role assignments. DenyAccess policies have no additive RBAC
-equivalent and are skipped with a warning.
+the original policy scope group, and calls New-RBAC4AppEntry (ScopeKind Group) to create a new
+scope group, a management scope over that group's members, and the matching role assignments
+bound to the management scope. DenyAccess policies have no additive RBAC equivalent and are
+skipped with a warning.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess; -WhatIf
 propagates into the delegated New-RBAC4AppEntry call.

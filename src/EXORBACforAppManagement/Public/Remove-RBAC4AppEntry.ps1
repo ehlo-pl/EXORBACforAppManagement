@@ -7,17 +7,21 @@ application.
 Remove-RBAC4AppEntry is the teardown counterpart to New-RBAC4AppEntry. It resolves an Entra
 application / service principal (by display name, AppId, or service principal object id), derives the
 scoped Unified Group name the same way New-RBAC4AppEntry does ("{GroupPrefix}-{DisplayName}",
-sanitized via Get-SafeName), and removes:
+sanitized via Get-SafeName) and the management scope name ("{ManagementScopePrefix}-{DisplayName}"
+or -ManagementScopeName), and removes, in order:
 
-  1. the Exchange Online management role assignments scoped to that group that belong to this
-     application, and
-  2. the scoped Unified Group itself.
+  1. this application's Exchange Online management role assignments bound to that management scope
+     (-CustomResourceScope) or - for assignments created before 0.7.0 - directly to the scope group
+     (legacy -RecipientGroupScope),
+  2. the management scope itself (skipped while another identity's assignment still uses it), and
+  3. for -ScopeKind Group, the scope group itself (never a MailEnabledSecurityGroup).
 
 Before removing anything the function runs two safety checks and ABORTS (removing nothing) if either
 fails:
 
-  * Foreign role assignments - if any management role assignment scoped to the group resolves to a
-    DIFFERENT identity than this service principal, the group is still in use and removal is refused.
+  * Foreign role assignments - if any management role assignment bound to the management scope or
+    scoped to the group resolves to a DIFFERENT identity than this service principal, the scope is
+    still in use and removal is refused.
   * Real members - if the group has any member other than the bootstrap placeholder
     (-BootstrapMember, default 'GraphAPI-Dummy'), the group is still in use and removal is refused.
 
@@ -55,6 +59,16 @@ MailEnabledSecurityGroup is on-prem/hybrid-synced and is NEVER deleted by this f
 this application's role assignments are detached; a DistributionList is removed with
 Remove-DistributionGroup.
 
+.PARAMETER ScopeKind
+Kind of management scope that was provisioned (Group default, Recipients, Tag, Filter). Only Group
+has a backing scope group to tear down; the filter parameters are not needed for removal.
+
+.PARAMETER ManagementScopeName
+Explicit management scope name. Cannot be combined with -ManagementScopePrefix.
+
+.PARAMETER ManagementScopePrefix
+Prefix of the generated management scope name "{Prefix}-{DisplayName}". Default 'MSRAo1P'.
+
 .PARAMETER BootstrapMember
 Bootstrap placeholder member to ignore when deciding whether the group has real members. Defaults to
 'GraphAPI-Dummy' (matching New-RBAC4AppEntry).
@@ -76,13 +90,13 @@ PSCustomObject
 
 A summary object with the resolved identity, the Unified Group name and whether it existed, the
 assignments scoped to the group partitioned into own/foreign, the real members found, what was
-removed (AssignmentsRemoved, GroupRemoved), an overall IsRemoved flag, a Reason when removal was
+removed (AssignmentsRemoved, ManagementScopeRemoved, GroupRemoved), an overall IsRemoved flag, a Reason when removal was
 refused or skipped, and any Warnings/Errors.
 
 .NOTES
 Requires a connected Exchange Online session only (Get-ServicePrincipal, Get-ConnectionInformation,
-Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-ManagementRoleAssignment,
-Remove-ManagementRoleAssignment, Remove-UnifiedGroup). No Microsoft Graph session is needed; the
+Get-UnifiedGroup, Get-UnifiedGroupLinks, Get-ManagementScope, Get-ManagementRoleAssignment,
+Remove-ManagementRoleAssignment, Remove-ManagementScope, Remove-UnifiedGroup). No Microsoft Graph session is needed; the
 application is resolved against the Exchange Online service principal pointer already registered
 via Register-EXOServicePrincipal, New-RBAC4AppEntry, or Invoke-RBAC4AppConfig. Inverse of
 New-RBAC4AppEntry; the safe companion to Test-RBAC4AppEntry.
@@ -119,7 +133,19 @@ function Remove-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $BootstrapMember = 'GraphAPI-Dummy'
+        [string] $BootstrapMember = 'GraphAPI-Dummy',
+
+        [Parameter()]
+        [ValidateSet('Group', 'Recipients', 'Tag', 'Filter')]
+        [string] $ScopeKind = 'Group',
+
+        [Parameter()]
+        [ValidateLength(1, 64)]
+        [string] $ManagementScopeName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ManagementScopePrefix = 'MSRAo1P'
     )
 
     begin {
@@ -144,7 +170,11 @@ function Remove-RBAC4AppEntry {
             AppId               = $null
             SpObjectId          = $null
             TenantId            = $tenantid
-            AccessGroupType     = $AccessGroupType
+            ScopeKind           = $ScopeKind
+            AccessGroupType     = if ($ScopeKind -eq 'Group') { $AccessGroupType } else { $null }
+            ManagementScopeName    = $null
+            ManagementScopeExisted = $false
+            ManagementScopeRemoved = $false
             ScopeGroupName      = $null
             ScopeGroupExisted   = $false
             AssignmentsScoped   = @()
@@ -160,6 +190,13 @@ function Remove-RBAC4AppEntry {
         }
 
         try {
+            if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+                throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
+            }
+            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
+                $result.Warnings += $ignoredMsg
+            }
+
             # --- Resolve the service principal depending on parameter set.
             $sp = $null
             switch ($PSCmdlet.ParameterSetName) {
@@ -183,30 +220,47 @@ function Remove-RBAC4AppEntry {
             $result.AppId           = $sp.AppId
             $result.SpObjectId      = $sp.Id
 
-            # --- Scope group name (same rule as New-RBAC4AppEntry; read cmdlet per type).
-            if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
-                $umGroupName = $AccessGroupName
-            }
-            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
-            }
-            else {
-                $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
-            }
-            $result.ScopeGroupName = $umGroupName
+            # --- Scope group name (same rule as New-RBAC4AppEntry; read cmdlet per type). Only
+            # relevant for -ScopeKind Group; other kinds have no backing group.
+            $umGroupName = $null
+            $group = $null
+            $isMesg = ($ScopeKind -eq 'Group' -and $AccessGroupType -eq 'MailEnabledSecurityGroup')
+            if ($ScopeKind -eq 'Group') {
+                if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
+                    $umGroupName = $AccessGroupName
+                }
+                elseif ($isMesg) {
+                    throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+                }
+                else {
+                    $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+                }
+                $result.ScopeGroupName = $umGroupName
 
-            $group = switch ($AccessGroupType) {
-                'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
-                'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
-                default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                $group = switch ($AccessGroupType) {
+                    'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                    'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
+                    default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                }
+                $result.ScopeGroupExisted = [bool]$group
             }
-            $result.ScopeGroupExisted = [bool]$group
 
-            # --- Assignments scoped to the group (client-side filter: no -App on the EXO cmdlet).
+            # --- Management scope (same name rule as New-RBAC4AppEntry).
+            $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $sp.DisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
+            $result.ManagementScopeName = $scopeName
+            $scopeObj = $null
+            try { $scopeObj = Get-ManagementScope -Identity $scopeName -ErrorAction Stop | Select-Object -First 1 }
+            catch { Write-Verbose -Message "Management scope '$scopeName' not found: $($_.Exception.Message)" }
+            $result.ManagementScopeExisted = [bool]$scopeObj
+
+            # --- Assignments bound to the management scope, or (legacy) directly to the scope group.
+            # Client-side filter: there is no -App/-CustomResourceScope filter on the EXO cmdlet.
+            $scopeStates = @{}
             $scoped = @(Get-ManagementRoleAssignment -ErrorAction SilentlyContinue) | Where-Object {
-                $_ -and
-                ([string]$_.RecipientWriteScope -in @('Group','CustomRecipientScope')) -and
-                ([string](Resolve-RBAC4AppScopeGroupName -Assignment $_) -eq $umGroupName)
+                if (-not $_) { return $false }
+                $st = (Get-RBAC4AppAssignmentScopeState -Assignment $_ -ManagementScopeName $scopeName -LegacyGroupName $umGroupName).State
+                $scopeStates[[string]$_.Name] = $st
+                $st -in @('Target', 'LegacyGroup')
             }
             $result.AssignmentsScoped = @($scoped | ForEach-Object { [string]$_.Name })
 
@@ -225,6 +279,7 @@ function Remove-RBAC4AppEntry {
             }
             $result.OwnAssignments     = @($own | ForEach-Object { [string]$_.Name })
             $result.ForeignAssignments = @($foreign | ForEach-Object { [string]$_.Name })
+            $foreignOnScope = @($foreign | Where-Object { $scopeStates[[string]$_.Name] -eq 'Target' })
 
             # --- Real members (ignore the bootstrap placeholder).
             $realMembers = @()
@@ -245,45 +300,21 @@ function Remove-RBAC4AppEntry {
             }
             $result.RealMembers = @($realMembers)
 
-            # --- MailEnabledSecurityGroup: never delete the group (it is on-prem/hybrid-synced and
-            # mastered on-premises). Detach only this app's own role assignments and leave the group
-            # in place; the foreign-assignment / real-member safety gate does not apply because no
-            # group deletion is attempted.
-            if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                $removedAny = $false
-                foreach ($a in $own) {
-                    $name = [string]$a.Name
-                    if ($PSCmdlet.ShouldProcess($name, 'Remove-ManagementRoleAssignment')) {
-                        try {
-                            Remove-ManagementRoleAssignment -Identity $name -Confirm:$false -ErrorAction Stop
-                            $result.AssignmentsRemoved += $name
-                            $removedAny = $true
-                        }
-                        catch {
-                            $result.Errors += "Failed to remove role assignment '$name': $($_.Exception.Message)"
-                        }
-                    }
-                }
-                $result.Reason = "MailEnabledSecurityGroup '$umGroupName' is on-prem/hybrid-synced and was left in place; only this application's role assignments were detached."
-                $result.IsRemoved = ($result.Errors.Count -eq 0) -and $removedAny
-                if (-not $result.IsRemoved -and $WhatIfPreference) {
-                    $result.Reason = 'WhatIf: no changes were made.'
-                }
-                return [pscustomobject]$result
-            }
-
-            # --- Safety gate: abort (remove nothing) when the group is still in use.
-            if ($foreign.Count -gt 0 -or $realMembers.Count -gt 0) {
+            # --- Safety gate: abort (remove nothing) when the group / scope is still in use. A
+            # MailEnabledSecurityGroup is exempt: it is on-prem/hybrid-synced and never deleted, so
+            # only this app's assignments (and the scope, when unused) are detached.
+            if (-not $isMesg -and ($foreign.Count -gt 0 -or $realMembers.Count -gt 0)) {
+                $target = if ($umGroupName) { "'$umGroupName' / management scope '$scopeName'" } else { "management scope '$scopeName'" }
                 $parts = @()
-                if ($foreign.Count -gt 0)     { $parts += "$($foreign.Count) foreign role assignment(s) scoped to the group" }
+                if ($foreign.Count -gt 0)     { $parts += "$($foreign.Count) foreign role assignment(s) scoped to it" }
                 if ($realMembers.Count -gt 0) { $parts += "$($realMembers.Count) member(s) beyond the '$BootstrapMember' placeholder" }
-                $result.Reason = "Refusing to remove '$umGroupName': it is still in use ($($parts -join '; '))."
+                $result.Reason = "Refusing to remove $target`: it is still in use ($($parts -join '; '))."
                 $result.IsRemoved = $false
                 Write-Warning -Message $result.Reason
                 return [pscustomobject]$result
             }
 
-            # --- Safe path: remove this app's assignments, then the group (remove cmdlet per type).
+            # --- Remove this app's assignments first (EXO refuses to delete a scope still in use).
             $removedAny = $false
             foreach ($a in $own) {
                 $name = [string]$a.Name
@@ -299,29 +330,63 @@ function Remove-RBAC4AppEntry {
                 }
             }
 
-            $groupRemoveAction = if ($AccessGroupType -eq 'DistributionList') { 'Remove-DistributionGroup' } else { 'Remove-UnifiedGroup' }
-            if (-not $group) {
-                $result.Warnings += "$AccessGroupType '$umGroupName' did not exist; only role assignments (if any) were processed."
-            }
-            elseif ($PSCmdlet.ShouldProcess($umGroupName, $groupRemoveAction)) {
-                try {
-                    if ($AccessGroupType -eq 'DistributionList') {
-                        Remove-DistributionGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
-                    }
-                    else {
-                        Remove-UnifiedGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
-                    }
-                    $result.GroupRemoved = $true
-                    $removedAny = $true
+            # --- Then the management scope, unless another identity's assignment still uses it.
+            if ($scopeObj) {
+                if ($foreignOnScope.Count -gt 0) {
+                    $result.Warnings += "Management scope '$scopeName' is still used by $($foreignOnScope.Count) foreign role assignment(s) and was left in place."
                 }
-                catch {
-                    $result.Errors += "Failed to remove $AccessGroupType '$umGroupName': $($_.Exception.Message)"
+                elseif ($result.Errors.Count -gt 0) {
+                    $result.Warnings += "Management scope '$scopeName' was left in place because removing role assignments failed."
+                }
+                elseif ($PSCmdlet.ShouldProcess($scopeName, 'Remove-ManagementScope')) {
+                    try {
+                        Remove-ManagementScope -Identity $scopeName -Confirm:$false -ErrorAction Stop
+                        $result.ManagementScopeRemoved = $true
+                        $removedAny = $true
+                    }
+                    catch {
+                        $result.Errors += "Failed to remove management scope '$scopeName': $($_.Exception.Message)"
+                    }
                 }
             }
 
-            # IsRemoved is true only when the group is gone (or never existed) and no errors occurred.
+            # --- Finally the scope group (Group kind only; a MailEnabledSecurityGroup is never deleted).
+            if ($isMesg) {
+                $result.Reason = "MailEnabledSecurityGroup '$umGroupName' is on-prem/hybrid-synced and was left in place; only this application's role assignments and management scope were detached."
+                $result.IsRemoved = ($result.Errors.Count -eq 0) -and $removedAny
+                if (-not $result.IsRemoved -and $WhatIfPreference) {
+                    $result.Reason = 'WhatIf: no changes were made.'
+                }
+                return [pscustomobject]$result
+            }
+
+            if ($ScopeKind -eq 'Group') {
+                $groupRemoveAction = if ($AccessGroupType -eq 'DistributionList') { 'Remove-DistributionGroup' } else { 'Remove-UnifiedGroup' }
+                if (-not $group) {
+                    $result.Warnings += "$AccessGroupType '$umGroupName' did not exist; only role assignments and the management scope (if any) were processed."
+                }
+                elseif ($PSCmdlet.ShouldProcess($umGroupName, $groupRemoveAction)) {
+                    try {
+                        if ($AccessGroupType -eq 'DistributionList') {
+                            Remove-DistributionGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
+                        }
+                        else {
+                            Remove-UnifiedGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
+                        }
+                        $result.GroupRemoved = $true
+                        $removedAny = $true
+                    }
+                    catch {
+                        $result.Errors += "Failed to remove $AccessGroupType '$umGroupName': $($_.Exception.Message)"
+                    }
+                }
+            }
+
+            # IsRemoved is true only when the group and management scope are gone (or never
+            # existed / not applicable) and no errors occurred.
             $result.IsRemoved = ($result.Errors.Count -eq 0) -and
                                 ($result.GroupRemoved -or -not $group) -and
+                                ($result.ManagementScopeRemoved -or -not $scopeObj) -and
                                 $removedAny
             if (-not $result.IsRemoved -and -not $result.Reason -and $WhatIfPreference) {
                 $result.Reason = 'WhatIf: no changes were made.'

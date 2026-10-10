@@ -13,6 +13,11 @@ working around the MSAL/WAM assembly conflict that prevents both modules from co
 single session. Invoke-RBAC4AppConfig auto-detects the format from the file extension
 (.json vs .yml/.yaml).
 
+The config uses schema version 4.0: on top of the 3.0 group settings, RbacScope carries the
+management scope settings (ScopeKind, ManagementScopeName/ManagementScopePrefix, ScopeRecipients,
+ScopeTagAttribute, ScopeTagValue, ScopeFilter) that Invoke-RBAC4AppConfig uses to bind the role
+assignments to an Exchange Online management scope, exactly like New-RBAC4AppEntry.
+
 .PARAMETER RegisteredAppName
 Display name of the registered application / service principal (default parameter set).
 
@@ -47,6 +52,29 @@ One or more recipients assigned as the scope group's owners. Defaults to 'GraphA
 .PARAMETER BootstrapMember
 Initial placeholder member passed during scope group creation. Defaults to 'GraphAPI-Dummy'.
 
+.PARAMETER ScopeKind
+How the management scope selects recipients: Group (default; members of the scope group),
+Recipients (-ScopeRecipients), Tag (-ScopeTagAttribute/-ScopeTagValue), or Filter (-ScopeFilter).
+Group settings (AccessGroupType, GroupPrefix, Members, ...) only apply to the Group kind.
+
+.PARAMETER ManagementScopeName
+Explicit management scope name. Cannot be combined with -ManagementScopePrefix.
+
+.PARAMETER ManagementScopePrefix
+Prefix of the generated management scope name ("{Prefix}-{DisplayName}"). Default 'MSRAo1P'.
+
+.PARAMETER ScopeRecipients
+Mailboxes/UPNs/SMTP addresses for -ScopeKind Recipients.
+
+.PARAMETER ScopeTagAttribute
+CustomAttribute1..CustomAttribute15 for -ScopeKind Tag. Default CustomAttribute1.
+
+.PARAMETER ScopeTagValue
+Value for -ScopeKind Tag. When omitted, Invoke-RBAC4AppConfig uses the management scope name.
+
+.PARAMETER ScopeFilter
+Raw OPATH recipient restriction filter for -ScopeKind Filter.
+
 .PARAMETER OutputPath
 Directory to write the config file into. Defaults to the current working directory.
 
@@ -61,6 +89,9 @@ Invoke-RBAC4AppConfig -Path $yml
 .EXAMPLE
 $json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' -Format Json
 Invoke-RBAC4AppConfig -Path $json
+
+.EXAMPLE
+New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -ScopeKind Recipients -ScopeRecipients 'alice@contoso.com','bob@contoso.com'
 
 .OUTPUTS
 System.String — the full path of the written config file (.yml or .json, depending on -Format).
@@ -110,6 +141,33 @@ function New-RBAC4AppConfig {
         [string] $BootstrapMember = 'GraphAPI-Dummy',
 
         [Parameter()]
+        [ValidateSet('Group', 'Recipients', 'Tag', 'Filter')]
+        [string] $ScopeKind = 'Group',
+
+        [Parameter()]
+        [ValidateLength(1, 64)]
+        [string] $ManagementScopeName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ManagementScopePrefix = 'MSRAo1P',
+
+        [Parameter()]
+        [string[]] $ScopeRecipients,
+
+        [Parameter()]
+        [ValidatePattern('^CustomAttribute([1-9]|1[0-5])$')]
+        [string] $ScopeTagAttribute = 'CustomAttribute1',
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ScopeTagValue,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ScopeFilter,
+
+        [Parameter()]
         [string] $OutputPath,
 
         [Parameter()]
@@ -120,6 +178,18 @@ function New-RBAC4AppConfig {
     process {
         if ($PSBoundParameters.ContainsKey('AccessGroupName') -and $PSBoundParameters.ContainsKey('GroupPrefix')) {
             throw 'Parameters -AccessGroupName and -GroupPrefix cannot be used together.'
+        }
+        if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+            throw 'Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together.'
+        }
+        if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
+            throw '-ScopeRecipients is required when -ScopeKind is Recipients.'
+        }
+        if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
+            throw '-ScopeFilter is required when -ScopeKind is Filter.'
+        }
+        foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
+            Write-Warning -Message $ignoredMsg
         }
 
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
@@ -176,7 +246,7 @@ function New-RBAC4AppConfig {
         $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) { $AccessGroupName } else { '' }
 
         $config = [pscustomobject]@{
-            SchemaVersion = '3.0'
+            SchemaVersion = '4.0'
             GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
             TenantId      = $tenantId
             Application   = [pscustomobject]@{
@@ -194,6 +264,13 @@ function New-RBAC4AppConfig {
                 Members         = $Members
                 ManagedBy       = $ManagedBy
                 BootstrapMember = $BootstrapMember
+                ScopeKind             = $ScopeKind
+                ManagementScopeName   = if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }
+                ManagementScopePrefix = $ManagementScopePrefix
+                ScopeRecipients       = @($ScopeRecipients | Where-Object { $_ })
+                ScopeTagAttribute     = $ScopeTagAttribute
+                ScopeTagValue         = if ($ScopeTagValue) { $ScopeTagValue } else { '' }
+                ScopeFilter           = if ($ScopeFilter) { $ScopeFilter } else { '' }
             }
         }
 

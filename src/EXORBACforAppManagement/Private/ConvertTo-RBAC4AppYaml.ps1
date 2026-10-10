@@ -50,6 +50,16 @@
         $lines.Add("    - $(ConvertTo-RBAC4AppYamlScalar $owner)")
     }
     $lines.Add("  BootstrapMember: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.BootstrapMember)")
+    $lines.Add("  ScopeKind: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeKind)")
+    $lines.Add("  ManagementScopeName: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ManagementScopeName)")
+    $lines.Add("  ManagementScopePrefix: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ManagementScopePrefix)")
+    $lines.Add('  ScopeRecipients:')
+    foreach ($recipient in @($Config.RbacScope.ScopeRecipients | Where-Object { $_ })) {
+        $lines.Add("    - $(ConvertTo-RBAC4AppYamlScalar $recipient)")
+    }
+    $lines.Add("  ScopeTagAttribute: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeTagAttribute)")
+    $lines.Add("  ScopeTagValue: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeTagValue)")
+    $lines.Add("  ScopeFilter: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeFilter)")
 
     return $lines -join [System.Environment]::NewLine
 }
