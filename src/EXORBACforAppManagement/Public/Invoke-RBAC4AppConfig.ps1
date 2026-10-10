@@ -5,9 +5,9 @@ Provisions Exchange Online RBAC from a YAML or JSON config file written by New-R
 .DESCRIPTION
 Invoke-RBAC4AppConfig is the ExchangeOnlineManagement half of the two-session workflow.
 It reads a config file produced by New-RBAC4AppConfig (which runs in a Microsoft Graph
-session) and provisions every Exchange Online resource — scope group creation and member addition
+session) and provisions every Exchange Online resource - scope group creation and member addition
 (ScopeKind Group), EXO service principal registration, the management scope, and management role
-assignments bound to that scope (-CustomResourceScope) — without calling any Microsoft Graph
+assignments bound to that scope (-CustomResourceScope) - without calling any Microsoft Graph
 cmdlets.
 
 Schema versions 4.0 (current) and 3.0 are accepted. A 3.0 config has no management scope
@@ -43,7 +43,7 @@ Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.yml
 Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.json
 
 .OUTPUTS
-PSCustomObject — same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
+PSCustomObject - same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
 ScopeKind, ManagementScopeName, ManagementScopeFilter, ScopeGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, MembersFinal, Warnings,
 Errors, etc.).
 #>

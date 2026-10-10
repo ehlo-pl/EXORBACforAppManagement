@@ -70,7 +70,7 @@ function Resolve-RBAC4AppScope {
         $info
     }
 
-    function New-ScopeResult($scopeName, $groupName, $groupType, $members, $managementScope, $kind, $filter) {
+    function ConvertTo-ScopeResult($scopeName, $groupName, $groupType, $members, $managementScope, $kind, $filter) {
         [pscustomobject][ordered]@{
             ScopeName       = $scopeName
             ScopeGroupName  = $groupName
@@ -113,15 +113,15 @@ function Resolve-RBAC4AppScope {
                             $groupName = [string]$rec.Name
                             if (-not $groupName) { $groupName = [string]$rec.DisplayName }
                             $info = Get-GroupInfo $groupName
-                            $resolved = New-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $candidate 'Group' $filter
+                            $resolved = ConvertTo-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $candidate 'Group' $filter
                         }
                         else {
                             Write-Warning -Message ("Could not resolve the group '{0}' referenced by management scope '{1}'; its type and membership will be omitted." -f $dn, $candidate)
-                            $resolved = New-ScopeResult $dn $dn $null @() $candidate 'Group' $filter
+                            $resolved = ConvertTo-ScopeResult $dn $dn $null @() $candidate 'Group' $filter
                         }
                     }
                     'Recipients' {
-                        $resolved = New-ScopeResult $candidate $null $null $parsed.Recipients $candidate 'Recipients' $filter
+                        $resolved = ConvertTo-ScopeResult $candidate $null $null $parsed.Recipients $candidate 'Recipients' $filter
                     }
                     default {
                         $members = @()
@@ -133,7 +133,7 @@ function Resolve-RBAC4AppScope {
                             $members = Get-MemberAddress $preview
                         }
                         $kind = if ($parsed.ScopeKind) { $parsed.ScopeKind } else { 'Filter' }
-                        $resolved = New-ScopeResult $candidate $null $null $members $candidate $kind $filter
+                        $resolved = ConvertTo-ScopeResult $candidate $null $null $members $candidate $kind $filter
                     }
                 }
             }
@@ -145,8 +145,8 @@ function Resolve-RBAC4AppScope {
     # --- Legacy: assignment scoped directly to a group (-RecipientGroupScope).
     $groupName = Resolve-RBAC4AppScopeGroupName -Assignment $Assignment
     if (-not $groupName) {
-        return New-ScopeResult $null $null $null @() $null $null $null
+        return ConvertTo-ScopeResult $null $null $null @() $null $null $null
     }
     $info = Get-GroupInfo $groupName
-    New-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $null 'GroupDirect' $null
+    ConvertTo-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $null 'GroupDirect' $null
 }
