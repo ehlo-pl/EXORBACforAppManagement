@@ -5,9 +5,9 @@ Provisions Exchange Online RBAC from a YAML or JSON config file written by New-R
 .DESCRIPTION
 Invoke-RBAC4AppConfig is the ExchangeOnlineManagement half of the two-session workflow.
 It reads a config file produced by New-RBAC4AppConfig (which runs in a Microsoft Graph
-session) and provisions every Exchange Online resource — scope group creation and member addition
+session) and provisions every Exchange Online resource - scope group creation and member addition
 (ScopeKind Group), EXO service principal registration, the management scope, and management role
-assignments bound to that scope (-CustomResourceScope) — without calling any Microsoft Graph
+assignments bound to that scope (-CustomResourceScope) - without calling any Microsoft Graph
 cmdlets.
 
 Schema versions 4.0 (current) and 3.0 are accepted. A 3.0 config has no management scope
@@ -43,7 +43,7 @@ Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.yml
 Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.json
 
 .OUTPUTS
-PSCustomObject — same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
+PSCustomObject - same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
 ScopeKind, ManagementScopeName, ManagementScopeFilter, ScopeGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, MembersFinal, Warnings,
 Errors, etc.).
 #>
@@ -156,6 +156,8 @@ function Invoke-RBAC4AppConfig {
             MembersAdded        = @()
             MembersFinal        = @()
             FilteredMembers     = @()
+            ChangeReference     = $ChangeReference
+            ChangeReferencePath = $null
             RolesNormalized     = @()
             RoleAssignments     = @()
             RoleAssignmentsName = @()
@@ -164,47 +166,39 @@ function Invoke-RBAC4AppConfig {
         }
 
         try {
-            # --- Derive scope group name
-            if ($AccessGroupName) {
-                $umGroupName = $AccessGroupName
-            }
-            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
-            }
-            else {
-                $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
-            }
-            $result.ScopeGroupName = $umGroupName
-
-            # --- Ensure scope group
-            Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
-            $scopeGroupParams = @{
-                AccessGroupType = $AccessGroupType
-                Name            = $umGroupName
-                ManagedBy       = $ManagedBy
-                BootstrapMember = $BootstrapMember
-                WarningVariable = 'ugWarnings'
-            }
-            if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
-            $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
-            foreach ($w in $ugWarnings) {
-                if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
-            }
-            if ($ugResult) {
-                $result.OwnerRequested = $ugResult.OwnerRequested
-                $result.OwnerAdded     = $ugResult.OwnerAdded
-                $result.ChangeReferencePath = $ugResult.ChangeReferencePath
-            }
+            $ugResult = $null
+            $umGroupName = $null
+            if ($isGroupKind) {
+                # --- Derive scope group name
+                if ($AccessGroupName) {
+                    $umGroupName = $AccessGroupName
+                }
+                elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
+                }
+                else {
+                    $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
+                }
+                $result.ScopeGroupName = $umGroupName
 
                 # --- Ensure scope group
                 Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
-                $ugResult = New-RBAC4AppScopeGroup -AccessGroupType $AccessGroupType -Name $umGroupName -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember -WarningVariable ugWarnings
+                $scopeGroupParams = @{
+                    AccessGroupType = $AccessGroupType
+                    Name            = $umGroupName
+                    ManagedBy       = $ManagedBy
+                    BootstrapMember = $BootstrapMember
+                    WarningVariable = 'ugWarnings'
+                }
+                if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+                $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
                 foreach ($w in $ugWarnings) {
                     if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
                 }
                 if ($ugResult) {
                     $result.OwnerRequested = $ugResult.OwnerRequested
                     $result.OwnerAdded     = $ugResult.OwnerAdded
+                    $result.ChangeReferencePath = $ugResult.ChangeReferencePath
                 }
 
                 # --- Read the group's current membership once (all types, read-only): seeds MembersFinal
