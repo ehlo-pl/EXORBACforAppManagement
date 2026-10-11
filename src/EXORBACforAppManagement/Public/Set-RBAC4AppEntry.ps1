@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
 Reconciles a registered application's Exchange Online RBAC scoping to the desired state: repairs
-missing components, tops up the Unified Group membership, and can move the role assignments to a
-different scoping group.
+missing components, tops up scope group membership, and can move the role assignments to a
+different management-scope backing group.
 
 .DESCRIPTION
 Set-RBAC4AppEntry is the "make it so" companion to Test-RBAC4AppEntry (which only reports) and
@@ -11,8 +11,8 @@ Exchange Online service principal pointer already registered for it (by display 
 service principal object id) - no Microsoft Graph session is required - and brings the components
 New-RBAC4AppEntry provisions into the desired state, changing only what is needed:
 
-  1. the scoped Unified Group ("{GroupPrefix}-{DisplayName}", sanitized via Get-SafeName) is created
-     if it is missing (delegated to New-RBAC4AppUnifiedGroup),
+  1. the scoped group ("{GroupPrefix}-{DisplayName}", sanitized via Get-SafeName) is created
+     if it is missing (delegated to New-RBAC4AppScopeGroup),
   2. the Exchange Online service principal pointer ("{DisplayName}_SP") is created if it is missing
      (delegated to Register-EXOServicePrincipal),
   3. the requested -Members are added to the group if they are not already members (additive only -
@@ -29,8 +29,8 @@ New-RBAC4AppEntry provisions into the desired state, changing only what is neede
      Tag; Filter - see New-RBAC4AppEntry). It is created when missing and its filter is updated
      when it drifted.
 
-Changing the scoping group: supply -NewGroupName (an explicit group name) or -NewGroupPrefix (builds
-"{NewGroupPrefix}-{DisplayName}"). The target group is ensured to exist and the management scope's
+Changing the group backing a Group-kind management scope: supply -NewGroupName (an explicit group name) or -NewGroupPrefix (builds
+"{NewGroupPrefix}-{DisplayName}"). The target scope group is ensured to exist and the management scope's
 filter is re-pointed at it (the scope and the role assignments keep their names). The old group is
 left in place (use Remove-RBAC4AppEntry to tear it down once it is no longer in use); members are
 not migrated. Switching -ScopeKind (e.g. from Group to Recipients) likewise just rewrites the
@@ -62,7 +62,7 @@ Exchange Online application roles to ensure are assigned. Short names such as Ma
 to Application Mail.Send. Defaults to 'Application Mail.Send' (matching New-RBAC4AppEntry).
 
 .PARAMETER Members
-Optional recipients to ensure are members of the scoped Unified Group. Each is resolved through
+Optional recipients to ensure are members of the scope group. Each is resolved through
 Get-Recipient and added if absent. Membership is additive: members already present are left as-is and
 nothing is removed.
 
@@ -87,7 +87,7 @@ MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modifi
 managed on-premises).
 
 .PARAMETER BootstrapMember
-Optional initial member passed to New-RBAC4AppUnifiedGroup when the group must be created. Defaults
+Optional initial member passed when the scope group must be created. Defaults
 to 'GraphAPI-Dummy'.
 
 .PARAMETER NewGroupPrefix
@@ -155,10 +155,10 @@ Re-scopes the application's role assignments onto the 'Um365Prod-...' group (cre
 .OUTPUTS
 PSCustomObject
 
-A summary object with the resolved identity, the current and target group names, a GroupChanged flag,
-which components were created, the requested/added members and the final group membership
-(MembersFinal), and the role assignments partitioned into created / re-scoped / unchanged, an overall
-IsValid flag, and any Warnings/Errors.
+A summary object with the resolved identity, the current and target scope group names, management
+scope state, a GroupChanged flag, which components were created, the requested/added members and the
+final group membership (MembersFinal), and the role assignments partitioned into created /
+re-scoped / unchanged, an overall IsValid flag, and any Warnings/Errors.
 
 .NOTES
 Requires a connected Exchange Online session only (Get-ServicePrincipal, Get-ConnectionInformation,
@@ -458,7 +458,7 @@ function Set-RBAC4AppEntry {
             }
 
             if ($ScopeKind -eq 'Group') {
-                # --- Read the target group's current membership once (all types, read-only): used for
+                # --- Read the target scope group's current membership once (all types, read-only): used for
                 # the "already present" check below and to seed MembersFinal, reused rather than
                 # re-queried after any additions (EXO reads can lag writes).
                 $existingLinks = if ($AccessGroupType -eq 'M365Group') {
@@ -486,7 +486,7 @@ function Set-RBAC4AppEntry {
                     }
                 }
 
-                # --- Members (additive): add any requested member not already in the target group.
+                # --- Members (additive): add any requested member not already in the target scope group.
                 # Skipped for MailEnabledSecurityGroup: membership is mastered on-premises.
                 if ($PSBoundParameters.ContainsKey('Members') -and $AccessGroupType -eq 'MailEnabledSecurityGroup') {
                     $result.MembersRequested = @($Members | Where-Object { $_ })
@@ -574,7 +574,7 @@ function Set-RBAC4AppEntry {
                 $result.Errors += "Failed to reconcile management scope '$scopeName': $($_.Exception.Message)"
             }
 
-            # --- Role assignments: ensure one per role, scoped to the target group.
+            # --- Role assignments: ensure one per role, scoped to the target management scope.
             $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }
             $result.RolesNormalized = @($rolesNormalized)
 

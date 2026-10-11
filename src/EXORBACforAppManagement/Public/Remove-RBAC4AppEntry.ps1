@@ -6,7 +6,7 @@ application.
 .DESCRIPTION
 Remove-RBAC4AppEntry is the teardown counterpart to New-RBAC4AppEntry. It resolves an Entra
 application / service principal (by display name, AppId, or service principal object id), derives the
-scoped Unified Group name the same way New-RBAC4AppEntry does ("{GroupPrefix}-{DisplayName}",
+scope group name the same way New-RBAC4AppEntry does ("{GroupPrefix}-{DisplayName}",
 sanitized via Get-SafeName) and the management scope name ("{ManagementScopePrefix}-{DisplayName}"
 or -ManagementScopeName), and removes, in order:
 
@@ -27,8 +27,8 @@ fails:
 
 The Exchange Online service principal pointer ("{DisplayName}_SP") is intentionally left in place
 because it may be shared by other scoping. There is no -Role parameter: the safety question is about
-the group as a whole, so the teardown operates at group granularity and removes all of this app's
-assignments scoped to the group or nothing at all.
+the scope as a whole, so the teardown removes all of this app's assignments bound to the management
+scope (or legacy assignments scoped directly to the group) or nothing at all.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess; under -WhatIf no removals
 are performed and IsRemoved is reported as false.
@@ -76,20 +76,20 @@ Bootstrap placeholder member to ignore when deciding whether the group has real 
 .EXAMPLE
 Remove-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -WhatIf -Verbose
 
-Shows the role assignments and Unified Group that would be removed for the resolved application,
+Shows the role assignments, management scope, and scope group that would be removed for the resolved application,
 without making changes.
 
 .EXAMPLE
 Remove-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555'
 
-Removes this application's role assignments and the scoped Unified Group, but only if no foreign
-assignments and no real members are present.
+Removes this application's role assignments, management scope, and scoped group, but only if no
+foreign assignments and no real members are present.
 
 .OUTPUTS
 PSCustomObject
 
-A summary object with the resolved identity, the Unified Group name and whether it existed, the
-assignments scoped to the group partitioned into own/foreign, the real members found, what was
+A summary object with the resolved identity, the scope group name and whether it existed, the
+assignments bound to the management scope or legacy group scope partitioned into own/foreign, the real members found, what was
 removed (AssignmentsRemoved, ManagementScopeRemoved, GroupRemoved), an overall IsRemoved flag, a Reason when removal was
 refused or skipped, and any Warnings/Errors.
 

@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-10-10
+
+### Changed
+- Bumped the module version for the 0.8.4 release.
+- Refreshed README and comment-based help to emphasize the management-scope assignment flow.
+- Clarified that Microsoft.Graph and ExchangeOnlineManagement should still run in separate
+  PowerShell sessions even when specific versions appear to coexist.
+
 ## [0.8.3] - 2026-10-10
 
 ### Changed
