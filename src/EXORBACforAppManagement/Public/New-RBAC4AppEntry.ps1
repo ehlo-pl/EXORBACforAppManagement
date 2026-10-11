@@ -5,8 +5,9 @@ Creates or updates Exchange Online RBAC scoping for an Entra application service
 .DESCRIPTION
 New-RBAC4AppEntry resolves an application against the Exchange Online service principal pointer
 already registered for it (by display name, AppId, or service principal object id), creates the
-scoped Unified Group when needed, adds requested members, ensures the Exchange Online service
-principal exists, and creates Exchange Online RBAC role assignments for the application.
+scope group when needed, adds requested members, ensures the Exchange Online service principal
+exists, ensures the Exchange Online management scope, and creates Exchange Online RBAC role
+assignments for the application against that management scope.
 
 Resolution is Exchange-Online-only: it looks up the pointer Register-EXOServicePrincipal creates
 (via Get-ServicePrincipal), not the Entra service principal itself, so no Microsoft Graph session
@@ -17,12 +18,14 @@ together (-AppId, -SpObjectId, and -RegisteredAppName as the display name) to bo
 call, or provision it in two Graph/EXO-separated steps with New-RBAC4AppConfig +
 Invoke-RBAC4AppConfig instead.
 
-Unified Group creation/configuration is delegated to New-RBAC4AppUnifiedGroup and the
-Exchange Online service principal step to Register-EXOServicePrincipal. Every creation step is
+Scope group creation/configuration is delegated to New-RBAC4AppScopeGroup, management scope
+creation to New-RBAC4AppManagementScope, and the Exchange Online service principal step to
+Register-EXOServicePrincipal. Every creation step is
 idempotent: the scope group, the EXO service principal, and each role assignment are only created
 if a matching one does not already exist, so re-running against an already-provisioned application
-is safe - a role assignment that already exists and is scoped to the same group is left alone (a
-warning notes it was skipped); requested members are still added to the group regardless.
+is safe - a role assignment that already exists and is scoped to the target management scope is left
+alone (a warning notes it was skipped); requested members are still added to the scope group
+regardless.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
@@ -78,7 +81,7 @@ Application (client) id of the registered application.
 Object id of the target service principal.
 
 .PARAMETER Members
-Recipients to add to the Unified Group scope. Values must resolve through
+Recipients to add to the scope group. Values must resolve through
 Get-Recipient. The default placeholder value is GraphAPI-Dummy.
 
 .PARAMETER Role
@@ -109,7 +112,7 @@ Kind of group that backs the RBAC scope. One of:
     ignored (membership and ownership are managed on-premises).
 
 .PARAMETER BootstrapMember
-Optional initial member passed during Unified Group creation.
+Optional initial member passed during scope group creation.
 
 .PARAMETER ChangeReference
 Optional change or incident reference to persist in a local metadata file under
@@ -118,26 +121,26 @@ Optional change or incident reference to persist in a local metadata file under
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Verbose -WhatIf
 
-Shows the planned service principal resolution, Unified Group creation, and RBAC
+Shows the planned service principal resolution, scope group and management scope creation, and RBAC
 assignment actions without making changes.
 
 .EXAMPLE
 New-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -Members 'sharedmailbox@contoso.com' -Role 'Mail.Send' -Verbose
 
-Resolves the application by AppId, ensures the scoped Unified Group exists, adds the
-recipient, and creates the Application Mail.Send role assignment.
+Resolves the application by AppId, ensures the scoped group and management scope exist, adds the
+recipient, and creates the Application Mail.Send role assignment bound to that management scope.
 
 .EXAMPLE
 New-RBAC4AppEntry -SpObjectId '11111111-2222-3333-4444-555555555555' -Role 'Application Calendars.Read','Application Contacts.Read' -GroupPrefix 'Um365Prod'
 
 Uses the service principal object id directly and creates multiple application role
-assignments scoped to the generated Unified Group.
+assignments scoped to the generated management scope.
 
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupName 'RBAC-AppScope-ContosoMail' -Role 'Mail.Send'
 
-Uses an explicit Unified Group name for scoping and assigns the requested RBAC role to
-the application against that group.
+Uses an explicit scope group name to build the management scope and assigns the requested RBAC role
+to the application against that management scope.
 
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType DistributionList -Members 'shared@contoso.com' -Role 'Mail.Send'
@@ -148,7 +151,7 @@ assigns the role scoped to that list.
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-MailApp-Scope' -Role 'Mail.Send'
 
-Scopes the role assignment to an existing on-prem/hybrid-synced mail-enabled security group.
+Builds the management scope from an existing on-prem/hybrid-synced mail-enabled security group.
 The group is not created and its membership (managed on-premises) is left untouched.
 
 .EXAMPLE
@@ -171,8 +174,8 @@ Scopes the role assignment to every recipient whose CustomAttribute5 is 'Contoso
 .OUTPUTS
 PSCustomObject
 
-Returns a summary object with resolved identity, Unified Group name, normalized roles,
-assignment names, warnings, and errors.
+Returns a summary object with resolved identity, scope group and management scope names, normalized
+roles, assignment names, warnings, and errors.
 
 .NOTES
 Requires a connected Exchange Online session only (Get-ServicePrincipal, Get-ConnectionInformation,

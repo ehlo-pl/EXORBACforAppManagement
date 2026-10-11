@@ -20,8 +20,9 @@ session, working around the MSAL/WAM assembly conflict between `Microsoft.Graph`
 Public functions (each in its own file under `src/EXORBACforAppManagement/Public`):
 
 - **`New-RBAC4AppEntry`** — the core function. Resolves an Entra service principal (SP), creates
-  a scoped Microsoft 365 Unified Group, adds members, ensures the EXO service principal exists, and
-  creates EXO management role assignments scoped to that group.
+  a scope source when needed (distribution list by default, or M365/mail-enabled security group),
+  ensures the EXO service principal and management scope exist, and creates EXO management role
+  assignments scoped to that management scope.
 - **`New-RegisteredApp`** — creates an Entra application registration via `New-MgApplication` and
   (by default) its service principal via `New-MgServicePrincipal`. Its output exposes
   `AppId`/`ServicePrincipalId` so it can pipe into `New-RBAC4AppEntry`.
@@ -35,8 +36,8 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`Get-RegisteredAppWithPermission`** — **deprecated**; a thin wrapper around
   `Get-RBAC4AppEntry -ByApplication -ScopeType All` kept for backward compatibility (writes a
   deprecation warning). Update callers to use `Get-RBAC4AppEntry -ByApplication` directly.
-- **`New-RBAC4AppUnifiedGroup`** — ensures/creates and configures the scoped Unified Group
-  (extracted from `New-RBAC4AppEntry`, which now delegates to it).
+- **`New-RBAC4AppUnifiedGroup`** — ensures/creates and configures the scoped Unified Group used
+  when `-AccessGroupType M365Group` (extracted from `New-RBAC4AppEntry`, which now delegates to it).
 - **`New-RBAC4AppDistributionGroup`** — ensures/creates and configures a scoped Exchange-Online-only
   distribution list; the `DistributionList` counterpart to `New-RBAC4AppUnifiedGroup`, returning the
   same summary shape.
@@ -50,22 +51,22 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
   Graph application permissions (mapped via the private `Get-LegacyScopeRoleMap`), copies the scope
   group's members, and delegates to `New-RBAC4AppEntry`.
 - **`Test-RBAC4AppEntry`** — read-only validator that checks an application has every component
-  `New-RBAC4AppEntry` creates: the resolvable SP, the scoped Unified Group, the EXO service
-  principal pointer, and one role assignment per role (by the deterministic name). Mirrors
+  `New-RBAC4AppEntry` creates: the resolvable SP, the scope source, the management scope, the EXO
+  service principal pointer, and one role assignment per role (by the deterministic name). Mirrors
   `New-RBAC4AppEntry`'s `-Role`/`-GroupPrefix` defaults and optionally verifies `-Members`. Returns
   a `[pscustomobject]` with per-component flags, a `Missing` list, and an overall `IsValid`.
 - **`Remove-RBAC4AppEntry`** — safe teardown counterpart to `New-RBAC4AppEntry`. Resolves the
-  SP, derives the scoped Unified Group name, and removes this app's EXO role assignments and the
-  Unified Group — but only after confirming the group is no longer in use (no foreign role
+  SP, derives the scope group and management scope names, and removes this app's EXO role assignments,
+  management scope, and scope group — but only after confirming the scope is no longer in use (no foreign role
   assignments scoped to it and no members beyond the `-BootstrapMember` placeholder). Aborts and
   removes nothing on an unsafe condition, returning a `[pscustomobject]` with a `Reason`, the
   offending foreign assignments / real members, and an `IsRemoved` flag. Leaves the shared EXO
   service principal pointer in place; `SupportsShouldProcess` (`ConfirmImpact='High'`).
 - **`Set-RBAC4AppEntry`** — reconcile/"make it so" companion to `Test-`/`New-RBAC4AppEntry`.
   Resolves the SP, then brings each component to the desired state changing only what is needed:
-  creates the scoped Unified Group and EXO SP pointer if missing (delegating to
-  `New-RBAC4AppUnifiedGroup`/`Register-EXOServicePrincipal`), adds requested `-Members` not already
-  in the group (additive only), and ensures one role assignment per role scoped to the target group
+  creates the scope group and EXO SP pointer if missing (delegating to
+  `New-RBAC4AppScopeGroup`/`Register-EXOServicePrincipal`), adds requested `-Members` not already
+  in the group (additive only), and ensures one role assignment per role scoped to the target management scope
   (creates a missing one; re-scopes one pointing elsewhere by remove+recreate under the same
   deterministic name). An optional `-NewGroupPrefix`/`-NewGroupName` moves the assignments onto a
   different scoping group (created if needed; old group left in place, members not migrated). Returns
@@ -120,7 +121,7 @@ Build artifacts (`output/`, `testResults.xml`) are git-ignored.
 
 Bump `ModuleVersion` in the manifest and add a `CHANGELOG.md` entry, then push a matching `v*` tag
 to `main` (e.g. `git tag v0.2.0; git push origin v0.2.0`). `release.yml` builds/tests the module,
-packages `output/EXORBACforAppManagement` into a zip, and creates the GitHub release with generated notes.
+packages `output/<version>/EXORBACforAppManagement` into a zip, and creates the GitHub release with generated notes.
 
 ## Running / developing
 
@@ -179,7 +180,7 @@ Always validate mutating changes with `-WhatIf` first. `New-RBAC4AppEntry`
 - **Analyze** runs PSScriptAnalyzer over `src` using `PSScriptAnalyzerSettings.psd1`; it fails only
   on Error-severity findings (warnings are reported but non-blocking).
 - **Test** runs the Pester suite and writes `testResults.xml` (NUnit) for the CI artifact.
-- **Build** copies the module to `output/EXORBACforAppManagement` and validates the manifest.
+- **Build** copies the module to `output/<version>/EXORBACforAppManagement` and validates the manifest.
 
 ### Test approach
 
@@ -206,15 +207,15 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   Graph). `New-RegisteredApp` separately takes a `DisplayName` (aliased `Name`/`RegisteredAppName`)
   for its own Graph-based app creation. AppId/SpObjectId are GUID-validated via `[ValidatePattern]`.
 
-- **`New-RBAC4AppEntry` workflow:** resolve SP → ensure Unified Group (delegated to
-  `New-RBAC4AppUnifiedGroup`) → add members → ensure EXO service principal (delegated to
+- **`New-RBAC4AppEntry` workflow:** resolve SP → ensure scope group when `-ScopeKind Group`
+  (delegated to `New-RBAC4AppScopeGroup`) → add members → ensure EXO service principal (delegated to
   `Register-EXOServicePrincipal`) → ensure the management scope (delegated to
   `New-RBAC4AppManagementScope`) → one `New-ManagementRoleAssignment` per role bound to that scope via
-  `-CustomResourceScope`. The group steps run only for `-ScopeKind Group`. Unified Group name is `"{GroupPrefix}-{SP.DisplayName}"`
-  sanitized by the private `Get-SafeName`. Output is one `[pscustomobject]` summary, also exported to
+  `-CustomResourceScope`. The group steps run only for `-ScopeKind Group`. The scope group name is
+  `"{GroupPrefix}-{SP.DisplayName}"` sanitized by the private `Get-SafeName`. Output is one `[pscustomobject]` summary, also exported to
   `$env:TEMP\<name>_<timestamp>.clixml`; per-item errors are surfaced in `Errors`, not thrown. The
   summary reports the owner as `OwnerRequested`/`OwnerAdded` (read from the
-  `New-RBAC4AppUnifiedGroup` result) alongside `MembersRequested`/`MembersAdded`. The orchestrator
+  scope group result) alongside `MembersRequested`/`MembersAdded`. The orchestrator
   captures the delegated functions' warnings via `-WarningVariable` to keep the summary `Warnings`
   (e.g. the group "already exists" note).
 

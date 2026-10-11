@@ -47,7 +47,7 @@ Exchange Online application roles expected to be assigned. Short names such as M
 normalized to Application Mail.Send. Defaults to 'Application Mail.Send' (matching New-RBAC4AppEntry).
 
 .PARAMETER Members
-Optional recipients expected to be members of the Unified Group scope. When supplied, each is
+Optional recipients expected to be members of the scope group. When supplied, each is
 resolved through Get-Recipient and checked against the group's membership. Omit to skip the
 membership check.
 
@@ -96,8 +96,8 @@ with an IsValid flag.
 .EXAMPLE
 Test-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Send','Calendars.Read' -Members 'shared@contoso.com'
 
-Checks the service principal, Unified Group, Exchange Online service principal, both role
-assignments, and that shared@contoso.com is a group member.
+Checks the service principal, scope group, management scope, Exchange Online service principal, both
+role assignments, and that shared@contoso.com is a group member.
 
 .EXAMPLE
 New-RBAC4AppEntry -RegisteredAppName 'Contoso' -WhatIf; Test-RBAC4AppEntry -RegisteredAppName 'Contoso'

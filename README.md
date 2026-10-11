@@ -12,14 +12,14 @@ The three functions form a **create → assign → read** flow and share the sam
 
 | Function | Step | What it does |
 | --- | --- | --- |
-| [`New-RegisteredApp`](#new-registeredapp) | create | Creates an Entra app registration and (by default) its service principal. NOTE: required high privledges, I use it only in testing environment - as on production it's covered by separation of duty and done by 3rd party to my team pipeline |
+| [`New-RegisteredApp`](#new-registeredapp) | create | Creates an Entra app registration and (by default) its service principal. NOTE: requires high privileges; intended mainly for testing environments when production app registration is handled by a separate pipeline/team. |
 | [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Ensures the scope source (group, recipients, tag, or filter), the management scope, the EXO service principal, and assigns EXO Application roles bound to that management scope. |
 | `New-RBAC4AppManagementScope` | helper | Ensures an EXO management scope exists with a given `RecipientRestrictionFilter` (creates, updates on drift, or leaves an equivalent one alone; `-NoUpdate` only warns). |
 | [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read / inventory | Lists the EXO Application-role assignments, each resolved to its AppId/ServicePrincipalId and scope group name/type/members; `-ByApplication` groups them into one row per application. |
 | `Get-RegisteredAppWithPermission` | *(deprecated)* | Thin wrapper around `Get-RBAC4AppEntry -ByApplication -ScopeType All`; use the latter directly. |
-| [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, Unified Group, EXO service principal, role assignments) and returns an `IsValid` summary. |
+| [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, scope source, management scope, EXO service principal, role assignments) and returns an `IsValid` summary. |
 | [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate / plan | Writes YAML/JSON RBAC configs from legacy Application Access Policies for later provisioning with `Invoke-RBAC4AppConfig`. |
-| [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry`). |
+| [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry` when `-AccessGroupType M365Group`). |
 | `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only distribution list (used by `New-RBAC4AppEntry` when `-AccessGroupType DistributionList`). |
 | [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | helper | Creates the EXO service principal pointer for an Entra app (used by `New-RBAC4AppEntry`). |
 | [`New-RBAC4AppConfig`](#new-rbac4appconfig) | **Graph session** | Resolves the Entra SP via `Get-MgServicePrincipal` and writes a YAML or JSON config file (`-Format`) for `Invoke-RBAC4AppConfig`. No EXO calls. |
@@ -60,7 +60,7 @@ needs no Graph session, working around the MSAL/WAM assembly conflict between `M
 | `New-RBAC4AppDistributionGroup` | — | `Get-DistributionGroup` `New-DistributionGroup` `Set-DistributionGroup` `Get-Recipient` |
 | `New-RBAC4AppManagementScope` | — | `Get-ManagementScope` `New-ManagementScope` `Set-ManagementScope` |
 | `Register-EXOServicePrincipal` | — | `Get-ServicePrincipal` `New-ServicePrincipal` *(skips creation if one already matches by AppId/DisplayName)* |
-| `New-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(resolves the app via `Get-ServicePrincipal`, or bootstraps a never-before-registered pointer when `-AppId`, `-SpObjectId`, and `-RegisteredAppName` are all supplied; skips a role assignment already scoped to the target group; + delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
+| `New-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementScope` `New-ManagementScope` `Set-ManagementScope` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(resolves the app via `Get-ServicePrincipal`, or bootstraps a never-before-registered pointer when `-AppId`, `-SpObjectId`, and `-RegisteredAppName` are all supplied; skips a role assignment already scoped to the target management scope; + delegates to scope-group helpers and `Register-EXOServicePrincipal`)* |
 | `Set-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` *(same bootstrap fallback as `New-RBAC4AppEntry` when the pointer doesn't exist yet)* |
 | `Test-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` |
 | `Remove-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
@@ -80,6 +80,12 @@ Graph — every other function, including `New-RBAC4AppEntry` itself, is Exchang
 never hits the conflict in the first place. `New-RBAC4AppConfig` / `Invoke-RBAC4AppConfig` remain
 useful specifically for provisioning a **brand-new** application (one with no Exchange Online
 service principal pointer yet) split cleanly across two sessions.
+
+> **Same-session warning:** even if a particular module combination appears to work in one
+> PowerShell process (for example ExchangeOnlineManagement 3.10.1 with Microsoft.Graph 2.41.1),
+> treat that as opportunistic rather than supported. The shared identity assemblies can still break
+> after module upgrades, authentication mode changes, token refreshes, or load-order changes. For
+> repeatable production runs, keep Graph work and Exchange Online work in separate `pwsh` sessions.
 
 ### What to do in each session
 
@@ -136,7 +142,7 @@ The config file is a plain-text handoff — no secrets, safe to store alongside 
 ### YAML config schema
 
 The same schema applies verbatim to the JSON format (see
-[New-RBAC4AppConfig](#new-rbac4appconfig) for a JSON example) — only the serialisation differs.
+[New-RBAC4AppConfig](#new-rbac4appconfig) for a JSON example) — only the serialization differs.
 
 ```yaml
 # RBAC4App configuration — generated by New-RBAC4AppConfig
@@ -183,8 +189,8 @@ back at `New-RBAC4AppConfig` to regenerate it.
 The module is run from source (it is not published to the PowerShell Gallery):
 
 ```powershell
-git clone https://github.com/ziembor/new-RBACforAppEntry.git
-Import-Module ./new-RBACforAppEntry/src/EXORBACforAppManagement/EXORBACforAppManagement.psd1 -Force
+git clone https://github.com/ehlo-pl/EXORBACforAppManagement.git
+Import-Module .\EXORBACforAppManagement\src\EXORBACforAppManagement\EXORBACforAppManagement.psd1 -Force
 ```
 
 Then connect your sessions:
@@ -198,13 +204,14 @@ Connect-ExchangeOnline
 > when both authenticate in the same PowerShell process because they load shared MSAL/WAM identity
 > assemblies. Symptoms include `RuntimeBroker` / WAM `NullReferenceException` from
 > `Connect-ExchangeOnline` after `Connect-MgGraph`, or `Method not found: ...WithLogging(...)` from
-> `Connect-MgGraph` after Exchange Online is loaded. If this happens, use separate `pwsh` processes
-> for Graph and Exchange work. `Connect-M365Tenant -Workload MicrosoftGraph` and
+> `Connect-MgGraph` after Exchange Online is loaded. Some versions may appear compatible in one
+> session (for example ExchangeOnlineManagement 3.10.1 and Microsoft.Graph 2.41.1), but this should
+> not be treated as stable or production-safe; prefer separate `pwsh` processes for Graph and
+> Exchange work. `Connect-M365Tenant -Workload MicrosoftGraph` and
 > `Connect-M365Tenant -Workload ExchangeOnline` from MSCloudLoginAssistant are wrappers around
 > `Connect-MgGraph` and `Connect-ExchangeOnline`; they may help in app-only/access-token scenarios,
 > but they do **not** isolate the modules or guarantee a fix for interactive WAM/MSAL collisions in a
 > single process.
-
 > **Always preview with `-WhatIf` first.** `New-RBAC4AppEntry` (`ConfirmImpact='High'`) and
 > `New-RegisteredApp` (`ConfirmImpact='Medium'`) gate every mutating step behind `ShouldProcess`.
 
@@ -229,7 +236,7 @@ Get-RBAC4AppEntry -ByApplication
 Creates an Entra application registration and, unless `-SkipServicePrincipal`, its service
 principal. Emits `AppId` / `ServicePrincipalId` so it can pipe into `New-RBAC4AppEntry`.
 
-NOTE: required high privledges, I use it only in testing environment - as on production it's covered by separation of duty and done by 3rd party to my team pipeline
+NOTE: requires high privileges; intended mainly for testing environments when production app registration is handled by a separate pipeline/team.
 
 ```powershell
 New-RegisteredApp -DisplayName 'Contoso Mail App' -WhatIf -Verbose
@@ -398,8 +405,9 @@ Get-RBAC4AppEntry -ByApplication -Role 'Mail.Send'
 ### Test-RBAC4AppEntry
 
 Read-only check that an application has every component `New-RBAC4AppEntry` provisions: the
-resolvable service principal, the scoped Unified Group, the Exchange Online service principal
-pointer, and one role assignment per role (looked up by the deterministic assignment name). It
+resolvable service principal, the scope source (a group for `-ScopeKind Group`), the management
+scope, the Exchange Online service principal pointer, and one role assignment per role (looked up
+by the deterministic assignment name). It
 mirrors `New-RBAC4AppEntry`'s `-Role` / `-GroupPrefix` defaults and optionally verifies `-Members`
 against the group's membership. Returns a summary `[pscustomobject]` with per-component flags
 (`ServicePrincipalExists`, `ScopeGroupExists`, `ExoServicePrincipalExists`), the
@@ -484,7 +492,7 @@ $json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
 
 Returns the path to the written config file (`.yml` or `.json`). Pass `-WhatIf` to preview the
 output path and content without writing the file. The config schema is identical between formats —
-`-Format` only changes serialisation and the file extension.
+`-Format` only changes serialization and the file extension.
 
 ### Invoke-RBAC4AppConfig
 
@@ -514,7 +522,7 @@ Get-ChildItem C:\rbac-configs\*.yml, C:\rbac-configs\*.json | Invoke-RBAC4AppCon
 
 ## Project layout
 
-```
+```powershell
 src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
@@ -542,7 +550,7 @@ CHANGELOG.md                     # version history
 - **Init** installs Pester (>= 5) and PSScriptAnalyzer if missing.
 - **Analyze** runs PSScriptAnalyzer over `src`; fails only on Error-severity findings.
 - **Test** runs Pester and writes `testResults.xml` (NUnit).
-- **Build** assembles the module into `output/EXORBACforAppManagement` and validates the manifest.
+- **Build** assembles the module into `output/<version>/EXORBACforAppManagement` and validates the manifest.
 
 Tests mock the Graph/EXO cmdlets, so the suite runs without those modules installed (this is what
 CI does on `ubuntu-latest`).
