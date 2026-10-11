@@ -30,7 +30,7 @@ Set-StrictMode -Version Latest
 
 $RepoRoot     = $PSScriptRoot
 $ModuleName   = 'EXORBACforAppManagement'
-$SrcPath      = Join-Path $RepoRoot 'src' $ModuleName
+$SrcPath      = Join-Path (Join-Path $RepoRoot 'src') $ModuleName
 $ManifestPath = Join-Path $SrcPath "$ModuleName.psd1"
 $TestsPath    = Join-Path $RepoRoot 'tests'
 $OutputPath   = Join-Path $RepoRoot 'output'
@@ -131,7 +131,7 @@ function Invoke-Test {
 function Invoke-Build {
     Write-Host '==> Build' -ForegroundColor Cyan
     $version = (Import-PowerShellDataFile $ManifestPath).ModuleVersion
-    $dest    = Join-Path $OutputPath $version $ModuleName
+    $dest    = Join-Path (Join-Path $OutputPath $version) $ModuleName
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item -Path (Join-Path $SrcPath '*') -Destination $dest -Recurse -Force
     $null = Test-ModuleManifest -Path (Join-Path $dest "$ModuleName.psd1")
@@ -145,7 +145,7 @@ function Invoke-Publish {
     }
 
     $version = (Import-PowerShellDataFile $ManifestPath).ModuleVersion
-    $dest    = Join-Path $OutputPath $version $ModuleName
+    $dest    = Join-Path (Join-Path $OutputPath $version) $ModuleName
     if (-not (Test-Path (Join-Path $dest "$ModuleName.psd1"))) {
         throw "Built module not found at $dest. Run './build.ps1 -Task Build' (or -Task All) first."
     }

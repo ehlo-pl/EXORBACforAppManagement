@@ -29,7 +29,7 @@ The three functions form a **create → assign → read** flow and share the sam
 
 ## Requirements
 
-- **PowerShell 5.1+** (developed/tested on PowerShell 7).
+- **PowerShell 5.1+** for the module and build script (developed/tested on PowerShell 7).
 - The following modules installed and **connected** at runtime (they are intentionally *not*
   declared as `RequiredModules`, so the module imports without them for unit testing):
   - **Microsoft Graph** — `Connect-MgGraph`. Needed by only three functions: `New-RegisteredApp`
