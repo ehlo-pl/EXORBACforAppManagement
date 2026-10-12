@@ -123,6 +123,18 @@ Describe 'New-RBAC4AppConfig' {
         $content | Should -Match 'box@contoso\.com'
     }
 
+    It 'generates a concrete scope group name in the config when one is not explicitly provided' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' `
+            -AccessGroupType DistributionList -OutputPath $TestDrive -Confirm:$false
+
+        $content = Get-Content $outFile -Raw
+        $content | Should -Match 'AccessGroupName: "UDLRAo1P-Contoso"'
+    }
+
     It 'writes a .yml file by default' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
