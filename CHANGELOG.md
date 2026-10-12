@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-10-12
+
+### Changed
+- Bumped the module version for the 0.8.5 release.
+
 ## [0.8.4] - 2026-10-10
 
 ### Changed
