@@ -251,7 +251,15 @@ function New-RBAC4AppConfig {
         $normalizedRoles = @(foreach ($r in @($Role)) { Get-NormalizeRole $r })
 
         # --- Build config object
-        $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) { $AccessGroupName } else { '' }
+        $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
+            $AccessGroupName
+        }
+        elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+            ''
+        }
+        else {
+            Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $sp.DisplayName)
+        }
 
         $config = [pscustomobject]@{
             SchemaVersion = '4.0'
