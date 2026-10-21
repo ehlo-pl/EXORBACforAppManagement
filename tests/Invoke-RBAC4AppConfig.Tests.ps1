@@ -267,6 +267,58 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
     }
 
+    It 'creates a separate scope group and management scope for each role when configured' {
+        $separateConfig = Join-Path $TestDrive 'test-config-separate-role-scopes.yml'
+        $yaml = $script:testYaml -replace 'SchemaVersion: "3.0"', 'SchemaVersion: "4.0"'
+        $yaml = $yaml -replace '    - Application Mail.Send', "    - Application Mail.Send`n    - Application Calendars.Read"
+        $yaml = $yaml -replace '  BootstrapMember: GraphAPI-Dummy', "  BootstrapMember: GraphAPI-Dummy`n  ScopeKind: `"Group`"`n  SeparateScopePerRole: `"true`""
+        Set-Content $separateConfig -Value $yaml -Encoding UTF8
+
+        $res = Invoke-RBAC4AppConfig -Path $separateConfig -Confirm:$false
+
+        $res.Errors | Should -BeNullOrEmpty
+        $res.ScopeGroupNames | Should -Contain 'Um365RAo1-Contoso-AppMailSend'
+        $res.ScopeGroupNames | Should -Contain 'Um365RAo1-Contoso-AppCldR'
+        $res.ManagementScopeNames | Should -Contain 'MSRAo1P-Contoso-AppMailSend'
+        $res.ManagementScopeNames | Should -Contain 'MSRAo1P-Contoso-AppCldR'
+        $res.RoleScopes | Should -HaveCount 2
+        ($res.RoleScopes | Where-Object Role -eq 'Application Mail.Send').ManagementScopeName |
+            Should -Be 'MSRAo1P-Contoso-AppMailSend'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
+            $Name -eq 'Um365RAo1-Contoso-AppMailSend'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
+            $Name -eq 'Um365RAo1-Contoso-AppCldR'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 1 -ParameterFilter {
+            $Name -eq 'MSRAo1P-Contoso-AppMailSend'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 1 -ParameterFilter {
+            $Name -eq 'MSRAo1P-Contoso-AppCldR'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter {
+            $Role -eq 'Application Mail.Send' -and $CustomResourceScope -eq 'MSRAo1P-Contoso-AppMailSend'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter {
+            $Role -eq 'Application Calendars.Read' -and $CustomResourceScope -eq 'MSRAo1P-Contoso-AppCldR'
+        }
+    }
+
+    It 'honors -WhatIf for all per-role group and scope creations' {
+        $separateConfig = Join-Path $TestDrive 'test-config-separate-role-whatif.yml'
+        $yaml = $script:testYaml -replace 'SchemaVersion: "3.0"', 'SchemaVersion: "4.0"'
+        $yaml = $yaml -replace '    - Application Mail.Send', "    - Application Mail.Send`n    - Application Calendars.Read"
+        $yaml = $yaml -replace '  BootstrapMember: GraphAPI-Dummy', "  BootstrapMember: GraphAPI-Dummy`n  ScopeKind: `"Group`"`n  SeparateScopePerRole: `"true`""
+        Set-Content $separateConfig -Value $yaml -Encoding UTF8
+
+        $null = Invoke-RBAC4AppConfig -Path $separateConfig -WhatIf
+
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 0
+    }
+
     It 'treats a 3.0 config as ScopeKind Group and binds the assignment to a MemberOfGroup management scope' {
         $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
         $res.ScopeKind             | Should -Be 'Group'

@@ -65,6 +65,7 @@ function ConvertFrom-RBAC4AppYaml {
             ScopeTagAttribute     = ''
             ScopeTagValue         = ''
             ScopeFilter           = ''
+            SeparateScopePerRole  = $false
         }
     }
 
@@ -134,6 +135,7 @@ function ConvertFrom-RBAC4AppYaml {
                     'ScopeTagAttribute'     { $config.RbacScope.ScopeTagAttribute     = $value; $listKey = $null }
                     'ScopeTagValue'         { $config.RbacScope.ScopeTagValue         = $value; $listKey = $null }
                     'ScopeFilter'           { $config.RbacScope.ScopeFilter           = $value; $listKey = $null }
+                    'SeparateScopePerRole'  { $config.RbacScope.SeparateScopePerRole  = ($value -eq 'true'); $listKey = $null }
                 }
             }
         }

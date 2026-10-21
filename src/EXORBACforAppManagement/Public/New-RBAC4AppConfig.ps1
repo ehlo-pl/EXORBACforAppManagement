@@ -57,6 +57,10 @@ How the management scope selects recipients: Group (default; members of the scop
 Recipients (-ScopeRecipients), Tag (-ScopeTagAttribute/-ScopeTagValue), or Filter (-ScopeFilter).
 Group settings (AccessGroupType, GroupPrefix, Members, ...) only apply to the Group kind.
 
+.PARAMETER SeparateScopePerRole
+Create a separate scope group and management scope for each configured role/permission. Applies
+only to -ScopeKind Group.
+
 .PARAMETER ManagementScopeName
 Explicit management scope name. Cannot be combined with -ManagementScopePrefix.
 
@@ -172,6 +176,10 @@ function New-RBAC4AppConfig {
         [string] $ScopeFilter,
 
         [Parameter()]
+        [Alias('SeparateScopePerPermission')]
+        [switch] $SeparateScopePerRole,
+
+        [Parameter()]
         [ValidateNotNullOrEmpty()]
         [string] $ChangeReference,
 
@@ -195,6 +203,9 @@ function New-RBAC4AppConfig {
         }
         if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
             throw '-ScopeFilter is required when -ScopeKind is Filter.'
+        }
+        if ($SeparateScopePerRole -and $ScopeKind -ne 'Group') {
+            throw '-SeparateScopePerRole can only be used with -ScopeKind Group.'
         }
         foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
             Write-Warning -Message $ignoredMsg
@@ -288,6 +299,7 @@ function New-RBAC4AppConfig {
                 ScopeTagAttribute     = $ScopeTagAttribute
                 ScopeTagValue         = if ($ScopeTagValue) { $ScopeTagValue } else { '' }
                 ScopeFilter           = if ($ScopeFilter) { $ScopeFilter } else { '' }
+                SeparateScopePerRole  = [bool]$SeparateScopePerRole
             }
         }
 

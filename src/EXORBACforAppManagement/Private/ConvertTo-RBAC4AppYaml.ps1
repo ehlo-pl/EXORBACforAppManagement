@@ -61,6 +61,7 @@
     $lines.Add("  ScopeTagAttribute: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeTagAttribute)")
     $lines.Add("  ScopeTagValue: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeTagValue)")
     $lines.Add("  ScopeFilter: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeFilter)")
+    $lines.Add("  SeparateScopePerRole: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.SeparateScopePerRole)")
 
     return $lines -join [System.Environment]::NewLine
 }
