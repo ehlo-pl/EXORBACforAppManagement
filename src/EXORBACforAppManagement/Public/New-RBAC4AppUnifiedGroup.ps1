@@ -13,7 +13,7 @@ place and a warning is emitted. A summary object describing the resolved group i
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
 .PARAMETER Name
-Name and Alias of the Unified Group. Sanitized via Get-SafeName (<= 63 chars, alphanumeric/dash
+Name and Alias of the Unified Group. Sanitized via Get-SafeName (<= 64 chars, alphanumeric/dash
 only - spaces, tabs, commas, semicolons, and other characters Exchange's Alias rejects are
 stripped) regardless of whether the caller already sanitized it.
 

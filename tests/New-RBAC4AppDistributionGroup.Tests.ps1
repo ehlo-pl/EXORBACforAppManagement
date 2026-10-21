@@ -106,12 +106,12 @@ Describe 'New-RBAC4AppDistributionGroup' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 0
     }
 
-    It 'derives name from -AppName using default prefix UDLRAo1' {
+    It 'derives name from -AppName using the shared default prefix UDLRAo1P' {
         Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
         Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
 
         $res = New-RBAC4AppDistributionGroup -AppName 'Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
-        $res.Name | Should -Be 'UDLRAo1-Contoso'
+        $res.Name | Should -Be 'UDLRAo1P-Contoso'
         $res.AlreadyExisted | Should -BeFalse
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1
     }
@@ -132,9 +132,9 @@ Describe 'New-RBAC4AppDistributionGroup' {
 
         $res = New-RBAC4AppDistributionGroup -AppName 'Contoso Mail App 1642232032' -ManagedBy 'owner@contoso.com' -Confirm:$false
 
-        $res.Name | Should -Be 'UDLRAo1-ContosoMailApp1642232032'
+        $res.Name | Should -Be 'UDLRAo1P-ContosoMailApp1642232032'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1 -ParameterFilter {
-            $Name -eq 'UDLRAo1-ContosoMailApp1642232032' -and $Alias -eq 'UDLRAo1-ContosoMailApp1642232032'
+            $Name -eq 'UDLRAo1P-ContosoMailApp1642232032' -and $Alias -eq 'UDLRAo1P-ContosoMailApp1642232032'
         }
     }
 

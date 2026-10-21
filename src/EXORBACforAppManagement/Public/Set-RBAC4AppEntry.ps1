@@ -378,7 +378,7 @@ function Set-RBAC4AppEntry {
                 # --- Determine the current and target scope group names (same name rule as New-RBAC4AppEntry).
                 # A MailEnabledSecurityGroup is on-prem/hybrid-synced: its name is referenced, never generated.
                 if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
-                    $currentGroup = $AccessGroupName
+                    $currentGroup = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $AccessGroupName } else { Get-SafeName -s $AccessGroupName }
                 }
                 elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                     throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
@@ -587,7 +587,7 @@ function Set-RBAC4AppEntry {
                     continue
                 }
 
-                $rbacName = Get-SafeName -s ("{0}-{1}" -f $shortRoleName, $sp.DisplayName) -max 63
+                $rbacName = Get-SafeName -s ("{0}-{1}" -f $shortRoleName, $sp.DisplayName) -max 64
 
                 try {
                     $existing = Get-ManagementRoleAssignment -Identity $rbacName -ErrorAction SilentlyContinue | Select-Object -First 1

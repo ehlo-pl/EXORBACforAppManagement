@@ -1,6 +1,6 @@
 function Get-RBAC4AppManagementScopeName {
-    # Deterministic management scope name for an application: an explicit -Name wins, otherwise
-    # "{Prefix}-{DisplayName}" sanitized via Get-SafeName (Exchange caps scope names at 64 chars).
+    # Generated names for all RBAC objects use the shared 64-character cap and hash-safe truncation.
+    # An explicit -Name remains an override and is passed through unchanged.
     param(
         [Parameter(Mandatory)]
         [string] $DisplayName,

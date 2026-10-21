@@ -135,6 +135,17 @@ Describe 'New-RBAC4AppConfig' {
         $content | Should -Match 'AccessGroupName: "UDLRAo1P-Contoso"'
     }
 
+    It 'sanitizes an explicit cloud scope group name consistently in the config' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AccessGroupName 'Custom Scope, Name' `
+            -OutputPath $TestDrive -Confirm:$false
+
+        (Get-Content $outFile -Raw) | Should -Match 'AccessGroupName: "CustomScopeName"'
+    }
+
     It 'writes a .yml file by default' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }

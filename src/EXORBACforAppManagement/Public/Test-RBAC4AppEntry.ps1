@@ -279,7 +279,7 @@ function Test-RBAC4AppEntry {
             if ($ScopeKind -eq 'Group') {
             #REINDENT-START
             if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
-                $umGroupName = $AccessGroupName
+                $umGroupName = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $AccessGroupName } else { Get-SafeName -s $AccessGroupName }
             }
             elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                 throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
@@ -368,7 +368,7 @@ function Test-RBAC4AppEntry {
                     continue
                 }
 
-                $expectedName = Get-SafeName -s ("{0}-{1}" -f $shortRoleName, $sp.DisplayName) -max 63
+                $expectedName = Get-SafeName -s ("{0}-{1}" -f $shortRoleName, $sp.DisplayName) -max 64
                 $result.RoleAssignmentsExpected += $expectedName
 
                 $assignment = Get-ManagementRoleAssignment -Identity $expectedName -ErrorAction SilentlyContinue

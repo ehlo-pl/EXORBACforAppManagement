@@ -15,16 +15,29 @@ Describe 'Get-SafeName' {
         }
     }
 
-    It 'caps the result at the requested length' {
+    It 'caps the result at the requested length with a deterministic hash suffix' {
         InModuleScope EXORBACforAppManagement {
-            $out = Get-SafeName -s ('a' * 100) -max 63
+            $input = 'a' * 100
+            $out = Get-SafeName -s $input -max 63
             $out.Length | Should -Be 63
+            $out | Should -Be (Get-SafeName -s $input -max 63)
+            $out | Should -Match '^[a-z0-9-]+-[a-f0-9]{12}$'
         }
     }
 
-    It 'defaults the cap to 63' {
+    It 'avoids collisions when long names share a truncated prefix' {
         InModuleScope EXORBACforAppManagement {
-            (Get-SafeName -s ('b' * 200)).Length | Should -Be 63
+            $first = Get-SafeName -s (('a' * 100) + 'first') -max 64
+            $second = Get-SafeName -s (('a' * 100) + 'second') -max 64
+            $first.Length | Should -Be 64
+            $second.Length | Should -Be 64
+            $first | Should -Not -Be $second
+        }
+    }
+
+    It 'defaults to the shared 64-character Exchange object name limit' {
+        InModuleScope EXORBACforAppManagement {
+            (Get-SafeName -s ('b' * 200)).Length | Should -Be 64
         }
     }
 }

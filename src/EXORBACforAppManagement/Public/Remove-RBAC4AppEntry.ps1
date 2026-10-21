@@ -227,7 +227,7 @@ function Remove-RBAC4AppEntry {
             $isMesg = ($ScopeKind -eq 'Group' -and $AccessGroupType -eq 'MailEnabledSecurityGroup')
             if ($ScopeKind -eq 'Group') {
                 if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
-                    $umGroupName = $AccessGroupName
+                    $umGroupName = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $AccessGroupName } else { Get-SafeName -s $AccessGroupName }
                 }
                 elseif ($isMesg) {
                     throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."

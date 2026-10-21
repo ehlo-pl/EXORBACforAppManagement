@@ -380,7 +380,7 @@ function New-RBAC4AppEntry {
                 # --- Resolve the scope group name. A MailEnabledSecurityGroup is on-prem/hybrid-synced:
                 # it already has its own name and is never generated, so -AccessGroupName is required.
                 if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
-                    $umGroupName = $AccessGroupName
+                    $umGroupName = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $AccessGroupName } else { Get-SafeName -s $AccessGroupName }
                 }
                 elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                     throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup; on-prem/hybrid-synced groups are referenced by their existing name, not generated."
@@ -520,7 +520,7 @@ function New-RBAC4AppEntry {
             foreach ($roleItem in $rolesNormalized) {
                 $ShortRoleName = $shortRoleMap[$roleItem]
 
-                $rbacNameBase = Get-SafeName -s ("{0}-{1}" -f $ShortRoleName,$sp.DisplayName) -max 63
+                $rbacNameBase = Get-SafeName -s ("{0}-{1}" -f $ShortRoleName,$sp.DisplayName) -max 64
                 $result.RoleAssignmentsName += $rbacNameBase
 
                 # --- Skip creation if a role assignment with this deterministic name already

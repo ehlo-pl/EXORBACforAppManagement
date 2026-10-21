@@ -252,7 +252,7 @@ function New-RBAC4AppConfig {
 
         # --- Build config object
         $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
-            $AccessGroupName
+            if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $AccessGroupName } else { Get-SafeName -s $AccessGroupName }
         }
         elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
             ''

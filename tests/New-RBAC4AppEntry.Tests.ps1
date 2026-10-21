@@ -152,6 +152,15 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
         }
     }
 
+    It 'sanitizes an explicit generated group name before using it as the scope' {
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -AccessGroupName 'RBAC AppScope, Contoso' -Role 'Mail.Send' -WhatIf
+
+        $r.ScopeGroupName | Should -Be 'RBACAppScopeContoso'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppUnifiedGroup -Times 1 -ParameterFilter {
+            $Name -eq 'RBACAppScopeContoso'
+        }
+    }
+
     It 'throws when AccessGroupName and GroupPrefix are both explicitly set' {
         {
             New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupName 'RBAC-AppScope-Contoso' -GroupPrefix 'Um365Prod' -WhatIf

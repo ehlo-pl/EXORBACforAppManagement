@@ -21,11 +21,12 @@ letters/digits/dash are stripped, since Exchange's Alias rejects them). Mutually
 -Name.
 
 .PARAMETER Prefix
-Prefix prepended to -AppName when deriving the group name. Defaults to 'UDLRAo1'.
+Prefix prepended to -AppName when deriving the group name. Defaults to 'UDLRAo1P', matching the
+DistributionList prefix used by New-RBAC4AppEntry and the config workflow.
 Only valid with -AppName.
 
 .PARAMETER Name
-Name and Alias of the distribution list. Sanitized via Get-SafeName (<= 63 chars,
+Name and Alias of the distribution list. Sanitized via Get-SafeName (<= 64 chars,
 alphanumeric/dash only - spaces, tabs, commas, semicolons, and other characters Exchange's Alias
 rejects are stripped) regardless of whether the caller already sanitized it. Mutually exclusive
 with -AppName / -Prefix.
@@ -49,7 +50,7 @@ Optional change or incident reference to persist in a local metadata file under
 .EXAMPLE
 New-RBAC4AppDistributionGroup -AppName 'ContosoMailApp' -WhatIf -Verbose
 
-Shows the planned distribution list creation for 'UDLRAo1-ContosoMailApp' without making changes.
+Shows the planned distribution list creation for 'UDLRAo1P-ContosoMailApp' without making changes.
 
 .EXAMPLE
 New-RBAC4AppDistributionGroup -AppName 'ContosoMailApp' -Prefix 'MYORG' -WhatIf
@@ -82,7 +83,7 @@ function New-RBAC4AppDistributionGroup {
 
         [Parameter(ParameterSetName = 'ByAppName')]
         [ValidateNotNullOrEmpty()]
-        [string] $Prefix = 'UDLRAo1',
+        [string] $Prefix = 'UDLRAo1P',
 
         [Parameter(Mandatory, Position = 0, ValueFromPipelineByPropertyName, ParameterSetName = 'ByName')]
         [ValidateNotNullOrEmpty()]

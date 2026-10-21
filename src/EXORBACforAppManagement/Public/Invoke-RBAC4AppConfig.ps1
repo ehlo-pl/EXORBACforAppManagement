@@ -171,7 +171,7 @@ function Invoke-RBAC4AppConfig {
             if ($isGroupKind) {
                 # --- Derive scope group name
                 if ($AccessGroupName) {
-                    $umGroupName = $AccessGroupName
+                    $umGroupName = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $AccessGroupName } else { Get-SafeName -s $AccessGroupName }
                 }
                 elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                     throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
@@ -288,7 +288,7 @@ function Invoke-RBAC4AppConfig {
             $rbacNameBase = $null
             foreach ($roleItem in $rolesNormalized) {
                 $shortName    = $shortRoleMap[$roleItem]
-                $rbacNameBase = Get-SafeName -s ('{0}-{1}' -f $shortName, $spDisplayName) -max 63
+                $rbacNameBase = Get-SafeName -s ('{0}-{1}' -f $shortName, $spDisplayName) -max 64
                 $result.RoleAssignmentsName += $rbacNameBase
 
                 # --- Skip creation if a role assignment with this deterministic name already
