@@ -480,6 +480,11 @@ $yml = New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' `
            -AccessGroupType DistributionList `
            -Members 'shared@contoso.com' -OutputPath C:\rbac-configs
 
+# Give each configured permission its own group-backed management scope:
+$yml = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
+           -Role 'Mail.Send','Calendars.Read' -SeparateScopePerRole `
+           -Members 'shared@contoso.com' -OutputPath C:\rbac-configs
+
 # By SP object id, referencing an existing on-prem group:
 $yml = New-RBAC4AppConfig -SpObjectId '11111111-2222-3333-4444-555555555555' `
            -Role 'Mail.Send' -AccessGroupType MailEnabledSecurityGroup `
@@ -492,7 +497,9 @@ $json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
 
 Returns the path to the written config file (`.yml` or `.json`). Pass `-WhatIf` to preview the
 output path and content without writing the file. The config schema is identical between formats —
-`-Format` only changes serialization and the file extension.
+`-Format` only changes serialization and the file extension. `-SeparateScopePerRole` (alias
+`-SeparateScopePerPermission`) is available for `-ScopeKind Group`; it creates one uniquely named
+scope group and management scope per configured role, using the same members and owners for each.
 
 ### Invoke-RBAC4AppConfig
 

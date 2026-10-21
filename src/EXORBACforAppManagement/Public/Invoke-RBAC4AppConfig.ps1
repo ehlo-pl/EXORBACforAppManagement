@@ -45,7 +45,8 @@ Invoke-RBAC4AppConfig -Path .\rbac4app-ContosoMailApp-202609200830.json
 .OUTPUTS
 PSCustomObject - same summary shape as New-RBAC4AppEntry (ResolvedDisplay, AppId, SpObjectId,
 ScopeKind, ManagementScopeName, ManagementScopeFilter, ScopeGroupName, RolesNormalized, RoleAssignmentsName, MembersAdded, MembersFinal, Warnings,
-Errors, etc.).
+Errors, etc.). When SeparateScopePerRole is enabled, ScopeGroupNames, ManagementScopeNames, and
+RoleScopes report the per-role resources.
 #>
 function Invoke-RBAC4AppConfig {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
@@ -114,6 +115,7 @@ function Invoke-RBAC4AppConfig {
         $BootstrapMember = $config.RbacScope.BootstrapMember
         $roles           = @($config.Rbac.Roles)
         $ChangeReference = [string]$config.Rbac.ChangeReference
+        $separateScopePerRole = ([string]$config.RbacScope.SeparateScopePerRole -eq 'true')
 
         # --- Management scope settings (schema 4.0; absent from 3.0 -> Group kind, default prefix)
         $ScopeKind = if ([string]$config.RbacScope.ScopeKind) { [string]$config.RbacScope.ScopeKind } else { 'Group' }
@@ -136,6 +138,11 @@ function Invoke-RBAC4AppConfig {
             return
         }
         $isGroupKind = $ScopeKind -eq 'Group'
+        if ($separateScopePerRole -and -not $isGroupKind) {
+            Write-Error "Config '$Path' has SeparateScopePerRole enabled but ScopeKind is '$ScopeKind'; this option requires ScopeKind Group."
+            return
+        }
+        $rolesNormalized = @(foreach ($r in $roles) { Get-NormalizeRole $r })
 
         $result = [ordered]@{
             ParameterSet        = 'ByConfig'
@@ -150,6 +157,7 @@ function Invoke-RBAC4AppConfig {
             ManagementScopeCreated = $false
             AccessGroupType     = if ($isGroupKind) { $AccessGroupType } else { $null }
             ScopeGroupName      = $null
+            ScopeGroupNames     = @()
             OwnerRequested      = if ($isGroupKind) { @($ManagedBy) } else { @() }
             OwnerAdded          = $null
             MembersRequested    = if ($isGroupKind) { @($Members) } else { @() }
@@ -159,6 +167,8 @@ function Invoke-RBAC4AppConfig {
             ChangeReference     = $ChangeReference
             ChangeReferencePath = $null
             RolesNormalized     = @()
+            ManagementScopeNames = @()
+            RoleScopes          = @()
             RoleAssignments     = @()
             RoleAssignmentsName = @()
             Warnings            = @()
@@ -166,127 +176,163 @@ function Invoke-RBAC4AppConfig {
         }
 
         try {
-            $ugResult = $null
-            $umGroupName = $null
-            if ($isGroupKind) {
-                # --- Derive scope group name
-                if ($AccessGroupName) {
-                    $umGroupName = $AccessGroupName
-                }
-                elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                    throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
-                }
-                else {
-                    $umGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
-                }
-                $result.ScopeGroupName = $umGroupName
-
-                # --- Ensure scope group
-                Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
-                $scopeGroupParams = @{
-                    AccessGroupType = $AccessGroupType
-                    Name            = $umGroupName
-                    ManagedBy       = $ManagedBy
-                    BootstrapMember = $BootstrapMember
-                    WarningVariable = 'ugWarnings'
-                }
-                if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
-                $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
-                foreach ($w in $ugWarnings) {
-                    if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
-                }
-                if ($ugResult) {
-                    $result.OwnerRequested = $ugResult.OwnerRequested
-                    $result.OwnerAdded     = $ugResult.OwnerAdded
-                    $result.ChangeReferencePath = $ugResult.ChangeReferencePath
-                }
-
-                # --- Read the group's current membership once (all types, read-only): seeds MembersFinal
-                # below and is reused rather than re-queried after any additions (EXO reads can lag
-                # writes, so a fresh post-write read would not reliably reflect what was just added).
-                $existingLinks = if ($AccessGroupType -eq 'M365Group') {
-                    @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
-                }
-                else {
-                    @(Get-DistributionGroupMember -Identity $umGroupName -ErrorAction SilentlyContinue)
-                }
-                $existingMemberIdentities = @($existingLinks | ForEach-Object {
-                        if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
-                    } | Where-Object { $_ } | Select-Object -Unique)
-
-                # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
-                # here, so warn about any group-modifying config value that was ignored.
-                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                    if ($Members -and ($Members | Where-Object { $_ -and $_ -ne 'GraphAPI-Dummy' })) {
-                        $skipMsg = "Membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; Members from config was ignored."
-                        $result.Warnings += $skipMsg
-                        Write-Warning $skipMsg
-                    }
-                    if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
-                        $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; ManagedBy from config was ignored."
-                        $result.Warnings += $skipOwnerMsg
-                        Write-Warning $skipOwnerMsg
-                    }
-                    if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
-                        $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; BootstrapMember from config was ignored."
-                        $result.Warnings += $skipBootstrapMsg
-                        Write-Warning $skipBootstrapMsg
-                    }
-                }
-                else {
-                    foreach ($member in $Members) {
-                        if (-not $member) { continue }
-                        $rec = Get-Recipient -Identity $member -ErrorAction SilentlyContinue
-                        if (-not $rec) {
-                            $result.Warnings += "Recipient not found for '$member' (skipped)."
-                            continue
-                        }
-                        if ($PSCmdlet.ShouldProcess("$AccessGroupType $umGroupName", "Add member $($rec.PrimarySmtpAddress)")) {
-                            if ($AccessGroupType -eq 'DistributionList') {
-                                Add-DistributionGroupMember -Identity $umGroupName -Member $rec.PrimarySmtpAddress -ErrorAction Stop
-                            }
-                            else {
-                                Add-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -Links $rec.PrimarySmtpAddress -ErrorAction Stop
-                            }
-                        }
-                        $result.MembersAdded += [string]$rec.PrimarySmtpAddress
-                    }
-                }
-
-                $result.MembersFinal = @($existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
-            }
+            $rolesNormalized = @($rolesNormalized)
+            $result.RolesNormalized = @($rolesNormalized)
+            $scopeRoleItems = if ($separateScopePerRole) { @($rolesNormalized | Select-Object -Unique) } else { @('SharedScope') }
+            $scopeContexts = @()
 
             # --- Register EXO service principal
             $exoSpDisplay = '{0}_SP' -f $spDisplayName
             $null = Register-EXOServicePrincipal -AppId $spAppId -ObjectId $spId -DisplayName $exoSpDisplay
 
-            # --- Ensure the management scope the role assignments are bound to (create-only, like
-            # New-RBAC4AppEntry: an existing scope with a different filter is warned about, not changed).
-            $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $spDisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
-            $result.ManagementScopeName = $scopeName
-            $groupDn = if ($ugResult -and $ugResult.Group) { [string]$ugResult.Group.DistinguishedName } else { $null }
-            $filterArgs = @{
-                ScopeKind              = $ScopeKind
-                GroupIdentity          = $umGroupName
-                GroupDistinguishedName = $groupDn
-                Recipients             = $ScopeRecipients
-                TagAttribute           = $ScopeTagAttribute
-                TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
-                Filter                 = $ScopeFilter
-                AllowUnresolved        = ($isGroupKind -and [bool]$WhatIfPreference)
+            foreach ($scopeRole in $scopeRoleItems) {
+                $roleSuffix = if ($separateScopePerRole) { [string]$shortRoleMap[$scopeRole] } else { '' }
+                $ugResult = $null
+                $umGroupName = $null
+
+                if ($isGroupKind) {
+                    # --- Derive a scope group name, retaining the role suffix within the length limit.
+                    if ($AccessGroupName) {
+                        $baseGroupName = $AccessGroupName
+                    }
+                    elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                        throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
+                    }
+                    else {
+                        $baseGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
+                    }
+                    if ($roleSuffix) {
+                        $groupSuffix = "-$roleSuffix"
+                        $umGroupName = (Get-SafeName -s $baseGroupName -max (64 - $groupSuffix.Length)) + $groupSuffix
+                    }
+                    else {
+                        $umGroupName = $baseGroupName
+                    }
+                    $result.ScopeGroupNames += $umGroupName
+                    if (-not $result.ScopeGroupName) { $result.ScopeGroupName = $umGroupName }
+
+                    # --- Ensure scope group
+                    Write-Verbose ("Checking {0} '{1}' for service principal '{2}' ({3})." -f $AccessGroupType, $umGroupName, $spDisplayName, $spId)
+                    $scopeGroupParams = @{
+                        AccessGroupType = $AccessGroupType
+                        Name            = $umGroupName
+                        ManagedBy       = $ManagedBy
+                        BootstrapMember = $BootstrapMember
+                        WarningVariable = 'ugWarnings'
+                    }
+                    if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
+                    $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
+                    foreach ($w in $ugWarnings) {
+                        if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+                    }
+                    if ($ugResult) {
+                        if (-not $result.OwnerAdded) {
+                            $result.OwnerRequested = $ugResult.OwnerRequested
+                            $result.OwnerAdded     = $ugResult.OwnerAdded
+                            $result.ChangeReferencePath = $ugResult.ChangeReferencePath
+                        }
+                    }
+
+                    # --- Read membership once for this scope group.
+                    $existingLinks = if ($AccessGroupType -eq 'M365Group') {
+                        @(Get-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -ErrorAction SilentlyContinue)
+                    }
+                    else {
+                        @(Get-DistributionGroupMember -Identity $umGroupName -ErrorAction SilentlyContinue)
+                    }
+                    $existingMemberIdentities = @($existingLinks | ForEach-Object {
+                            if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
+                        } | Where-Object { $_ } | Select-Object -Unique)
+
+                    if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                        if ($Members -and ($Members | Where-Object { $_ -and $_ -ne 'GraphAPI-Dummy' })) {
+                            $skipMsg = "Membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; Members from config was ignored."
+                            $result.Warnings += $skipMsg
+                            Write-Warning $skipMsg
+                        }
+                        if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
+                            $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; ManagedBy from config was ignored."
+                            $result.Warnings += $skipOwnerMsg
+                            Write-Warning $skipOwnerMsg
+                        }
+                        if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
+                            $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; BootstrapMember from config was ignored."
+                            $result.Warnings += $skipBootstrapMsg
+                            Write-Warning $skipBootstrapMsg
+                        }
+                    }
+                    else {
+                        foreach ($member in $Members) {
+                            if (-not $member) { continue }
+                            $rec = Get-Recipient -Identity $member -ErrorAction SilentlyContinue
+                            if (-not $rec) {
+                                $result.Warnings += "Recipient not found for '$member' (skipped)."
+                                continue
+                            }
+                            if ($PSCmdlet.ShouldProcess("$AccessGroupType $umGroupName", "Add member $($rec.PrimarySmtpAddress)")) {
+                                if ($AccessGroupType -eq 'DistributionList') {
+                                    Add-DistributionGroupMember -Identity $umGroupName -Member $rec.PrimarySmtpAddress -ErrorAction Stop
+                                }
+                                else {
+                                    Add-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -Links $rec.PrimarySmtpAddress -ErrorAction Stop
+                                }
+                            }
+                            $result.MembersAdded += [string]$rec.PrimarySmtpAddress
+                        }
+                    }
+
+                    $result.MembersFinal = @($result.MembersFinal + $existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
+                }
+
+                # --- Ensure the management scope the role assignments are bound to.
+                $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $spDisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
+                if ($roleSuffix) {
+                    $scopeSuffix = "-$roleSuffix"
+                    $scopeName = (Get-SafeName -s $scopeName -max (64 - $scopeSuffix.Length)) + $scopeSuffix
+                }
+                $result.ManagementScopeNames += $scopeName
+                if (-not $result.ManagementScopeName) { $result.ManagementScopeName = $scopeName }
+                $groupDn = if ($ugResult -and $ugResult.Group) { [string]$ugResult.Group.DistinguishedName } else { $null }
+                $filterArgs = @{
+                    ScopeKind              = $ScopeKind
+                    GroupIdentity          = $umGroupName
+                    GroupDistinguishedName = $groupDn
+                    Recipients             = $ScopeRecipients
+                    TagAttribute           = $ScopeTagAttribute
+                    TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
+                    Filter                 = $ScopeFilter
+                    AllowUnresolved        = ($isGroupKind -and [bool]$WhatIfPreference)
+                }
+                $scopeFilterText = ConvertTo-RBAC4AppRecipientFilter @filterArgs
+                $scopeResult = New-RBAC4AppManagementScope -Name $scopeName -RecipientRestrictionFilter $scopeFilterText -NoUpdate -WarningVariable msWarnings
+                foreach ($w in $msWarnings) { $result.Warnings += [string]$w.Message }
+                if (-not $result.ManagementScopeFilter) { $result.ManagementScopeFilter = $scopeResult.RecipientRestrictionFilter }
+                $result.ManagementScopeCreated = [bool]($result.ManagementScopeCreated -or $scopeResult.Created)
+                $scopeContexts += [pscustomobject]@{
+                    Role      = $scopeRole
+                    GroupName = $umGroupName
+                    ScopeName = $scopeName
+                }
+                if ($separateScopePerRole) {
+                    $result.RoleScopes += [pscustomobject]@{
+                        Role               = $scopeRole
+                        ScopeGroupName     = $umGroupName
+                        ManagementScopeName = $scopeName
+                    }
+                }
             }
-            $scopeFilterText = ConvertTo-RBAC4AppRecipientFilter @filterArgs
-            $scopeResult = New-RBAC4AppManagementScope -Name $scopeName -RecipientRestrictionFilter $scopeFilterText -NoUpdate -WarningVariable msWarnings
-            foreach ($w in $msWarnings) { $result.Warnings += [string]$w.Message }
-            $result.ManagementScopeFilter  = $scopeResult.RecipientRestrictionFilter
-            $result.ManagementScopeCreated = [bool]$scopeResult.Created
 
             # --- Role assignments
-            $rolesNormalized = @(foreach ($r in $roles) { Get-NormalizeRole $r })
-            $result.RolesNormalized = @($rolesNormalized)
-
             $rbacNameBase = $null
             foreach ($roleItem in $rolesNormalized) {
+                $roleContext = if ($separateScopePerRole) {
+                    $scopeContexts | Where-Object { $_.Role -eq $roleItem } | Select-Object -First 1
+                }
+                else {
+                    $scopeContexts[0]
+                }
+                $scopeName = $roleContext.ScopeName
+                $umGroupName = $roleContext.GroupName
                 $shortName    = $shortRoleMap[$roleItem]
                 $rbacNameBase = Get-SafeName -s ('{0}-{1}' -f $shortName, $spDisplayName) -max 63
                 $result.RoleAssignmentsName += $rbacNameBase

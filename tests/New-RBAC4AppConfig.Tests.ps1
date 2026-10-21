@@ -169,6 +169,32 @@ Describe 'New-RBAC4AppConfig' {
         $parsed.RbacScope.ManagedBy        | Should -Contain 'owner2@contoso.com'
     }
 
+    It 'writes SeparateScopePerRole to YAML and JSON configs' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+
+        $yamlPath = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Role 'Mail.Send', 'Calendars.Read' `
+            -SeparateScopePerRole -OutputPath $TestDrive -Confirm:$false
+        $yaml = Get-Content $yamlPath -Raw
+        $yaml | Should -Match 'SeparateScopePerRole: "True"'
+        $parsedYaml = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $yaml } {
+            param($Content)
+            ConvertFrom-RBAC4AppYaml -Content $Content
+        }
+        $parsedYaml.RbacScope.SeparateScopePerRole | Should -BeTrue
+
+        $jsonPath = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -SeparateScopePerPermission `
+            -Format Json -OutputPath $TestDrive -Confirm:$false
+        $parsedJson = Get-Content $jsonPath -Raw | ConvertFrom-Json
+        $parsedJson.RbacScope.SeparateScopePerRole | Should -BeTrue
+    }
+
+    It 'requires Group scope when SeparateScopePerRole is enabled' {
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Tag -SeparateScopePerRole -OutputPath $TestDrive } |
+            Should -Throw '*can only be used with -ScopeKind Group*'
+    }
+
     It 'writes the management scope settings for -ScopeKind Recipients and round-trips them' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
