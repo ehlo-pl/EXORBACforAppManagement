@@ -181,6 +181,7 @@ Describe 'Get-RBAC4AppEntry -ApplicationAccessPolicy' {
             [pscustomobject]@{ AppId = '33333333-3333-3333-3333-333333333333'; AccessRight = 'RestrictAccess'; ScopeName = 'FabrikamGroup'; Description = 'Fabrikam policy' }
         )
         Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy {
+            param([string]$AppId)
             if ($AppId) { $script:Policies | Where-Object AppId -eq $AppId }
             else { $script:Policies }
         }
