@@ -12,9 +12,14 @@ instead returns one object per distinct application, the app-centric inventory v
 (formerly the separate Get-RegisteredAppWithPermission function, now a deprecated wrapper
 around this switch).
 
-Every row - in either view - resolves the assignee back to its Exchange Online service
-principal pointer (Get-ServicePrincipal, matched by exact DisplayName; no Microsoft Graph
-session is needed) to expose the application's AppId and ServicePrincipalId, and resolves
+With -ApplicationAccessPolicy, it returns the raw Application Access Policy objects from
+Get-ApplicationAccessPolicy instead of RBAC role assignments. The existing application
+identity filters are preserved; AppId is passed to the policy cmdlet, while display name
+and service principal object id are resolved through the Exchange Online service principal.
+
+In the RBAC assignment views, every row resolves the assignee back to its Exchange Online
+service principal pointer (Get-ServicePrincipal, matched by exact DisplayName; no Microsoft
+Graph session is needed) to expose the application's AppId and ServicePrincipalId, and resolves
 its recipient scope to the real scope group name, group type (M365Group, DistributionList,
 or MailEnabledSecurityGroup), and current membership - not just the raw EXO scope fields.
 
@@ -57,6 +62,12 @@ Return one object per distinct application instead of one object per assignment 
 app-centric inventory view. Roles, assignment names, and resolved scope group names/members
 across all of that application's matching assignments are aggregated onto a single row.
 
+.PARAMETER ApplicationAccessPolicy
+Return raw Application Access Policy objects from Get-ApplicationAccessPolicy instead of
+RBAC role assignments. With no identity filter, returns all policies. The existing
+-RegisteredAppName, -AppId, and -SpObjectId filters limit the result to that application.
+Requires an Exchange Online session where Get-ApplicationAccessPolicy is available.
+
 .EXAMPLE
 Get-RBAC4AppEntry
 
@@ -90,8 +101,21 @@ Get-RBAC4AppEntry -ScopeType All -RoleAssigneeType All
 
 Returns every application-role assignment regardless of recipient scope or assignee type.
 
+.EXAMPLE
+Get-RBAC4AppEntry -ApplicationAccessPolicy
+
+Returns all Application Access Policies, without resolving RBAC role assignments.
+
+.EXAMPLE
+Get-RBAC4AppEntry -ApplicationAccessPolicy -AppId '11111111-2222-3333-4444-555555555555'
+
+Returns Application Access Policies for the specified application.
+
 .OUTPUTS
 PSCustomObject
+
+With -ApplicationAccessPolicy, returns the raw objects emitted by Get-ApplicationAccessPolicy
+(including AppId, AccessRight, ScopeName, and Description).
 
 Per-assignment view (default), one object per matching assignment:
 
@@ -157,8 +181,9 @@ Per-application view (-ByApplication), one object per distinct application:
 .NOTES
 Requires a connected Exchange Online session only (Get-ManagementRoleAssignment,
 Get-ServicePrincipal, Get-ManagementScope, Get-Recipient, Get-UnifiedGroup, Get-UnifiedGroupLinks,
-Get-DistributionGroup, Get-DistributionGroupMember). No Microsoft Graph session is needed; the application filter
-only matches applications already registered via Register-EXOServicePrincipal,
+Get-DistributionGroup, Get-DistributionGroupMember). The -ApplicationAccessPolicy mode additionally
+requires Get-ApplicationAccessPolicy. No Microsoft Graph session is needed; the application filter
+for RBAC assignments only matches applications already registered via Register-EXOServicePrincipal,
 New-RBAC4AppEntry, or Invoke-RBAC4AppConfig. Companion to New-RBAC4AppEntry.
 
 Performance / behavior notes:
@@ -210,7 +235,10 @@ function Get-RBAC4AppEntry {
         [string[]] $ScopeType = @('Group', 'CustomRecipientScope'),
 
         [Parameter()]
-        [switch] $ByApplication
+        [switch] $ByApplication,
+
+        [Parameter()]
+        [switch] $ApplicationAccessPolicy
     )
 
     process {
@@ -228,6 +256,28 @@ function Get-RBAC4AppEntry {
         }
         catch {
             Write-Error -Message $_.Exception.Message
+            return
+        }
+
+        if ($ApplicationAccessPolicy) {
+            if (-not (Get-Command -Name Get-ApplicationAccessPolicy -ErrorAction SilentlyContinue)) {
+                Write-Error -Message 'Get-ApplicationAccessPolicy is unavailable. Connect to Exchange Online with a session that provides this cmdlet.'
+                return
+            }
+
+            try {
+                $policyParameters = @{ ErrorAction = 'Stop' }
+                if ($PSBoundParameters.ContainsKey('AppId')) {
+                    $policyParameters.AppId = $AppId
+                }
+                elseif ($sp) {
+                    $policyParameters.AppId = [string]$sp.AppId
+                }
+                @(Get-ApplicationAccessPolicy @policyParameters)
+            }
+            catch {
+                Write-Error -Message ("Failed to read Application Access Policies: {0}" -f $_.Exception.Message)
+            }
             return
         }
 

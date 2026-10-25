@@ -380,7 +380,14 @@ Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send'
 Get-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' | Format-Table Name,Role,Scope
 Get-RBAC4AppEntry -ScopeType All -RoleAssigneeType All            # every recipient scope/assignee
 Get-RBAC4AppEntry -ByApplication                                  # one row per application (inventory view)
+Get-RBAC4AppEntry -ApplicationAccessPolicy                        # all legacy Application Access Policies
+Get-RBAC4AppEntry -ApplicationAccessPolicy -AppId '11111111-2222-3333-4444-555555555555'
 ```
+
+`-ApplicationAccessPolicy` returns the raw objects from `Get-ApplicationAccessPolicy` instead of
+RBAC role assignments. It supports the existing `-RegisteredAppName`, `-AppId`, and `-SpObjectId`
+identity filters; an unfiltered call returns all policies. This mode requires an Exchange Online
+session where `Get-ApplicationAccessPolicy` is available.
 
 > `Get-ManagementRoleAssignment` has no `-App` parameter, so role filtering uses native `-Role`
 > while the application filter is applied client-side against each assignment's `RoleAssigneeName`
