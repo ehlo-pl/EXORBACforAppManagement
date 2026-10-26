@@ -8,6 +8,7 @@ BeforeAll {
     # code passes (e.g. -Role) must be declared so the mock can bind and filter on them.
     function global:Get-ServicePrincipal { [CmdletBinding()] param([string]$Identity) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
+    function global:Get-ApplicationAccessPolicy { [CmdletBinding()] param([string]$AppId) }
     function global:Get-UnifiedGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-UnifiedGroupLinks { [CmdletBinding()] param([string]$Identity, [string]$LinkType) }
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
@@ -37,7 +38,7 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember','Get-ManagementScope','Get-Recipient') {
+    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-ApplicationAccessPolicy','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember','Get-ManagementScope','Get-Recipient') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -170,6 +171,43 @@ Describe 'Get-RBAC4AppEntry application filter' {
         $r = Get-RBAC4AppEntry -RegisteredAppName 'Contoso'
         $r.Count | Should -Be 1
         $r.RoleAssigneeName | Should -Be 'Contoso_SP'
+    }
+}
+
+Describe 'Get-RBAC4AppEntry -ApplicationAccessPolicy' {
+    BeforeEach {
+        $script:Policies = @(
+            [pscustomobject]@{ AppId = '11111111-1111-1111-1111-111111111111'; AccessRight = 'RestrictAccess'; ScopeName = 'ContosoGroup'; Description = 'Contoso policy' }
+            [pscustomobject]@{ AppId = '33333333-3333-3333-3333-333333333333'; AccessRight = 'RestrictAccess'; ScopeName = 'FabrikamGroup'; Description = 'Fabrikam policy' }
+        )
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy {
+            param([string]$AppId)
+            if ($AppId) { $script:Policies | Where-Object AppId -eq $AppId }
+            else { $script:Policies }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
+    }
+
+    It 'returns all policies without an application identity filter' {
+        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy
+
+        $r.Count | Should -Be 2
+        ($r.AppId | Sort-Object) | Should -Be @('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1 -ParameterFilter { -not $AppId }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
+    }
+
+    It 'passes AppId to Get-ApplicationAccessPolicy and returns only that app policy' {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            $script:ExoServicePrincipals
+        }
+
+        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy -AppId '11111111-1111-1111-1111-111111111111'
+
+        $r.Count | Should -Be 1
+        $r.AppId | Should -Be '11111111-1111-1111-1111-111111111111'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1 -ParameterFilter { $AppId -eq '11111111-1111-1111-1111-111111111111' }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
     }
 }
 
