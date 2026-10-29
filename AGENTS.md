@@ -306,6 +306,20 @@ intercept them. Add new stubs the same way when a function starts calling a new 
 
 ## Conventions
 
+- **Error handling (one convention for every public function):**
+  1. *Invalid parameters* - a bad combination or a missing required companion (e.g.
+     `-ManagementScopeName` with `-ManagementScopePrefix`, `-ScopeKind Recipients` without
+     `-ScopeRecipients`) is a terminating `throw` before any work, in `begin`/at the top of `process`
+     (New-/Set-/Test-/Remove-RBAC4AppEntry, New-RBAC4AppConfig all behave the same).
+  2. *Per-item failures in a function that emits a result object* (New-/Set-/Test-/Remove-RBAC4AppEntry,
+     Invoke-RBAC4AppConfig processing, Convert-ApplicationAccessPolicyToRBAC, Invoke-MsGraphEntraIDApiPerm) -
+     catch, append the message to `$result.Errors` and still emit the object, so one bad item does not
+     stop a pipeline and the caller can inspect what was done.
+  3. *Failures before a result object exists* (unreadable/invalid config or policy file, unresolvable
+     identity in the read-only `Get-*`/`New-RBAC4AppConfig` functions) - non-terminating `Write-Error`
+     followed by `return`.
+  Never mix `throw` and `Write-Error` for the same kind of failure within one function.
+
 - Pure PowerShell; depends on the Microsoft.Graph and ExchangeOnlineManagement modules being
   installed and connected at runtime (documented, not declared as `RequiredModules`).
 - Public functions: comment-based help, the `ByName`/`ByAppId`/`BySpObjectId` parameter sets with

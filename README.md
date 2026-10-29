@@ -127,7 +127,7 @@ $yml = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
            -Role 'Mail.Send' `
            -Members 'shared@contoso.com' `
            -OutputPath C:\rbac-configs
-# → writes C:\rbac-configs\rbac4app-ContosoMailApp-<timestamp>.yml
+# → writes C:\rbac-configs\rbac4app-ContosoMailApp-<timestamp>-<id>.yml
 
 # Or write JSON instead:
 # $json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' `

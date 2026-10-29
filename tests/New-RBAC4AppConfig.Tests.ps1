@@ -327,4 +327,17 @@ Describe 'New-RBAC4AppConfig' {
         $result | Should -BeNullOrEmpty
         @(Get-ChildItem $emptyDir -Filter '*.json').Count | Should -Be 0
     }
+
+    It 'does not overwrite an earlier config for the same app written to the same folder' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'no-overwrite') -Force
+        $first = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Confirm:$false
+        $second = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Confirm:$false
+
+        $second | Should -Not -Be $first
+        @(Get-ChildItem -LiteralPath $dir.FullName -Filter 'rbac4app-Contoso-*.yml').Count | Should -Be 2
+        (Split-Path $first -Leaf) | Should -Match '^rbac4app-Contoso-\d{14}-[0-9a-f]{8}\.yml$'
+    }
 }

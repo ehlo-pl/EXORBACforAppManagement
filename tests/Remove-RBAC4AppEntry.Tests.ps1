@@ -275,4 +275,9 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-DistributionGroup -Times 1
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
     }
+
+    It 'throws (terminating) when -ManagementScopeName is combined with -ManagementScopePrefix' {
+        { Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -ManagementScopeName 'a' -ManagementScopePrefix 'b' -Confirm:$false } |
+            Should -Throw '*cannot be used together*'
+    }
 }

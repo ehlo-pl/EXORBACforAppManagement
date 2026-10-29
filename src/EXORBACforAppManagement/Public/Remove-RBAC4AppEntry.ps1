@@ -155,6 +155,11 @@ function Remove-RBAC4AppEntry {
     }
 
     process {
+        # Invalid parameter combinations terminate before any work (same as New-/Set-RBAC4AppEntry).
+        if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+            throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
+        }
+
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
             $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
@@ -186,9 +191,6 @@ function Remove-RBAC4AppEntry {
         }
 
         try {
-            if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
-                throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
-            }
             foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
                 $result.Warnings += $ignoredMsg
             }

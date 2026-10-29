@@ -286,8 +286,10 @@ function New-RBAC4AppConfig {
         # --- Write config file (YAML or JSON, per -Format)
         $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
         $safeName  = Format-RBAC4AppSafeName -Value $sp.DisplayName -MaxLength 40
-        $timestamp = (Get-Date).ToString('yyyyMMddHHmm')
-        $fileName  = "rbac4app-$safeName-$timestamp.$extension"
+        # Seconds plus a short random id keep two configs for the same app from overwriting each other.
+        $timestamp = (Get-Date).ToString('yyyyMMddHHmmss')
+        $uniqueId  = [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fileName  = "rbac4app-$safeName-$timestamp-$uniqueId.$extension"
         $outFile   = Join-Path $OutputPath $fileName
 
         $serialized = if ($Format -eq 'Json') { $config | ConvertTo-Json -Depth 6 } else { ConvertTo-RBAC4AppYaml -Config $config }

@@ -19,7 +19,15 @@ All notable changes to this project are documented here. The format is based on
 - Tests for the error/edge paths of `Invoke-MsGraphEntraIDApiPerm`, `New-RBAC4AppConfig`,
   `New-RBAC4AppDistributionGroup`, `New-RBAC4AppUnifiedGroup` and `Save-RBAC4AppChangeReferenceRecord`.
 
+### Fixed
+- `New-RBAC4AppConfig` no longer overwrites a config written earlier in the same minute: file names are now
+  `rbac4app-<name>-<yyyyMMddHHmmss>-<8 hex>.<ext>`. Globs such as `rbac4app-<name>-*.yml` still match.
+
 ### Changed
+- `Test-RBAC4AppEntry` and `Remove-RBAC4AppEntry` now throw for invalid parameter combinations
+  (`-ManagementScopeName` with `-ManagementScopePrefix`, missing `-ScopeRecipients`/`-ScopeFilter`) like
+  `New-`/`Set-RBAC4AppEntry`, instead of returning the message in `Errors`. The error-handling convention
+  is documented in `AGENTS.md`.
 - **Breaking:** renamed `Get-EXORBACforAppRoleAssignment` -> `Get-RBAC4AppRoleAssignment` and
   `Resolve-EXOapplicationAccessPolicy` -> `Resolve-ApplicationAccessPolicy` (no aliases kept); the private
   `ConvertFrom-`/`ConvertTo-EXOApplicationAccessPolicyYaml` became `...-ApplicationAccessPolicyYaml`.

@@ -193,6 +193,17 @@ function Test-RBAC4AppEntry {
     }
 
     process {
+        # Invalid parameter combinations terminate before any work (same as New-/Set-RBAC4AppEntry).
+        if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+            throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
+        }
+        if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
+            throw "-ScopeRecipients is required when -ScopeKind is Recipients."
+        }
+        if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
+            throw "-ScopeFilter is required when -ScopeKind is Filter."
+        }
+
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
             $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
@@ -231,15 +242,6 @@ function Test-RBAC4AppEntry {
         }
 
         try {
-            if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
-                throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
-            }
-            if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
-                throw "-ScopeRecipients is required when -ScopeKind is Recipients."
-            }
-            if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
-                throw "-ScopeFilter is required when -ScopeKind is Filter."
-            }
             foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
                 $result.Warnings += $ignoredMsg
             }
