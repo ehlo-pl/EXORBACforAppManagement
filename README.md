@@ -19,6 +19,8 @@ The three functions form a **create → assign → read** flow and share the sam
 | `Get-RegisteredAppWithPermission` | *(deprecated)* | Thin wrapper around `Get-RBAC4AppEntry -ByApplication -ScopeType All`; use the latter directly. |
 | [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, scope source, management scope, EXO service principal, role assignments) and returns an `IsValid` summary. |
 | [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate / plan | Writes YAML/JSON RBAC configs from legacy Application Access Policies for later provisioning with `Invoke-RBAC4AppConfig`. |
+| `Resolve-EXOapplicationAccessPolicy` | export | Writes all Exchange Online Application Access Policies to YAML/JSON with an empty `Permissions` list. |
+| `Invoke-MsGraphEntraIDApiPerm` | enrich | Adds granted Microsoft Graph application permissions for mail, calendars, and contacts to an exported policy file. |
 | [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry` when `-AccessGroupType M365Group`). |
 | `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only distribution list (used by `New-RBAC4AppEntry` when `-AccessGroupType DistributionList`). |
 | [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | helper | Creates the EXO service principal pointer for an Entra app (used by `New-RBAC4AppEntry`). |
@@ -32,11 +34,12 @@ The three functions form a **create → assign → read** flow and share the sam
 - **PowerShell 5.1+** for the module and build script (developed/tested on PowerShell 7).
 - The following modules installed and **connected** at runtime (they are intentionally *not*
   declared as `RequiredModules`, so the module imports without them for unit testing):
-  - **Microsoft Graph** — `Connect-MgGraph`. Needed by only three functions: `New-RegisteredApp`
+  - **Microsoft Graph** — `Connect-MgGraph`. Needed by four functions: `New-RegisteredApp`
     (`New-MgApplication`, `New-MgServicePrincipal`, `Get-MgContext`; needs the
     `Application.ReadWrite.All` scope), `New-RBAC4AppConfig` (`Get-MgServicePrincipal`,
-    `Get-MgContext`), and `Convert-ApplicationAccessPolicyToRBAC` (`Get-MgServicePrincipal`,
-    `Get-MgServicePrincipalAppRoleAssignment`).
+    `Get-MgContext`), `Convert-ApplicationAccessPolicyToRBAC` (`Get-MgServicePrincipal`,
+    `Get-MgServicePrincipalAppRoleAssignment`), and `Invoke-MsGraphEntraIDApiPerm`
+    (`Get-MgServicePrincipal`, `Get-MgServicePrincipalAppRoleAssignment`).
   - **Exchange Online** — `Connect-ExchangeOnline`. Needed by every other function, including
     `New-RBAC4AppEntry` itself: `Get-ServicePrincipal` resolves the application (matching the
     pointer `Register-EXOServicePrincipal` creates — no Graph lookup), `Get-ConnectionInformation`
@@ -46,7 +49,7 @@ The three functions form a **create → assign → read** flow and share the sam
 
 ### Per-function module requirements
 
-Only three functions touch Microsoft Graph at all. Every other function — including
+Only four functions touch Microsoft Graph at all. Every other function — including
 `New-RBAC4AppEntry` itself — resolves the application purely through Exchange Online's own service
 principal pointer (`Get-ServicePrincipal`, matching what `Register-EXOServicePrincipal` creates) and
 needs no Graph session, working around the MSAL/WAM assembly conflict between `Microsoft.Graph` and
@@ -67,6 +70,8 @@ needs no Graph session, working around the MSAL/WAM assembly conflict between `M
 | `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementScope` `Get-Recipient` *(resolves the assignee to AppId/ServicePrincipalId via `Get-ServicePrincipal`, and each management scope to its `ScopeKind`/`ScopeFilter` and members - group membership for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter` preview for Tag/Filter kinds; legacy group-direct assignments report `ScopeKind` `GroupDirect`; cached per run; `-ByApplication` groups the same data per application)* |
 | `Get-RegisteredAppWithPermission` *(deprecated)* | — | Delegates entirely to `Get-RBAC4AppEntry -ByApplication -ScopeType All` |
 | `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` `Get-MgContext` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(read-only; writes config files, does not provision RBAC)* |
+| `Resolve-EXOapplicationAccessPolicy` | — | `Get-ApplicationAccessPolicy` *(writes a YAML/JSON policy export with empty `Permissions` arrays)* |
+| `Invoke-MsGraphEntraIDApiPerm` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | — *(reads the policy export and writes an enriched copy)* |
 | `Invoke-RBAC4AppConfig` | — | `Get-ServicePrincipal` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`, same as `New-RBAC4AppEntry`)* |
 
 ## Two-session workflow
@@ -75,7 +80,8 @@ Microsoft.Graph and ExchangeOnlineManagement share MSAL/WAM identity assemblies 
 conflict when both are loaded in the same PowerShell process — symptoms range from
 `RuntimeBroker` / WAM `NullReferenceException` on `Connect-ExchangeOnline` to
 `Method not found` on `Connect-MgGraph`. As of the per-function table above, only
-`New-RegisteredApp`, `New-RBAC4AppConfig`, and `Convert-ApplicationAccessPolicyToRBAC` ever touch
+`New-RegisteredApp`, `New-RBAC4AppConfig`, `Convert-ApplicationAccessPolicyToRBAC`, and
+`Invoke-MsGraphEntraIDApiPerm` ever touch
 Graph — every other function, including `New-RBAC4AppEntry` itself, is Exchange-Online-only and
 never hits the conflict in the first place. `New-RBAC4AppConfig` / `Invoke-RBAC4AppConfig` remain
 useful specifically for provisioning a **brand-new** application (one with no Exchange Online
@@ -104,6 +110,8 @@ session — supply `-AppId`, `-SpObjectId`, and `-RegisteredAppName` together (s
 `Convert-ApplicationAccessPolicyToRBAC` still requires Graph and Exchange Online read access to
 collect permission grants, policies, and source group members. It now only writes config files;
 run `Invoke-RBAC4AppConfig` separately in an Exchange-Online-only session to provision RBAC.
+For a policy export without provisioning, run `Resolve-EXOapplicationAccessPolicy` in the EXO
+session, then pass its output to `Invoke-MsGraphEntraIDApiPerm` in the separate Graph session.
 
 ### Typical two-session flow
 
