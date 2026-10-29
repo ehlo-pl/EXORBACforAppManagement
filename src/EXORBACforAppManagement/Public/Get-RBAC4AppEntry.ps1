@@ -282,7 +282,7 @@ function Get-RBAC4AppEntry {
         }
 
         # --- Retrieve assignments, filtered by role where possible.
-        $rolesNormalized = if ($PSBoundParameters.ContainsKey('Role')) { @($Role | ForEach-Object { ConvertTo-AppRole $_ } | Select-Object -Unique) } else { @() }
+        $rolesNormalized = if ($PSBoundParameters.ContainsKey('Role')) { @($Role | ForEach-Object { ConvertTo-RBAC4AppRoleName -Role $_ } | Select-Object -Unique) } else { @() }
 
         $assignments =
             if ($rolesNormalized.Count -gt 0) {

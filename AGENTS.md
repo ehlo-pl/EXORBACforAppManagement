@@ -99,7 +99,9 @@ src/EXORBACforAppManagement/
                                  # Convert-ApplicationAccessPolicyToRBAC, Test-RBAC4AppEntry,
                                  # Remove-RBAC4AppEntry, Set-RBAC4AppEntry, New-RBAC4AppConfig,
                                  # Invoke-RBAC4AppConfig, New-RBAC4AppManagementScope
-  Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole,
+  Private/                       # Format-RBAC4AppSafeName, ConvertTo-RBAC4AppRoleName,
+                                 # Get-RBAC4AppScopeGroupName, Get-RBAC4AppRoleAssignmentName,
+                                 # RBAC4AppDefaults (shared defaults + name-length limits),
                                  # Get-AppRoleMap, Get-LegacyScopeRoleMap,
                                  # Resolve-AppRolePermissionValue, Resolve-RBAC4AppServicePrincipal,
                                  # Resolve-RBAC4AppScopeGroupName, Resolve-RBAC4AppScope,
@@ -212,7 +214,7 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   `Register-EXOServicePrincipal`) → ensure the management scope (delegated to
   `New-RBAC4AppManagementScope`) → one `New-ManagementRoleAssignment` per role bound to that scope via
   `-CustomResourceScope`. The group steps run only for `-ScopeKind Group`. The scope group name is
-  `"{GroupPrefix}-{SP.DisplayName}"` sanitized by the private `Get-SafeName`. Output is one `[pscustomobject]` summary, also exported to
+  `"{GroupPrefix}-{SP.DisplayName}"` sanitized by the private `Get-RBAC4AppScopeGroupName` (via `Format-RBAC4AppSafeName`). Output is one `[pscustomobject]` summary, also exported to
   `$env:TEMP\<name>_<timestamp>.clixml`; per-item errors are surfaced in `Errors`, not thrown. The
   summary reports the owner as `OwnerRequested`/`OwnerAdded` (read from the
   scope group result) alongside `MembersRequested`/`MembersAdded`. The orchestrator
@@ -265,11 +267,10 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   cannot be resolved is still passed through as-is (unlike a member, an owner cannot be skipped - the
   group must be created with at least one `ManagedBy` value).
 
-- **Three role lookup tables, kept consistent:** the private `Get-NormalizeRole` normalizes short
+- **Three role lookup tables, kept consistent:** the private `ConvertTo-RBAC4AppRoleName` normalizes short
   names → `Application <perm>` (validated against `Get-AppRoleMap`); the private `Get-AppRoleMap`
   owns the normalized role → short assignment-name token map used by `New-RBAC4AppEntry`.
-  `Get-RBAC4AppEntry` normalizes `-Role` via the simpler private `ConvertTo-AppRole` (prefixes
-  `Application ` without validating against the map) and, when `-Role` is omitted, queries every
+  `Get-RBAC4AppEntry` normalizes `-Role` with the same `ConvertTo-RBAC4AppRoleName` and, when `-Role` is omitted, queries every
   `Application *` role rather than only the ones `Get-AppRoleMap` knows; the
   private `Get-LegacyScopeRoleMap` maps each legacy
   Application Access Policy permission scope (e.g. `Mail.Read`, EWS `full_access_as_app`) to its App
@@ -280,8 +281,7 @@ intercept them. Add new stubs the same way when a function starts calling a new 
 - **`Get-RBAC4AppEntry`** filters to `Application *` roles. `Get-ManagementRoleAssignment` has no
   `-App` parameter, so role filtering uses native `-Role` and the app filter is client-side
   (matching the resolved SP's `DisplayName`/`<DisplayName>_SP`/`AppId`/`Id` against each
-  assignment's `RoleAssigneeName`/`Name`). The private `ConvertTo-AppRole` normalizes role names by
-  prefixing `Application`. `-ScopeType` (default `Group`,`CustomRecipientScope`; pass `All` for
+  assignment's `RoleAssigneeName`/`Name`). The private `ConvertTo-RBAC4AppRoleName` normalizes role names. `-ScopeType` (default `Group`,`CustomRecipientScope`; pass `All` for
   every recipient scope) replaces what used to be a hard-coded scope filter. Every returned row
   (per-assignment or, with `-ByApplication`, per-application) is enriched via a single
   `Get-ServicePrincipal` directory read (`DisplayName`/`AppId`/`ServicePrincipalId`, matched by

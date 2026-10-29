@@ -158,7 +158,7 @@ function New-RBAC4AppConfig {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagementScopePrefix = 'MSRAo1P',
+        [string] $ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix,
 
         [Parameter()]
         [string[]] $ScopeRecipients,
@@ -212,11 +212,7 @@ function New-RBAC4AppConfig {
         }
 
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = switch ($AccessGroupType) {
-                'DistributionList'         { 'UDLRAo1P' }
-                'MailEnabledSecurityGroup' { 'USRAo1P' }
-                default                    { 'Um365RAo1P' }
-            }
+            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
 
         if (-not $OutputPath) { $OutputPath = (Get-Location).Path }
@@ -259,7 +255,7 @@ function New-RBAC4AppConfig {
         try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId } catch { Write-Verbose "TenantId unavailable: $($_.Exception.Message)" }
 
         # --- Normalise roles
-        $normalizedRoles = @(foreach ($r in @($Role)) { Get-NormalizeRole $r })
+        $normalizedRoles = @(foreach ($r in @($Role)) { ConvertTo-RBAC4AppRoleName -Role $r })
 
         # --- Build config object
         $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
@@ -269,7 +265,7 @@ function New-RBAC4AppConfig {
             ''
         }
         else {
-            Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $sp.DisplayName)
+            Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName
         }
 
         $config = [pscustomobject]@{
@@ -305,7 +301,7 @@ function New-RBAC4AppConfig {
 
         # --- Write config file (YAML or JSON, per -Format)
         $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
-        $safeName  = Get-SafeName -s $sp.DisplayName -max 40
+        $safeName  = Format-RBAC4AppSafeName -Value $sp.DisplayName -MaxLength 40
         $timestamp = (Get-Date).ToString('yyyyMMddHHmm')
         $fileName  = "rbac4app-$safeName-$timestamp.$extension"
         $outFile   = Join-Path $OutputPath $fileName

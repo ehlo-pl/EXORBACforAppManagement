@@ -16,7 +16,7 @@ The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
 .PARAMETER AppName
 Application name used to derive the group name. Combined with -Prefix as "{Prefix}-{AppName}",
-then sanitized via Get-SafeName (spaces, tabs, commas, and any other character outside
+then sanitized via Format-RBAC4AppSafeName (spaces, tabs, commas, and any other character outside
 letters/digits/dash are stripped, since Exchange's Alias rejects them). Mutually exclusive with
 -Name.
 
@@ -25,7 +25,7 @@ Prefix prepended to -AppName when deriving the group name. Defaults to 'UDLRAo1'
 Only valid with -AppName.
 
 .PARAMETER Name
-Name and Alias of the distribution list. Sanitized via Get-SafeName (<= 63 chars,
+Name and Alias of the distribution list. Sanitized via Format-RBAC4AppSafeName (<= 63 chars,
 alphanumeric/dash only - spaces, tabs, commas, semicolons, and other characters Exchange's Alias
 rejects are stripped) regardless of whether the caller already sanitized it. Mutually exclusive
 with -AppName / -Prefix.
@@ -113,7 +113,7 @@ function New-RBAC4AppDistributionGroup {
         # Callers such as New-RBAC4AppEntry already pass an already-safe name (sanitizing again is
         # a no-op then), but -AppName/-Prefix are built from raw caller input here, and -Name may
         # also be passed directly by a caller that skipped sanitizing it - always sanitize.
-        $Name = Get-SafeName -s $Name
+        $Name = Format-RBAC4AppSafeName -Value $Name -MaxLength $script:RBAC4AppNameMaxLength.Group
 
         if (-not $DisplayName) { $DisplayName = '{0} - RBAC for APP' -f $Name }
 

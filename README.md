@@ -549,7 +549,7 @@ src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
   Public/                        # 14 exported functions (see table above)
-  Private/                       # Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole, ConvertTo/From-RBAC4AppYaml,
+  Private/                       # Format-RBAC4AppSafeName, ConvertTo-RBAC4AppRoleName, ConvertTo/From-RBAC4AppYaml,
                                  # ConvertTo/From-RBAC4AppRecipientFilter, Get-RBAC4AppManagementScopeName, ...
 tests/                           # Pester v5 tests
 build.ps1                        # Init / Clean / Analyze / Test / Build
@@ -593,7 +593,7 @@ the module zip attached.
 ## Contributing
 
 Work on feature branches and open a PR into `main`; CI must be green. When adding a role, update
-both role tables (`$roleMap` in `Private/Get-NormalizeRole.ps1` and `$shortRoleMap` in
+both role tables (`$roleMap` in `Private/Get-AppRoleMap.ps1` and `$shortRoleMap` in
 `Public/New-RBAC4AppEntry.ps1`). See [`AGENTS.md`](AGENTS.md) for deeper architecture notes.
 
 ## License

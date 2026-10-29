@@ -124,7 +124,7 @@ function Invoke-RBAC4AppConfig {
             return
         }
         $ManagementScopeName   = [string]$config.RbacScope.ManagementScopeName
-        $ManagementScopePrefix = if ([string]$config.RbacScope.ManagementScopePrefix) { [string]$config.RbacScope.ManagementScopePrefix } else { 'MSRAo1P' }
+        $ManagementScopePrefix = if ([string]$config.RbacScope.ManagementScopePrefix) { [string]$config.RbacScope.ManagementScopePrefix } else { $script:RBAC4AppDefaultManagementScopePrefix }
         $ScopeRecipients       = @($config.RbacScope.ScopeRecipients | Where-Object { $_ })
         $ScopeTagAttribute     = if ([string]$config.RbacScope.ScopeTagAttribute) { [string]$config.RbacScope.ScopeTagAttribute } else { 'CustomAttribute1' }
         $ScopeTagValue         = [string]$config.RbacScope.ScopeTagValue
@@ -142,7 +142,7 @@ function Invoke-RBAC4AppConfig {
             Write-Error "Config '$Path' has SeparateScopePerRole enabled but ScopeKind is '$ScopeKind'; this option requires ScopeKind Group."
             return
         }
-        $rolesNormalized = @(foreach ($r in $roles) { Get-NormalizeRole $r })
+        $rolesNormalized = @(foreach ($r in $roles) { ConvertTo-RBAC4AppRoleName -Role $r })
 
         $result = [ordered]@{
             ParameterSet        = 'ByConfig'
@@ -192,21 +192,19 @@ function Invoke-RBAC4AppConfig {
 
                 if ($isGroupKind) {
                     # --- Derive a scope group name, retaining the role suffix within the length limit.
+                    $groupSuffix = if ($roleSuffix) { "-$roleSuffix" } else { '' }
                     if ($AccessGroupName) {
-                        $baseGroupName = $AccessGroupName
+                        # An explicit name is used as-is unless a role suffix forces a re-cut.
+                        $umGroupName = if ($groupSuffix) {
+                            (Format-RBAC4AppSafeName -Value $AccessGroupName -MaxLength ($script:RBAC4AppNameMaxLength.Group - $groupSuffix.Length)) + $groupSuffix
+                        }
+                        else { $AccessGroupName }
                     }
                     elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                         throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
                     }
                     else {
-                        $baseGroupName = Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $spDisplayName)
-                    }
-                    if ($roleSuffix) {
-                        $groupSuffix = "-$roleSuffix"
-                        $umGroupName = (Get-SafeName -s $baseGroupName -max (64 - $groupSuffix.Length)) + $groupSuffix
-                    }
-                    else {
-                        $umGroupName = $baseGroupName
+                        $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $spDisplayName -Suffix $groupSuffix
                     }
                     $result.ScopeGroupNames += $umGroupName
                     if (-not $result.ScopeGroupName) { $result.ScopeGroupName = $umGroupName }
@@ -285,11 +283,8 @@ function Invoke-RBAC4AppConfig {
                 }
 
                 # --- Ensure the management scope the role assignments are bound to.
-                $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $spDisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
-                if ($roleSuffix) {
-                    $scopeSuffix = "-$roleSuffix"
-                    $scopeName = (Get-SafeName -s $scopeName -max (64 - $scopeSuffix.Length)) + $scopeSuffix
-                }
+                $scopeSuffix = if ($roleSuffix) { "-$roleSuffix" } else { '' }
+                $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $spDisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName -Suffix $scopeSuffix
                 $result.ManagementScopeNames += $scopeName
                 if (-not $result.ManagementScopeName) { $result.ManagementScopeName = $scopeName }
                 $groupDn = if ($ugResult -and $ugResult.Group) { [string]$ugResult.Group.DistinguishedName } else { $null }
@@ -334,7 +329,7 @@ function Invoke-RBAC4AppConfig {
                 $scopeName = $roleContext.ScopeName
                 $umGroupName = $roleContext.GroupName
                 $shortName    = $shortRoleMap[$roleItem]
-                $rbacNameBase = Get-SafeName -s ('{0}-{1}' -f $shortName, $spDisplayName) -max 63
+                $rbacNameBase = Get-RBAC4AppRoleAssignmentName -ShortRoleName $shortName -DisplayName $spDisplayName
                 $result.RoleAssignmentsName += $rbacNameBase
 
                 # --- Skip creation if a role assignment with this deterministic name already

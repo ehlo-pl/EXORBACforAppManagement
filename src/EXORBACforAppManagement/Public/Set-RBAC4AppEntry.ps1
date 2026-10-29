@@ -11,7 +11,7 @@ Exchange Online service principal pointer already registered for it (by display 
 service principal object id) - no Microsoft Graph session is required - and brings the components
 New-RBAC4AppEntry provisions into the desired state, changing only what is needed:
 
-  1. the scoped group ("{GroupPrefix}-{DisplayName}", sanitized via Get-SafeName) is created
+  1. the scoped group ("{GroupPrefix}-{DisplayName}", sanitized via Format-RBAC4AppSafeName) is created
      if it is missing (delegated to New-RBAC4AppScopeGroup),
   2. the Exchange Online service principal pointer ("{DisplayName}_SP") is created if it is missing
      (delegated to Register-EXOServicePrincipal),
@@ -95,7 +95,7 @@ Optional. Switch the role assignments to a group named "{NewGroupPrefix}-{Displa
 Ignored when -NewGroupName is supplied.
 
 .PARAMETER NewGroupName
-Optional. Switch the role assignments to this explicit group name (sanitized via Get-SafeName). Takes
+Optional. Switch the role assignments to this explicit group name (sanitized via Format-RBAC4AppSafeName). Takes
 precedence over -NewGroupPrefix.
 
 .PARAMETER ScopeKind
@@ -235,7 +235,7 @@ function Set-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagementScopePrefix = 'MSRAo1P',
+        [string] $ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix,
 
         [Parameter()]
         [string[]] $ScopeRecipients,
@@ -282,11 +282,7 @@ function Set-RBAC4AppEntry {
         }
 
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = switch ($AccessGroupType) {
-                'DistributionList'         { 'UDLRAo1P' }
-                'MailEnabledSecurityGroup' { 'USRAo1P' }
-                default                    { 'Um365RAo1P' }
-            }
+            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
 
         $result = [ordered]@{
@@ -384,17 +380,17 @@ function Set-RBAC4AppEntry {
                     throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
                 }
                 else {
-                    $currentGroup = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+                    $currentGroup = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName
                 }
 
                 if ($PSBoundParameters.ContainsKey('NewGroupName')) {
-                    $targetGroup = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $NewGroupName } else { Get-SafeName -s $NewGroupName }
+                    $targetGroup = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $NewGroupName } else { Format-RBAC4AppSafeName -Value $NewGroupName -MaxLength $script:RBAC4AppNameMaxLength.Group }
                 }
                 elseif ($PSBoundParameters.ContainsKey('NewGroupPrefix')) {
                     if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
                         throw "-NewGroupPrefix cannot be used with -AccessGroupType MailEnabledSecurityGroup; on-prem/hybrid-synced group names are referenced, not generated. Use -NewGroupName with an existing group."
                     }
-                    $targetGroup = Get-SafeName -s ("{0}-{1}" -f $NewGroupPrefix, $sp.DisplayName)
+                    $targetGroup = Get-RBAC4AppScopeGroupName -Prefix $NewGroupPrefix -DisplayName $sp.DisplayName
                 }
                 else {
                     $targetGroup = $currentGroup
@@ -575,7 +571,7 @@ function Set-RBAC4AppEntry {
             }
 
             # --- Role assignments: ensure one per role, scoped to the target management scope.
-            $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }
+            $rolesNormalized = foreach ($r in @($Role)) { ConvertTo-RBAC4AppRoleName -Role $r }
             $result.RolesNormalized = @($rolesNormalized)
 
             $rolesAllSatisfied = $true
@@ -587,7 +583,7 @@ function Set-RBAC4AppEntry {
                     continue
                 }
 
-                $rbacName = Get-SafeName -s ("{0}-{1}" -f $shortRoleName, $sp.DisplayName) -max 63
+                $rbacName = Get-RBAC4AppRoleAssignmentName -ShortRoleName $shortRoleName -DisplayName $sp.DisplayName
 
                 try {
                     $existing = Get-ManagementRoleAssignment -Identity $rbacName -ErrorAction SilentlyContinue | Select-Object -First 1

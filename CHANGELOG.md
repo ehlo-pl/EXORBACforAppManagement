@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- Generated-name derivation is centralized in private helpers (`Get-RBAC4AppScopeGroupName`,
+  `Get-RBAC4AppRoleAssignmentName`, `Get-RBAC4AppManagementScopeName`) with per-object-type length
+  limits and shared defaults (`Private/RBAC4AppDefaults.ps1`) instead of repeated literals.
+- Renamed private helpers: `Get-SafeName` -> `Format-RBAC4AppSafeName` (`-Value`/`-MaxLength`),
+  `Get-NormalizeRole` -> `ConvertTo-RBAC4AppRoleName` (`-Role`); `ConvertTo-AppRole` was merged into
+  the latter, so `Get-RBAC4AppEntry -Role` now validates against the role map like the other cmdlets.
+- `Invoke-RBAC4AppConfig` caps per-role scope group names at 63 characters (was 64), matching the
+  direct New-/Set- path; only affects names that were already truncated.
+
 ## [0.8.5] - 2026-10-12
 
 ### Changed

@@ -38,14 +38,14 @@ Describe 'EXORBACforAppManagement module' {
     }
 
     It 'does not export the private helpers' {
-        foreach ($helper in 'Get-SafeName', 'Get-NormalizeRole', 'ConvertTo-AppRole', 'Get-AppRoleMap', 'Get-LegacyScopeRoleMap', 'Resolve-AppRolePermissionValue', 'ConvertTo-RBAC4AppYaml', 'ConvertFrom-RBAC4AppYaml') {
+        foreach ($helper in 'Format-RBAC4AppSafeName', 'ConvertTo-RBAC4AppRoleName', 'Get-RBAC4AppScopeGroupName', 'Get-RBAC4AppRoleAssignmentName', 'Get-RBAC4AppDefaultGroupPrefix', 'Get-AppRoleMap', 'Get-LegacyScopeRoleMap', 'Resolve-AppRolePermissionValue', 'ConvertTo-RBAC4AppYaml', 'ConvertFrom-RBAC4AppYaml') {
             (Get-Command -Module EXORBACforAppManagement -Name $helper -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
         }
     }
 
     It 'makes the private helpers available inside the module scope' {
         InModuleScope EXORBACforAppManagement {
-            (Get-Command Get-SafeName, Get-NormalizeRole, ConvertTo-AppRole, Get-AppRoleMap, Get-LegacyScopeRoleMap, Resolve-AppRolePermissionValue, ConvertTo-RBAC4AppYaml, ConvertFrom-RBAC4AppYaml).Count | Should -Be 8
+            (Get-Command Format-RBAC4AppSafeName, ConvertTo-RBAC4AppRoleName, Get-RBAC4AppScopeGroupName, Get-RBAC4AppRoleAssignmentName, Get-RBAC4AppDefaultGroupPrefix, Get-AppRoleMap, Get-LegacyScopeRoleMap, Resolve-AppRolePermissionValue, ConvertTo-RBAC4AppYaml, ConvertFrom-RBAC4AppYaml).Count | Should -Be 10
         }
     }
 }
