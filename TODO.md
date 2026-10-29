@@ -35,3 +35,33 @@
 [ ] verify against a real tenant that Get-DistributionGroup's RecipientTypeDetails reliably distinguishes 'MailUniversalDistributionGroup' (DistributionList) from 'MailUniversalSecurityGroup' (MailEnabledSecurityGroup) for every scope group this module creates - Resolve-RBAC4AppScope relies on this to populate Get-RBAC4AppEntry's ScopeGroupType column, and it is currently untested against a live tenant (unlike the CustomResourceScope "<GroupName>_<GUID>" pattern it builds on, which was confirmed against one).
 
 [ ] define and apply one naming schema for generated access groups, management scopes, and management role assignments: standardize the prefix/name structure, sanitization, and truncation/collision behavior across New-/Set-RBAC4AppEntry and both config paths, while accounting for each Exchange object type's supported name length; add tests for consistency across paths.
+
+## Consistency review (2026-10-29)
+
+[ ] centralize deterministic name derivation in private helpers - the same `Get-SafeName -s ("{0}-{1}" -f $prefix, $sp.DisplayName)` / `-max 63` expressions are copy-pasted for the scope group (New-/Set-/Remove-/Test-RBAC4AppEntry, New-RBAC4AppConfig, Invoke-RBAC4AppConfig), role assignment names (`$shortRoleName-DisplayName`, in New-/Set-/Test-/Invoke-) and Convert-ApplicationAccessPolicyToRBAC. Only the management scope has a helper (Get-RBAC4AppManagementScopeName). Add `Get-RBAC4AppScopeGroupName` and `Get-RBAC4AppRoleAssignmentName` and use them everywhere so Test-/Remove- can never drift from New-. (Natural implementation of the naming-schema item above.)
+
+[ ] unify length limits: Get-SafeName defaults to 63 but management scope uses 64 and Invoke-RBAC4AppConfig uses `64 - suffix.Length` for group/scope names while New-/Set- truncate at 63 with no collision suffix; two apps with long, similar DisplayNames can therefore collide silently in the direct path but not in the config path. Also Get-SafeName strips spaces/underscores/dots silently - document, or collapse to '-' instead of deleting.
+
+[ ] fix inconsistent call style: `Get-SafeName($umGroupName)` (New-RBAC4AppEntry.ps1:390) uses method-call syntax while every other call uses `-s`; rename the cryptic `-s`/`-max`/`-r` parameters (`-Value`, `-MaxLength`, `-Role`) on Get-SafeName/Get-NormalizeRole/ConvertTo-AppRole.
+
+[ ] naming: `Get-NormalizeRole` and `Get-SafeName` are not "Get" (return a transformed value) - rename to `ConvertTo-...`/`Format-...`; `Get-NormalizeRole` and `ConvertTo-AppRole` overlap (the former validates against Get-AppRoleMap, the latter just prefixes "Application "; Get-RBAC4AppEntry uses the latter, everything else the former) - pick one, so `-Role Mail.Send` behaves identically in Get- and New-/Set-/Test-.
+
+[ ] ShouldProcess/error-handling consistency: Get-RBAC4AppEntry, Get-RegisteredAppWithPermission, Get-EXORBACforAppRoleAssignment and Test-RBAC4AppEntry are read-only (fine), but mutators mix `throw` and `Write-Error` + `return` (Invoke-RBAC4AppConfig, New-RBAC4AppConfig use Write-Error; New-RBAC4AppEntry throws). Define one convention (terminating for invalid input/missing prerequisites, per-item Write-Error + Warnings/Errors on result objects in batch cmdlets) and apply it.
+
+[ ] schema/version bookkeeping: `SchemaVersion = '4.0'` is hard-coded in New-RBAC4AppConfig, Convert-ApplicationAccessPolicyToRBAC and compared in Invoke-RBAC4AppConfig ('3.0','4.0') - move to one `$script:RBAC4AppConfigSchemaVersion` (or a Get- helper) and add a test that fails when writer and reader disagree. Convert- writes its own config hashtable (line ~257) separately from New-RBAC4AppConfig; share a builder so the two cannot diverge.
+
+[ ] default values duplicated as literals: `'MSRAo1P'` (ManagementScopePrefix) appears in 7 files, plus GroupPrefix defaults - define module-level constants (or one private `Get-RBAC4AppDefaults`) and reference them in param defaults; add a test asserting all public functions share the same defaults.
+
+[ ] docs drift: AGENTS.md says "fourteen public functions" while the manifest exports 17 (Resolve-EXOapplicationAccessPolicy, Invoke-MsGraphEntraIDApiPerm, Get-EXORBACforAppRoleAssignment, New-RBAC4AppManagementScope, ... are missing from its list); the AGENTS.md function list, README, and psd1 FunctionsToExport are maintained by hand. Add a Pester test (Module.Tests.ps1) asserting FunctionsToExport == Public/*.ps1 basenames and AliasesToExport == $aliasMap in the .psm1, and that every exported function appears in AGENTS.md and README.
+
+[ ] build the alias list once: the .psm1 `$aliasMap` and psd1 `AliasesToExport` duplicate the same 7 names; the former is hand-synced with the latter. Either generate the psd1 in build.ps1 or assert equality in tests (see above).
+
+[ ] file/function naming: `Get-EXORBACforAppRoleAssignment` and `Resolve-EXOapplicationAccessPolicy` use different casing/prefix conventions (`EXORBACforApp`, `EXOapplication`) from the rest (`RBAC4App`, `ApplicationAccessPolicy`). Decide on the canonical noun prefix; keep old names as aliases for one release like the RBACforApp -> RBAC4App rename.
+
+[ ] deprecation plan: Get-RegisteredAppWithPermission is a deprecated wrapper - add `[Obsolete]`-style note in help (.LINK to Get-RBAC4AppEntry), a CHANGELOG entry, and a removal version (e.g. 1.0.0). Its test file (tests/Get-RegisteredAppWithPermission.Tests.ps1) should only cover the wrapper behaviour.
+
+[ ] test coverage gaps: no direct tests for private helpers Resolve-RBAC4AppScope, Resolve-RBAC4AppServicePrincipal, Save-RBAC4AppChangeReferenceRecord, Get-RBAC4AppAssignmentScopeState, Get-RBAC4AppScopeKindWarning, New-RBAC4AppScopeGroup, ConvertTo/From-RBAC4AppRecipientFilter by file name (some may be covered indirectly in Helpers/ManagementScopeHelpers tests - verify), and none for Invoke-MsGraphEntraIDApiPerm; add them and a CI coverage threshold (Pester CodeCoverage) in ci.yml.
+
+[ ] CHANGELOG hygiene: 0.8.4 and 0.8.5 entries only say "Bumped the module version" - record the actual user-visible changes (the RbacScope/ScopeKind schema 4.0, Get-EXORBACforAppRoleAssignment, ScopeType parameter, etc.), and keep `[Unreleased]` populated per change instead of at release time.
+
+[ ] PSScriptAnalyzer: settings only fail the build on Error severity; Warning findings (e.g. PSUseApprovedVerbs for Get-SafeName/Get-NormalizeRole, PSUseShouldProcessForStateChangingFunctions) are tolerated. Run the analyzer, fix or explicitly suppress each warning with justification, then set the build to fail on Warning.
