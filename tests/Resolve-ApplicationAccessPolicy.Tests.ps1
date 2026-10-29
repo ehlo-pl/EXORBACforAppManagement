@@ -24,13 +24,13 @@ AfterAll {
     }
 }
 
-Describe 'Resolve-EXOapplicationAccessPolicy' {
+Describe 'Resolve-ApplicationAccessPolicy' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { $script:Policies }
     }
 
     It 'writes all requested fields to YAML and leaves Permissions empty' {
-        $result = Resolve-EXOapplicationAccessPolicy -OutputPath $TestDrive -Confirm:$false
+        $result = Resolve-ApplicationAccessPolicy -OutputPath $TestDrive -Confirm:$false
 
         $result.Errors | Should -BeNullOrEmpty
         Test-Path $result.ConfigPath | Should -BeTrue
@@ -43,14 +43,14 @@ Describe 'Resolve-EXOapplicationAccessPolicy' {
 
         $read = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $result.ConfigPath } {
             param($Path)
-            ConvertFrom-EXOApplicationAccessPolicyYaml -Content (Get-Content -LiteralPath $Path -Raw)
+            ConvertFrom-ApplicationAccessPolicyYaml -Content (Get-Content -LiteralPath $Path -Raw)
         }
         $read.Policies[0].AppId | Should -Be '11111111-1111-1111-1111-111111111111'
         $read.Policies[0].Permissions | Should -BeNullOrEmpty
     }
 
     It 'writes JSON and filters by AppId' {
-        $result = Resolve-EXOapplicationAccessPolicy -AppId '11111111-1111-1111-1111-111111111111' `
+        $result = Resolve-ApplicationAccessPolicy -AppId '11111111-1111-1111-1111-111111111111' `
             -Format Json -OutputPath $TestDrive -Confirm:$false
 
         $result.ConfigPath | Should -Match '\.json$'
@@ -64,7 +64,7 @@ Describe 'Resolve-EXOapplicationAccessPolicy' {
 
     It 'does not create a file with WhatIf' {
         $whatIfPath = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'whatif')
-        $result = Resolve-EXOapplicationAccessPolicy -OutputPath $whatIfPath.FullName -WhatIf
+        $result = Resolve-ApplicationAccessPolicy -OutputPath $whatIfPath.FullName -WhatIf
         $result.ConfigPath | Should -BeNullOrEmpty
         @(Get-ChildItem -LiteralPath $whatIfPath.FullName).Count | Should -Be 0
     }
@@ -102,7 +102,7 @@ Describe 'Invoke-MsGraphEntraIDApiPerm' {
     }
 
     It 'adds only Microsoft Graph mail, calendar, and contacts application permissions to a copied YAML file' {
-        $source = Resolve-EXOapplicationAccessPolicy -OutputPath $TestDrive -Confirm:$false
+        $source = Resolve-ApplicationAccessPolicy -OutputPath $TestDrive -Confirm:$false
         $result = $source | Invoke-MsGraphEntraIDApiPerm -Confirm:$false
 
         $result.InputPath | Should -Be $source.ConfigPath
@@ -113,13 +113,13 @@ Describe 'Invoke-MsGraphEntraIDApiPerm' {
 
         $read = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $result.OutputPath } {
             param($Path)
-            ConvertFrom-EXOApplicationAccessPolicyYaml -Content (Get-Content -LiteralPath $Path -Raw)
+            ConvertFrom-ApplicationAccessPolicyYaml -Content (Get-Content -LiteralPath $Path -Raw)
         }
         $read.Policies[0].Permissions | Should -Be @('Calendars.Read', 'Contacts.Read', 'Mail.Read')
     }
 
     It 'reads and enriches a JSON file' {
-        $source = Resolve-EXOapplicationAccessPolicy -Format Json -OutputPath $TestDrive -Confirm:$false
+        $source = Resolve-ApplicationAccessPolicy -Format Json -OutputPath $TestDrive -Confirm:$false
         $result = Invoke-MsGraphEntraIDApiPerm -Path $source.ConfigPath -Confirm:$false
 
         $result.OutputPath | Should -Match '\.json$'

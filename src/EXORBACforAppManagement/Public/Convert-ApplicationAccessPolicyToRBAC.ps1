@@ -250,32 +250,12 @@ function Convert-ApplicationAccessPolicyToRBAC {
                 $tenantId = ''
                 try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId }
                 catch { Write-Verbose "TenantId unavailable: $($_.Exception.Message)" }
-                $config = [pscustomobject]@{
-                    SchemaVersion = '4.0'
-                    GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
-                    TenantId      = $tenantId
-                    Application   = [pscustomobject]@{
-                        AppId       = [string]$sp.AppId
-                        SpObjectId  = [string]$sp.Id
-                        DisplayName = [string]$sp.DisplayName
-                    }
-                    Rbac = [pscustomobject]@{ Roles = $rolesNormalized }
-                    RbacScope = [pscustomobject]@{
-                        AccessGroupType       = $AccessGroupType
-                        GroupPrefix           = $GroupPrefix
-                        AccessGroupName       = ''
-                        Members               = $members
-                        ManagedBy             = $ManagedBy
-                        BootstrapMember       = 'GraphAPI-Dummy'
-                        ScopeKind             = 'Group'
-                        ManagementScopeName   = ''
-                        ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix
-                        ScopeRecipients       = @()
-                        ScopeTagAttribute     = 'CustomAttribute1'
-                        ScopeTagValue         = ''
-                        ScopeFilter           = ''
-                    }
-                }
+                $config = ConvertTo-RBAC4AppConfig `
+                    -TenantId $tenantId `
+                    -AppId ([string]$sp.AppId) -SpObjectId ([string]$sp.Id) -DisplayName ([string]$sp.DisplayName) `
+                    -Roles $rolesNormalized `
+                    -AccessGroupType $AccessGroupType -GroupPrefix $GroupPrefix `
+                    -Members $members -ManagedBy $ManagedBy
                 $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
                 $safeName = Format-RBAC4AppSafeName -Value $sp.DisplayName -MaxLength 40
                 $safeScope = Format-RBAC4AppSafeName -Value $pol.ScopeName -MaxLength 40

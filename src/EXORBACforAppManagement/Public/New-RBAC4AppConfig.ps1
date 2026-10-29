@@ -268,36 +268,20 @@ function New-RBAC4AppConfig {
             Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName
         }
 
-        $config = [pscustomobject]@{
-            SchemaVersion = '4.0'
-            GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
-            TenantId      = $tenantId
-            Application   = [pscustomobject]@{
-                AppId       = [string]$sp.AppId
-                SpObjectId  = [string]$sp.Id
-                DisplayName = [string]$sp.DisplayName
-            }
-            Rbac          = [pscustomobject]@{
-                Roles           = $normalizedRoles
-                ChangeReference = if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }
-            }
-            RbacScope     = [pscustomobject]@{
-                AccessGroupType = $AccessGroupType
-                GroupPrefix     = $GroupPrefix
-                AccessGroupName = $accessGroupNameValue
-                Members         = $Members
-                ManagedBy       = $ManagedBy
-                BootstrapMember = $BootstrapMember
-                ScopeKind             = $ScopeKind
-                ManagementScopeName   = if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }
-                ManagementScopePrefix = $ManagementScopePrefix
-                ScopeRecipients       = @($ScopeRecipients | Where-Object { $_ })
-                ScopeTagAttribute     = $ScopeTagAttribute
-                ScopeTagValue         = if ($ScopeTagValue) { $ScopeTagValue } else { '' }
-                ScopeFilter           = if ($ScopeFilter) { $ScopeFilter } else { '' }
-                SeparateScopePerRole  = [bool]$SeparateScopePerRole
-            }
-        }
+        $config = ConvertTo-RBAC4AppConfig `
+            -TenantId $tenantId `
+            -AppId ([string]$sp.AppId) -SpObjectId ([string]$sp.Id) -DisplayName ([string]$sp.DisplayName) `
+            -Roles $normalizedRoles `
+            -ChangeReference $(if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }) `
+            -AccessGroupType $AccessGroupType -GroupPrefix $GroupPrefix -AccessGroupName $accessGroupNameValue `
+            -Members $Members -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember `
+            -ScopeKind $ScopeKind `
+            -ManagementScopeName $(if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }) `
+            -ManagementScopePrefix $ManagementScopePrefix `
+            -ScopeRecipients $ScopeRecipients -ScopeTagAttribute $ScopeTagAttribute `
+            -ScopeTagValue $(if ($ScopeTagValue) { $ScopeTagValue } else { '' }) `
+            -ScopeFilter $(if ($ScopeFilter) { $ScopeFilter } else { '' }) `
+            -SeparateScopePerRole ([bool]$SeparateScopePerRole)
 
         # --- Write config file (YAML or JSON, per -Format)
         $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }

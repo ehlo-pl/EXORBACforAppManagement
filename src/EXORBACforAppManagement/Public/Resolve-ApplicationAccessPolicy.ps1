@@ -21,11 +21,11 @@ Directory to write the export into. Defaults to the current directory.
 Output format: Yaml (default) or Json.
 
 .EXAMPLE
-Resolve-EXOapplicationAccessPolicy -Format Json -OutputPath ./policies
+Resolve-ApplicationAccessPolicy -Format Json -OutputPath ./policies
 
 Exports all Exchange Online Application Access Policies as JSON.
 #>
-function Resolve-EXOapplicationAccessPolicy {
+function Resolve-ApplicationAccessPolicy {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
     param(
         [Parameter()]
@@ -96,7 +96,7 @@ function Resolve-EXOapplicationAccessPolicy {
             ([pscustomobject]@{ Policies = $records } | ConvertTo-Json -Depth 6)
         }
         else {
-            ConvertTo-EXOApplicationAccessPolicyYaml -Policies $records
+            ConvertTo-ApplicationAccessPolicyYaml -Policies $records
         }
 
         $result = [ordered]@{

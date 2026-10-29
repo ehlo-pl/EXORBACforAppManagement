@@ -9,7 +9,7 @@ function Resolve-RBAC4AppServicePrincipal {
     # itself) is derived from the *application's* display name. So a name lookup matches both the
     # raw value and its "_SP" counterpart, and the DisplayName returned is always normalized back
     # to the app name (the "_SP" suffix stripped) - the same both-forms handling
-    # Get-RegisteredAppWithPermission already relies on.
+    # Get-RBAC4AppEntry -ByApplication already relies on.
     #
     # Returns $null when nothing matches (the app has not been registered via
     # Register-EXOServicePrincipal / New-RBAC4AppEntry / Invoke-RBAC4AppConfig yet); throws when

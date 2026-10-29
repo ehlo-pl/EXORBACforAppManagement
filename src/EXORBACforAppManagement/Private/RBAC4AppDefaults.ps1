@@ -27,3 +27,9 @@ function Get-RBAC4AppDefaultGroupPrefix {
         default                    { 'Um365RAo1P' }
     }
 }
+
+# Version of the RBAC4App config file schema. New-RBAC4AppConfig and
+# Convert-ApplicationAccessPolicyToRBAC write it (via ConvertTo-RBAC4AppConfig);
+# Invoke-RBAC4AppConfig accepts every version listed as supported ('3.0' is read as ScopeKind Group).
+$script:RBAC4AppConfigSchemaVersion = '4.0'
+$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0')

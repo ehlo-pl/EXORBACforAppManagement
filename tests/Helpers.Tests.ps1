@@ -82,3 +82,32 @@ Describe 'Generated-name helpers' {
         }
     }
 }
+
+Describe 'ConvertTo-RBAC4AppConfig' {
+    It 'stamps the module schema version, which Invoke-RBAC4AppConfig accepts' {
+        InModuleScope EXORBACforAppManagement {
+            $cfg = ConvertTo-RBAC4AppConfig -AppId 'a' -SpObjectId 's' -DisplayName 'Contoso' -Roles 'Application Mail.Send' `
+                -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P'
+
+            $cfg.SchemaVersion | Should -Be $script:RBAC4AppConfigSchemaVersion
+            $script:RBAC4AppConfigSupportedSchemaVersions | Should -Contain $cfg.SchemaVersion
+        }
+    }
+
+    It 'produces a config that survives a YAML round trip through the reader' {
+        InModuleScope EXORBACforAppManagement {
+            $cfg = ConvertTo-RBAC4AppConfig -TenantId 't' -AppId 'a' -SpObjectId 's' -DisplayName 'Contoso' `
+                -Roles 'Application Mail.Send', 'Application Calendars.Read' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1P' `
+                -Members 'm@contoso.com' -ManagedBy 'o@contoso.com' -SeparateScopePerRole $true
+
+            $parsed = ConvertFrom-RBAC4AppYaml -Content (ConvertTo-RBAC4AppYaml -Config $cfg)
+
+            $parsed.SchemaVersion | Should -Be $script:RBAC4AppConfigSchemaVersion
+            @($parsed.Rbac.Roles) | Should -Be @('Application Mail.Send', 'Application Calendars.Read')
+            $parsed.RbacScope.AccessGroupType | Should -Be 'M365Group'
+            $parsed.RbacScope.ScopeKind | Should -Be 'Group'
+            @($parsed.RbacScope.Members) | Should -Be @('m@contoso.com')
+            $parsed.RbacScope.SeparateScopePerRole | Should -BeTrue
+        }
+    }
+}

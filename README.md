@@ -16,10 +16,10 @@ The three functions form a **create → assign → read** flow and share the sam
 | [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Ensures the scope source (group, recipients, tag, or filter), the management scope, the EXO service principal, and assigns EXO Application roles bound to that management scope. |
 | `New-RBAC4AppManagementScope` | helper | Ensures an EXO management scope exists with a given `RecipientRestrictionFilter` (creates, updates on drift, or leaves an equivalent one alone; `-NoUpdate` only warns). |
 | [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read / inventory | Lists the EXO Application-role assignments, each resolved to its AppId/ServicePrincipalId and scope group name/type/members; `-ByApplication` groups them into one row per application. |
-| `Get-RegisteredAppWithPermission` | *(deprecated)* | Thin wrapper around `Get-RBAC4AppEntry -ByApplication -ScopeType All`; use the latter directly. |
 | [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, scope source, management scope, EXO service principal, role assignments) and returns an `IsValid` summary. |
 | [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate / plan | Writes YAML/JSON RBAC configs from legacy Application Access Policies for later provisioning with `Invoke-RBAC4AppConfig`. |
-| `Resolve-EXOapplicationAccessPolicy` | export | Writes all Exchange Online Application Access Policies to YAML/JSON with an empty `Permissions` list. |
+| `Get-RBAC4AppRoleAssignment` | read / inventory | EXO-only listing of every `Application *` role assignment held by a service principal, with the app name and in-scope recipients resolved. |
+| `Resolve-ApplicationAccessPolicy` | export | Writes all Exchange Online Application Access Policies to YAML/JSON with an empty `Permissions` list. |
 | `Invoke-MsGraphEntraIDApiPerm` | enrich | Adds granted Microsoft Graph application permissions for mail, calendars, and contacts to an exported policy file. |
 | [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry` when `-AccessGroupType M365Group`). |
 | `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only distribution list (used by `New-RBAC4AppEntry` when `-AccessGroupType DistributionList`). |
@@ -68,9 +68,9 @@ needs no Graph session, working around the MSAL/WAM assembly conflict between `M
 | `Test-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` |
 | `Remove-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
 | `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementScope` `Get-Recipient` *(resolves the assignee to AppId/ServicePrincipalId via `Get-ServicePrincipal`, and each management scope to its `ScopeKind`/`ScopeFilter` and members - group membership for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter` preview for Tag/Filter kinds; legacy group-direct assignments report `ScopeKind` `GroupDirect`; cached per run; `-ByApplication` groups the same data per application)* |
-| `Get-RegisteredAppWithPermission` *(deprecated)* | — | Delegates entirely to `Get-RBAC4AppEntry -ByApplication -ScopeType All` |
 | `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` `Get-MgContext` | `Get-ApplicationAccessPolicy` `Get-DistributionGroupMember` *(read-only; writes config files, does not provision RBAC)* |
-| `Resolve-EXOapplicationAccessPolicy` | — | `Get-ApplicationAccessPolicy` *(writes a YAML/JSON policy export with empty `Permissions` arrays)* |
+| `Get-RBAC4AppRoleAssignment` | — | `Get-ManagementRoleAssignment` `Get-ServicePrincipal` `Get-ManagementScope` `Get-Recipient` *(read-only)* |
+| `Resolve-ApplicationAccessPolicy` | — | `Get-ApplicationAccessPolicy` *(writes a YAML/JSON policy export with empty `Permissions` arrays)* |
 | `Invoke-MsGraphEntraIDApiPerm` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` | — *(reads the policy export and writes an enriched copy)* |
 | `Invoke-RBAC4AppConfig` | — | `Get-ServicePrincipal` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`, same as `New-RBAC4AppEntry`)* |
 
@@ -101,7 +101,7 @@ service principal pointer yet) split cleanly across two sessions.
 | **App registration** | `New-RegisteredApp` | — |
 | **Plan RBAC config** | `New-RBAC4AppConfig` → writes `.yml` (or `.json` with `-Format Json`) | — |
 | **Provision from config** | — | `Invoke-RBAC4AppConfig -Path .\config.yml` (format auto-detected from the extension) |
-| **Everything else** | — | `New-RBAC4AppEntry` `Set-RBAC4AppEntry` `Test-RBAC4AppEntry` `Remove-RBAC4AppEntry` `Get-RBAC4AppEntry` `Get-RegisteredAppWithPermission` `New-RBAC4AppUnifiedGroup` `New-RBAC4AppDistributionGroup` `Register-EXOServicePrincipal` |
+| **Everything else** | — | `New-RBAC4AppEntry` `Set-RBAC4AppEntry` `Test-RBAC4AppEntry` `Remove-RBAC4AppEntry` `Get-RBAC4AppEntry` `New-RBAC4AppUnifiedGroup` `New-RBAC4AppDistributionGroup` `Register-EXOServicePrincipal` |
 
 For a never-before-registered application, `New-RBAC4AppEntry` and `Set-RBAC4AppEntry` can also
 bootstrap the Exchange Online service principal pointer directly in one Exchange-Online-only
@@ -110,7 +110,7 @@ session — supply `-AppId`, `-SpObjectId`, and `-RegisteredAppName` together (s
 `Convert-ApplicationAccessPolicyToRBAC` still requires Graph and Exchange Online read access to
 collect permission grants, policies, and source group members. It now only writes config files;
 run `Invoke-RBAC4AppConfig` separately in an Exchange-Online-only session to provision RBAC.
-For a policy export without provisioning, run `Resolve-EXOapplicationAccessPolicy` in the EXO
+For a policy export without provisioning, run `Resolve-ApplicationAccessPolicy` in the EXO
 session, then pass its output to `Invoke-MsGraphEntraIDApiPerm` in the separate Graph session.
 
 ### Typical two-session flow
@@ -404,18 +404,12 @@ session where `Get-ApplicationAccessPolicy` is available.
 
 `-ByApplication` returns the app-centric inventory view instead — one row per distinct registered
 application, aggregating that application's roles, assignment names, and resolved scope group
-names/members (plus `ManagementScopeNames`/`ScopeKinds`) onto a single object. This is the former `Get-RegisteredAppWithPermission` function,
-now merged in as a switch.
+names/members (plus `ManagementScopeNames`/`ScopeKinds`) onto a single object. (This replaces the former `Get-RegisteredAppWithPermission` function, which has been removed.)
 
 ```powershell
 Get-RBAC4AppEntry -ByApplication
 Get-RBAC4AppEntry -ByApplication -Role 'Mail.Send'
 ```
-
-> **`Get-RegisteredAppWithPermission` is deprecated** and now just calls
-> `Get-RBAC4AppEntry -ByApplication -ScopeType All` (preserving its original no-scope-filtering
-> behavior) and writes a deprecation warning. Update scripts to call `Get-RBAC4AppEntry
-> -ByApplication` directly.
 
 ### Test-RBAC4AppEntry
 
@@ -548,7 +542,7 @@ Get-ChildItem C:\rbac-configs\*.yml, C:\rbac-configs\*.json | Invoke-RBAC4AppCon
 src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
-  Public/                        # 14 exported functions (see table above)
+  Public/                        # 16 exported functions (see table above)
   Private/                       # Format-RBAC4AppSafeName, ConvertTo-RBAC4AppRoleName, ConvertTo/From-RBAC4AppYaml,
                                  # ConvertTo/From-RBAC4AppRecipientFilter, Get-RBAC4AppManagementScopeName, ...
 tests/                           # Pester v5 tests
@@ -571,7 +565,7 @@ CHANGELOG.md                     # version history
 
 - **Init** installs Pester (>= 5) and PSScriptAnalyzer if missing.
 - **Analyze** runs PSScriptAnalyzer over `src`; fails only on Error-severity findings.
-- **Test** runs Pester and writes `testResults.xml` (NUnit).
+- **Test** runs Pester, writes `testResults.xml` (NUnit) and `coverage.xml` (JaCoCo), and fails below `-CoverageThreshold` percent code coverage (default 90).
 - **Build** assembles the module into `output/<version>/EXORBACforAppManagement` and validates the manifest.
 
 Tests mock the Graph/EXO cmdlets, so the suite runs without those modules installed (this is what

@@ -1,4 +1,4 @@
-function ConvertFrom-EXOApplicationAccessPolicyYaml {
+function ConvertFrom-ApplicationAccessPolicyYaml {
     param(
         [Parameter(Mandatory)]
         [string] $Content

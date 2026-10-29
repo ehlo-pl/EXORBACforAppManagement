@@ -57,3 +57,4 @@ nunit-*.xml.env
 # EXORBACforAppManagement build artifacts (build.ps1)
 output/
 testResults.xml
+coverage.xml

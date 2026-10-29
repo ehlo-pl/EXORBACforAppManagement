@@ -86,8 +86,8 @@ function Invoke-RBAC4AppConfig {
             return
         }
 
-        if ([string]$config.SchemaVersion -notin @('3.0', '4.0')) {
-            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '4.0' (or '3.0', treated as ScopeKind Group). Re-generate the config with New-RBAC4AppConfig."
+        if ([string]$config.SchemaVersion -notin $script:RBAC4AppConfigSupportedSchemaVersions) {
+            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)' (or '3.0', treated as ScopeKind Group). Re-generate the config with New-RBAC4AppConfig."
             return
         }
         if (-not $config.Application.SpObjectId) {
