@@ -7,7 +7,7 @@ application.
 Remove-RBAC4AppEntry is the teardown counterpart to New-RBAC4AppEntry. It resolves an Entra
 application / service principal (by display name, AppId, or service principal object id), derives the
 scope group name the same way New-RBAC4AppEntry does ("{GroupPrefix}-{DisplayName}",
-sanitized via Get-SafeName) and the management scope name ("{ManagementScopePrefix}-{DisplayName}"
+sanitized via Format-RBAC4AppSafeName) and the management scope name ("{ManagementScopePrefix}-{DisplayName}"
 or -ManagementScopeName), and removes, in order:
 
   1. this application's Exchange Online management role assignments bound to that management scope
@@ -145,7 +145,7 @@ function Remove-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagementScopePrefix = 'MSRAo1P'
+        [string] $ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix
     )
 
     begin {
@@ -155,12 +155,13 @@ function Remove-RBAC4AppEntry {
     }
 
     process {
+        # Invalid parameter combinations terminate before any work (same as New-/Set-RBAC4AppEntry).
+        if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+            throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
+        }
+
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = switch ($AccessGroupType) {
-                'DistributionList'         { 'UDLRAo1P' }
-                'MailEnabledSecurityGroup' { 'USRAo1P' }
-                default                    { 'Um365RAo1P' }
-            }
+            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
 
         $result = [ordered]@{
@@ -190,9 +191,6 @@ function Remove-RBAC4AppEntry {
         }
 
         try {
-            if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
-                throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
-            }
             foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
                 $result.Warnings += $ignoredMsg
             }
@@ -233,7 +231,7 @@ function Remove-RBAC4AppEntry {
                     throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
                 }
                 else {
-                    $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+                    $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName
                 }
                 $result.ScopeGroupName = $umGroupName
 

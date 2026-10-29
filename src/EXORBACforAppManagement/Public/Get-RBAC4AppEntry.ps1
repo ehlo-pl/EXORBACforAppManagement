@@ -9,8 +9,7 @@ is an application role (named "Application <permission>", e.g. "Application Mail
 By default it returns one object per matching assignment, scoped the way this module
 creates them: group-scoped or custom-recipient-scoped entries. With -ByApplication it
 instead returns one object per distinct application, the app-centric inventory view
-(formerly the separate Get-RegisteredAppWithPermission function, now a deprecated wrapper
-around this switch).
+(formerly the separate Get-RegisteredAppWithPermission function, which has been removed).
 
 With -ApplicationAccessPolicy, it returns the raw Application Access Policy objects from
 Get-ApplicationAccessPolicy instead of RBAC role assignments. The existing application
@@ -282,7 +281,7 @@ function Get-RBAC4AppEntry {
         }
 
         # --- Retrieve assignments, filtered by role where possible.
-        $rolesNormalized = if ($PSBoundParameters.ContainsKey('Role')) { @($Role | ForEach-Object { ConvertTo-AppRole $_ } | Select-Object -Unique) } else { @() }
+        $rolesNormalized = if ($PSBoundParameters.ContainsKey('Role')) { @($Role | ForEach-Object { ConvertTo-RBAC4AppRoleName -Role $_ } | Select-Object -Unique) } else { @() }
 
         $assignments =
             if ($rolesNormalized.Count -gt 0) {

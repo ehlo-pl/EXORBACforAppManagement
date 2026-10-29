@@ -45,7 +45,7 @@ AfterAll {
     }
 }
 
-Describe 'Get-EXORBACforAppRoleAssignment' {
+Describe 'Get-RBAC4AppRoleAssignment' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { $script:Assignments }
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
@@ -63,7 +63,7 @@ Describe 'Get-EXORBACforAppRoleAssignment' {
     }
 
     It 'filters application roles to service principals and resolves the application and scope recipients' {
-        $result = @(Get-EXORBACforAppRoleAssignment)
+        $result = @(Get-RBAC4AppRoleAssignment)
 
         $result.Count | Should -Be 1
         $result[0].Name | Should -Be 'AppMailSend-Contoso'

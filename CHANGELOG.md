@@ -6,7 +6,62 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Removed
+- **Breaking:** `Get-RegisteredAppWithPermission` (deprecated wrapper) - use
+  `Get-RBAC4AppEntry -ByApplication` (add `-ScopeType All` for its old no-scope-filter behavior).
+- **Breaking:** the pre-0.6.0 `*-RBACforApp*` aliases (`New-`/`Get-`/`Set-`/`Test-`/`Remove-RBACforAppEntry`,
+  `New-RBACforAppUnifiedGroup`, `New-RBACforAppDistributionGroup`); use the `RBAC4App` names. The module
+  now exports no aliases.
+
+### Added
+- `build.ps1 -Task Test` now collects Pester code coverage (`coverage.xml`, JaCoCo) and fails below
+  `-CoverageThreshold` (default 90%); CI uploads the file with the test results.
+- Tests for the error/edge paths of `Invoke-MsGraphEntraIDApiPerm`, `New-RBAC4AppConfig`,
+  `New-RBAC4AppDistributionGroup`, `New-RBAC4AppUnifiedGroup` and `Save-RBAC4AppChangeReferenceRecord`.
+
+### Fixed
+- `New-RBAC4AppConfig` no longer overwrites a config written earlier in the same minute: file names are now
+  `rbac4app-<name>-<yyyyMMddHHmmss>-<8 hex>.<ext>`. Globs such as `rbac4app-<name>-*.yml` still match.
+
+### Changed
+- `Test-RBAC4AppEntry` and `Remove-RBAC4AppEntry` now throw for invalid parameter combinations
+  (`-ManagementScopeName` with `-ManagementScopePrefix`, missing `-ScopeRecipients`/`-ScopeFilter`) like
+  `New-`/`Set-RBAC4AppEntry`, instead of returning the message in `Errors`. The error-handling convention
+  is documented in `AGENTS.md`.
+- **Breaking:** renamed `Get-EXORBACforAppRoleAssignment` -> `Get-RBAC4AppRoleAssignment` and
+  `Resolve-EXOapplicationAccessPolicy` -> `Resolve-ApplicationAccessPolicy` (no aliases kept); the private
+  `ConvertFrom-`/`ConvertTo-EXOApplicationAccessPolicyYaml` became `...-ApplicationAccessPolicyYaml`.
+  The module now exports 16 functions.
+- Generated-name derivation is centralized in private helpers (`Get-RBAC4AppScopeGroupName`,
+  `Get-RBAC4AppRoleAssignmentName`, `Get-RBAC4AppManagementScopeName`) with per-object-type length
+  limits and shared defaults (`Private/RBAC4AppDefaults.ps1`) instead of repeated literals.
+- Renamed private helpers: `Get-SafeName` -> `Format-RBAC4AppSafeName` (`-Value`/`-MaxLength`),
+  `Get-NormalizeRole` -> `ConvertTo-RBAC4AppRoleName` (`-Role`); `ConvertTo-AppRole` was merged into
+  the latter, so `Get-RBAC4AppEntry -Role` now validates against the role map like the other cmdlets.
+- Config schema version and the config object are now built in one place (`ConvertTo-RBAC4AppConfig`,
+  `$script:RBAC4AppConfigSchemaVersion`); `Convert-ApplicationAccessPolicyToRBAC` configs additionally
+  carry the default `ChangeReference` and `SeparateScopePerRole` keys.
+- `Invoke-RBAC4AppConfig` caps per-role scope group names at 63 characters (was 64), matching the
+  direct New-/Set- path; only affects names that were already truncated.
+
 ## [0.8.5] - 2026-10-12
+
+### Added
+- `Resolve-EXOapplicationAccessPolicy` writes every Exchange Online Application Access Policy to a
+  YAML/JSON file with empty `Permissions`; `Invoke-MsGraphEntraIDApiPerm` (Graph session) enriches that
+  file with the app's granted Mail/Calendars/Contacts application permissions.
+- `Get-EXORBACforAppRoleAssignment`: EXO-only inventory of `Application *` role assignments held by
+  service principals, with app name and in-scope recipients resolved.
+- `Get-RBAC4AppEntry -ApplicationAccessPolicy` returns the raw `Get-ApplicationAccessPolicy` objects
+  (honors `-AppId`) instead of RBAC role assignments.
+- `-SeparateScopePerRole` (alias `-SeparateScopePerPermission`) on `New-RBAC4AppConfig` and the
+  matching `RbacScope.SeparateScopePerRole` config key: `Invoke-RBAC4AppConfig` creates one scope
+  group and management scope per role (`ScopeKind Group` only).
+
+### Fixed
+- `New-RBAC4AppConfig` now writes the generated `AccessGroupName` into the config instead of leaving
+  it blank, so the config no longer differs from what the direct path would create.
+- Windows PowerShell 5.1 path handling in `build.ps1`.
 
 ### Changed
 - Bumped the module version for the 0.8.5 release.

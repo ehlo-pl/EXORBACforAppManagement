@@ -13,7 +13,7 @@ place:
      is the same lookup used to resolve the application in the first place, so it is only ever
      false when the whole command fails to resolve an identity and errors out,
   2. for -ScopeKind Group (default), the scope group "{GroupPrefix}-{DisplayName}" (sanitized via
-     the same Get-SafeName rule) exists,
+     the same Format-RBAC4AppSafeName rule) exists,
   3. the Exchange Online service principal pointer named exactly "{DisplayName}_SP" - by that
      deterministic name, or by AppId - exists (ExoServicePrincipalExists; distinct from #1, which
      resolves the application by whichever identity the caller supplied), and
@@ -166,7 +166,7 @@ function Test-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagementScopePrefix = 'MSRAo1P',
+        [string] $ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix,
 
         [Parameter()]
         [string[]] $ScopeRecipients,
@@ -193,12 +193,19 @@ function Test-RBAC4AppEntry {
     }
 
     process {
+        # Invalid parameter combinations terminate before any work (same as New-/Set-RBAC4AppEntry).
+        if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
+            throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
+        }
+        if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
+            throw "-ScopeRecipients is required when -ScopeKind is Recipients."
+        }
+        if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
+            throw "-ScopeFilter is required when -ScopeKind is Filter."
+        }
+
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = switch ($AccessGroupType) {
-                'DistributionList'         { 'UDLRAo1P' }
-                'MailEnabledSecurityGroup' { 'USRAo1P' }
-                default                    { 'Um365RAo1P' }
-            }
+            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
 
         $result = [ordered]@{
@@ -235,15 +242,6 @@ function Test-RBAC4AppEntry {
         }
 
         try {
-            if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
-                throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
-            }
-            if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
-                throw "-ScopeRecipients is required when -ScopeKind is Recipients."
-            }
-            if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
-                throw "-ScopeFilter is required when -ScopeKind is Filter."
-            }
             foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
                 $result.Warnings += $ignoredMsg
             }
@@ -285,7 +283,7 @@ function Test-RBAC4AppEntry {
                 throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
             }
             else {
-                $umGroupName = Get-SafeName -s ("{0}-{1}" -f $GroupPrefix, $sp.DisplayName)
+                $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName
             }
             $result.ScopeGroupName = $umGroupName
             $group = switch ($AccessGroupType) {
@@ -357,7 +355,7 @@ function Test-RBAC4AppEntry {
             }
 
             # --- Role assignment existence, by the deterministic name New-RBAC4AppEntry builds.
-            $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }
+            $rolesNormalized = foreach ($r in @($Role)) { ConvertTo-RBAC4AppRoleName -Role $r }
             $result.RolesExpected = @($rolesNormalized)
             $assigneeNeedles = @($sp.DisplayName, ("{0}_SP" -f $sp.DisplayName), $sp.AppId, $sp.Id) | Where-Object { $_ }
 
@@ -368,7 +366,7 @@ function Test-RBAC4AppEntry {
                     continue
                 }
 
-                $expectedName = Get-SafeName -s ("{0}-{1}" -f $shortRoleName, $sp.DisplayName) -max 63
+                $expectedName = Get-RBAC4AppRoleAssignmentName -ShortRoleName $shortRoleName -DisplayName $sp.DisplayName
                 $result.RoleAssignmentsExpected += $expectedName
 
                 $assignment = Get-ManagementRoleAssignment -Identity $expectedName -ErrorAction SilentlyContinue

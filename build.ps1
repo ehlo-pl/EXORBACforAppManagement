@@ -7,7 +7,8 @@ Runs the module's quality gates and packaging steps. Tasks:
   Init    - ensure Pester (>=5) and PSScriptAnalyzer are available
   Clean   - remove build output and test results
   Analyze - run PSScriptAnalyzer over src (fails on Error severity)
-  Test    - run the Pester suite (emits testResults.xml in NUnit format)
+  Test    - run the Pester suite (emits testResults.xml in NUnit format and coverage.xml in
+            JaCoCo format; fails below -CoverageThreshold percent code coverage, default 90)
   Build   - copy the module to ./output and validate the manifest
   All     - Init, Clean, Analyze, Test, Build (default)
 
@@ -22,7 +23,11 @@ Runs only the tests.
 [CmdletBinding()]
 param(
     [ValidateSet('All', 'Init', 'Clean', 'Analyze', 'Test', 'Build')]
-    [string[]] $Task = 'All'
+    [string[]] $Task = 'All',
+
+    # Minimum Pester code coverage (percent of commands in src) the Test task must reach.
+    [ValidateRange(0, 100)]
+    [int] $CoverageThreshold = 90
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,6 +40,7 @@ $ManifestPath = Join-Path $SrcPath "$ModuleName.psd1"
 $TestsPath    = Join-Path $RepoRoot 'tests'
 $OutputPath   = Join-Path $RepoRoot 'output'
 $TestResults  = Join-Path $RepoRoot 'testResults.xml'
+$CoverageFile = Join-Path $RepoRoot 'coverage.xml'
 $SettingsPath = Join-Path $RepoRoot 'PSScriptAnalyzerSettings.psd1'
 
 function Resolve-TaskList {
@@ -95,6 +101,7 @@ function Invoke-Clean {
     Write-Host '==> Clean' -ForegroundColor Cyan
     if (Test-Path $OutputPath)  { Remove-Item $OutputPath -Recurse -Force }
     if (Test-Path $TestResults) { Remove-Item $TestResults -Force }
+    if (Test-Path $CoverageFile) { Remove-Item $CoverageFile -Force }
 }
 
 function Invoke-Analyze {
@@ -121,11 +128,20 @@ function Invoke-Test {
     $config.TestResult.Enabled = $true
     $config.TestResult.OutputFormat = 'NUnitXml'
     $config.TestResult.OutputPath = $TestResults
+    $config.CodeCoverage.Enabled = $true
+    $config.CodeCoverage.Path = $SrcPath
+    $config.CodeCoverage.OutputPath = $CoverageFile
     $result = Invoke-Pester -Configuration $config
     if ($result.FailedCount -gt 0) {
         throw "$($result.FailedCount) test(s) failed."
     }
     Write-Host "Tests passed ($($result.PassedCount))." -ForegroundColor Green
+
+    $coverage = [math]::Round($result.CodeCoverage.CoveragePercent, 1)
+    if ($coverage -lt $CoverageThreshold) {
+        throw "Code coverage $coverage% is below the required $CoverageThreshold%."
+    }
+    Write-Host "Code coverage $coverage% (required: $CoverageThreshold%)." -ForegroundColor Green
 }
 
 function Invoke-Build {

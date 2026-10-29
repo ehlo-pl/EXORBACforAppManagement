@@ -6,7 +6,7 @@ BeforeAll {
     # Global stubs so the module scope can resolve them and Pester can mock them on CI.
     function global:Get-DistributionGroup { }
     function global:New-DistributionGroup { param($Name, $DisplayName, $Alias, $Type, [string[]]$ManagedBy, $Members) }
-    function global:Set-DistributionGroup { param($Identity) }
+    function global:Set-DistributionGroup { param($Identity, $HiddenFromAddressListsEnabled, $RequireSenderAuthenticationEnabled, $MemberJoinRestriction, $MemberDepartRestriction) }
     function global:Get-Recipient { }
 }
 
@@ -95,6 +95,71 @@ Describe 'New-RBAC4AppDistributionGroup' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
             $ChangeReference -eq 'INC987654' -and $AccessGroupType -eq 'DistributionList' -and $ScopeGroupName -eq 'UDLRAo1-Contoso'
+        }
+    }
+
+    It 'returns the re-read list and applies the hardening settings after creation' {
+        $script:lookups = 0
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            $script:lookups++
+            if ($script:lookups -gt 1) { [pscustomobject]@{ DisplayName = 'configured'; Identity = 'g'; HiddenFromAddressListsEnabled = $true } }
+        }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'created'; Alias = 'g' } }
+
+        $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.AlreadyExisted | Should -BeFalse
+        $res.DisplayName | Should -Be 'configured'
+        $res.OwnerAdded | Should -Be @('owner@contoso.com')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 1 -ParameterFilter {
+            $Identity -eq 'UDLRAo1-Contoso' -and $HiddenFromAddressListsEnabled -eq $true -and
+            $RequireSenderAuthenticationEnabled -eq $true -and $MemberJoinRestriction -eq 'Closed' -and $MemberDepartRestriction -eq 'Closed'
+        }
+    }
+
+    It 'falls back to the created object when the post-create lookup finds nothing' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'created'; Alias = 'g' } }
+
+        $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.DisplayName | Should -Be 'created'
+        $res.Group.Alias | Should -Be 'g'
+        $res.AlreadyExisted | Should -BeFalse
+    }
+
+    It 'falls back to the raw value for an owner that cannot be resolved, with a warning' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient {
+            param($Identity)
+            if ($Identity -eq 'owner1@contoso.com') { [pscustomobject]@{ PrimarySmtpAddress = $Identity } }
+        }
+
+        $warn = $null
+        $res = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner1@contoso.com', 'missing@contoso.com' `
+            -Confirm:$false -WarningVariable warn -WarningAction SilentlyContinue
+
+        $res.OwnerAdded | Should -Be @('owner1@contoso.com', 'missing@contoso.com')
+        ($warn.Message -join ';') | Should -Match "could not be resolved"
+    }
+
+    It 'rethrows when New-DistributionGroup fails and does not configure the list' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { throw 'boom from EXO' }
+
+        { New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false } | Should -Throw '*boom from EXO*'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 0
+    }
+
+    It 'creates with the bootstrap member and the default display name' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+
+        $null = New-RBAC4AppDistributionGroup -Name 'UDLRAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 1 -ParameterFilter {
+            $Type -eq 'Distribution' -and $Members -contains 'GraphAPI-Dummy'
         }
     }
 

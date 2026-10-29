@@ -128,10 +128,7 @@ function Convert-ApplicationAccessPolicyToRBAC {
         $pipedPolicies = [System.Collections.Generic.List[object]]::new()
 
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = switch ($AccessGroupType) {
-                'DistributionList' { 'UDLRAo1P' }
-                default            { 'Um365RAo1P' }
-            }
+            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
     }
 
@@ -203,7 +200,7 @@ function Convert-ApplicationAccessPolicyToRBAC {
                 # --- Determine roles: explicit -Role override, else derive from grants
                 $rolesNormalized = @()
                 if ($PSBoundParameters.ContainsKey('Role')) {
-                    $rolesNormalized = @($Role | ForEach-Object { Get-NormalizeRole $_ } | Select-Object -Unique)
+                    $rolesNormalized = @($Role | ForEach-Object { ConvertTo-RBAC4AppRoleName -Role $_ } | Select-Object -Unique)
                 }
                 else {
                     $grants = @(Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $sp.Id -ErrorAction Stop)
@@ -253,36 +250,16 @@ function Convert-ApplicationAccessPolicyToRBAC {
                 $tenantId = ''
                 try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId }
                 catch { Write-Verbose "TenantId unavailable: $($_.Exception.Message)" }
-                $config = [pscustomobject]@{
-                    SchemaVersion = '4.0'
-                    GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
-                    TenantId      = $tenantId
-                    Application   = [pscustomobject]@{
-                        AppId       = [string]$sp.AppId
-                        SpObjectId  = [string]$sp.Id
-                        DisplayName = [string]$sp.DisplayName
-                    }
-                    Rbac = [pscustomobject]@{ Roles = $rolesNormalized }
-                    RbacScope = [pscustomobject]@{
-                        AccessGroupType       = $AccessGroupType
-                        GroupPrefix           = $GroupPrefix
-                        AccessGroupName       = ''
-                        Members               = $members
-                        ManagedBy             = $ManagedBy
-                        BootstrapMember       = 'GraphAPI-Dummy'
-                        ScopeKind             = 'Group'
-                        ManagementScopeName   = ''
-                        ManagementScopePrefix = 'MSRAo1P'
-                        ScopeRecipients       = @()
-                        ScopeTagAttribute     = 'CustomAttribute1'
-                        ScopeTagValue         = ''
-                        ScopeFilter           = ''
-                    }
-                }
+                $config = ConvertTo-RBAC4AppConfig `
+                    -TenantId $tenantId `
+                    -AppId ([string]$sp.AppId) -SpObjectId ([string]$sp.Id) -DisplayName ([string]$sp.DisplayName) `
+                    -Roles $rolesNormalized `
+                    -AccessGroupType $AccessGroupType -GroupPrefix $GroupPrefix `
+                    -Members $members -ManagedBy $ManagedBy
                 $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
-                $safeName = Get-SafeName -s $sp.DisplayName -max 40
-                $safeScope = Get-SafeName -s $pol.ScopeName -max 40
-                $safeAppId = Get-SafeName -s $polAppId -max 36
+                $safeName = Format-RBAC4AppSafeName -Value $sp.DisplayName -MaxLength 40
+                $safeScope = Format-RBAC4AppSafeName -Value $pol.ScopeName -MaxLength 40
+                $safeAppId = Format-RBAC4AppSafeName -Value $polAppId -MaxLength 36
                 $timestamp = (Get-Date).ToString('yyyyMMddHHmmss')
                 $uniqueId = [guid]::NewGuid().ToString('N')
                 $outFile = Join-Path $OutputPath "rbac4app-$safeName-$safeScope-$safeAppId-$timestamp-$uniqueId.$extension"

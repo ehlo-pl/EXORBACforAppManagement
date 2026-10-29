@@ -14,7 +14,7 @@ PSCustomObject
 .NOTES
 Requires a connected Exchange Online session. No Microsoft Graph session is needed.
 #>
-function Get-EXORBACforAppRoleAssignment {
+function Get-RBAC4AppRoleAssignment {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param()

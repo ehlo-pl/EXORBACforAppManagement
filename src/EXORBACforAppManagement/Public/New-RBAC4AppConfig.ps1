@@ -158,7 +158,7 @@ function New-RBAC4AppConfig {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagementScopePrefix = 'MSRAo1P',
+        [string] $ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix,
 
         [Parameter()]
         [string[]] $ScopeRecipients,
@@ -212,11 +212,7 @@ function New-RBAC4AppConfig {
         }
 
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = switch ($AccessGroupType) {
-                'DistributionList'         { 'UDLRAo1P' }
-                'MailEnabledSecurityGroup' { 'USRAo1P' }
-                default                    { 'Um365RAo1P' }
-            }
+            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
 
         if (-not $OutputPath) { $OutputPath = (Get-Location).Path }
@@ -259,7 +255,7 @@ function New-RBAC4AppConfig {
         try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId } catch { Write-Verbose "TenantId unavailable: $($_.Exception.Message)" }
 
         # --- Normalise roles
-        $normalizedRoles = @(foreach ($r in @($Role)) { Get-NormalizeRole $r })
+        $normalizedRoles = @(foreach ($r in @($Role)) { ConvertTo-RBAC4AppRoleName -Role $r })
 
         # --- Build config object
         $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
@@ -269,45 +265,31 @@ function New-RBAC4AppConfig {
             ''
         }
         else {
-            Get-SafeName -s ('{0}-{1}' -f $GroupPrefix, $sp.DisplayName)
+            Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName
         }
 
-        $config = [pscustomobject]@{
-            SchemaVersion = '4.0'
-            GeneratedAt   = (Get-Date).ToUniversalTime().ToString('o')
-            TenantId      = $tenantId
-            Application   = [pscustomobject]@{
-                AppId       = [string]$sp.AppId
-                SpObjectId  = [string]$sp.Id
-                DisplayName = [string]$sp.DisplayName
-            }
-            Rbac          = [pscustomobject]@{
-                Roles           = $normalizedRoles
-                ChangeReference = if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }
-            }
-            RbacScope     = [pscustomobject]@{
-                AccessGroupType = $AccessGroupType
-                GroupPrefix     = $GroupPrefix
-                AccessGroupName = $accessGroupNameValue
-                Members         = $Members
-                ManagedBy       = $ManagedBy
-                BootstrapMember = $BootstrapMember
-                ScopeKind             = $ScopeKind
-                ManagementScopeName   = if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }
-                ManagementScopePrefix = $ManagementScopePrefix
-                ScopeRecipients       = @($ScopeRecipients | Where-Object { $_ })
-                ScopeTagAttribute     = $ScopeTagAttribute
-                ScopeTagValue         = if ($ScopeTagValue) { $ScopeTagValue } else { '' }
-                ScopeFilter           = if ($ScopeFilter) { $ScopeFilter } else { '' }
-                SeparateScopePerRole  = [bool]$SeparateScopePerRole
-            }
-        }
+        $config = ConvertTo-RBAC4AppConfig `
+            -TenantId $tenantId `
+            -AppId ([string]$sp.AppId) -SpObjectId ([string]$sp.Id) -DisplayName ([string]$sp.DisplayName) `
+            -Roles $normalizedRoles `
+            -ChangeReference $(if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }) `
+            -AccessGroupType $AccessGroupType -GroupPrefix $GroupPrefix -AccessGroupName $accessGroupNameValue `
+            -Members $Members -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember `
+            -ScopeKind $ScopeKind `
+            -ManagementScopeName $(if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }) `
+            -ManagementScopePrefix $ManagementScopePrefix `
+            -ScopeRecipients $ScopeRecipients -ScopeTagAttribute $ScopeTagAttribute `
+            -ScopeTagValue $(if ($ScopeTagValue) { $ScopeTagValue } else { '' }) `
+            -ScopeFilter $(if ($ScopeFilter) { $ScopeFilter } else { '' }) `
+            -SeparateScopePerRole ([bool]$SeparateScopePerRole)
 
         # --- Write config file (YAML or JSON, per -Format)
         $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
-        $safeName  = Get-SafeName -s $sp.DisplayName -max 40
-        $timestamp = (Get-Date).ToString('yyyyMMddHHmm')
-        $fileName  = "rbac4app-$safeName-$timestamp.$extension"
+        $safeName  = Format-RBAC4AppSafeName -Value $sp.DisplayName -MaxLength 40
+        # Seconds plus a short random id keep two configs for the same app from overwriting each other.
+        $timestamp = (Get-Date).ToString('yyyyMMddHHmmss')
+        $uniqueId  = [guid]::NewGuid().ToString('N').Substring(0, 8)
+        $fileName  = "rbac4app-$safeName-$timestamp-$uniqueId.$extension"
         $outFile   = Join-Path $OutputPath $fileName
 
         $serialized = if ($Format -eq 'Json') { $config | ConvertTo-Json -Depth 6 } else { ConvertTo-RBAC4AppYaml -Config $config }

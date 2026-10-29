@@ -1,4 +1,4 @@
-function ConvertTo-EXOApplicationAccessPolicyYaml {
+function ConvertTo-ApplicationAccessPolicyYaml {
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]

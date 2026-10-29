@@ -142,11 +142,7 @@ function ConvertFrom-RBAC4AppYaml {
     }
 
     if (-not $config.RbacScope.GroupPrefix) {
-        $config.RbacScope.GroupPrefix = switch ($config.RbacScope.AccessGroupType) {
-            'DistributionList'         { 'UDLRAo1P' }
-            'MailEnabledSecurityGroup' { 'USRAo1P' }
-            default                    { 'Um365RAo1P' }
-        }
+        $config.RbacScope.GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $config.RbacScope.AccessGroupType
     }
 
     return $config

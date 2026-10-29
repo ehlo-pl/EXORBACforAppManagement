@@ -297,4 +297,10 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
         $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup
         ($r.Errors -join ';') | Should -Match 'AccessGroupName is required'
     }
+
+    It 'throws (terminating) for invalid parameter combinations instead of returning an Errors entry' {
+        { Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -ManagementScopeName 'a' -ManagementScopePrefix 'b' } | Should -Throw '*cannot be used together*'
+        { Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -ScopeKind Recipients } | Should -Throw '*-ScopeRecipients is required*'
+        { Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -ScopeKind Filter } | Should -Throw '*-ScopeFilter is required*'
+    }
 }

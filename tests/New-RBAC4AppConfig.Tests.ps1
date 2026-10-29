@@ -231,6 +231,92 @@ Describe 'New-RBAC4AppConfig' {
         ($w -join ';') | Should -Match '-Members only applies to -ScopeKind Group'
     }
 
+    It 'rejects -AccessGroupName together with -GroupPrefix' {
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AccessGroupName 'g' -GroupPrefix 'p' -OutputPath $TestDrive -Confirm:$false } |
+            Should -Throw '*cannot be used together*'
+    }
+
+    It 'requires -ScopeFilter for -ScopeKind Filter' {
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Filter -OutputPath $TestDrive -Confirm:$false } |
+            Should -Throw '*-ScopeFilter is required*'
+    }
+
+    It 'writes the tag and filter scope settings to the config' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        # File names carry only a minute-resolution timestamp, so give each config its own folder.
+        $tagDir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'tag-scope') -Force
+        $filterDir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'filter-scope') -Force
+        $tagFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Tag -ScopeTagAttribute CustomAttribute3 -ScopeTagValue 'Contoso' `
+            -OutputPath $tagDir.FullName -Format Json -Confirm:$false
+        $filterFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Filter -ScopeFilter "Department -eq 'Sales'" `
+            -OutputPath $filterDir.FullName -Format Json -Confirm:$false
+
+        $tag = Get-Content -LiteralPath $tagFile -Raw | ConvertFrom-Json
+        $tag.RbacScope.ScopeKind | Should -Be 'Tag'
+        $tag.RbacScope.ScopeTagAttribute | Should -Be 'CustomAttribute3'
+        $tag.RbacScope.ScopeTagValue | Should -Be 'Contoso'
+        $filter = Get-Content -LiteralPath $filterFile -Raw | ConvertFrom-Json
+        $filter.RbacScope.ScopeFilter | Should -Be "Department -eq 'Sales'"
+    }
+
+    It 'writes an explicit -AccessGroupName and leaves it blank for MailEnabledSecurityGroup without one' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $namedDir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'named-group') -Force
+        $mesgDir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'mesg-group') -Force
+        $named = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AccessGroupName 'Custom-Group' -OutputPath $namedDir.FullName -Format Json -Confirm:$false
+        $mesg = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -OutputPath $mesgDir.FullName -Format Json -Confirm:$false
+
+        (Get-Content -LiteralPath $named -Raw | ConvertFrom-Json).RbacScope.AccessGroupName | Should -Be 'Custom-Group'
+        (Get-Content -LiteralPath $mesg -Raw | ConvertFrom-Json).RbacScope.AccessGroupName | Should -BeNullOrEmpty
+    }
+
+    It 'writes into the current directory when -OutputPath is omitted' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'cwd-check') -Force
+        Push-Location $dir.FullName
+        try { $out = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Confirm:$false }
+        finally { Pop-Location }
+
+        (Split-Path $out -Parent) | Should -Be $dir.FullName
+    }
+
+    It 'writes an empty TenantId when Get-MgContext fails' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgContext { throw 'not connected' }
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $out = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Format Json -Confirm:$false
+
+        (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).TenantId | Should -BeNullOrEmpty
+    }
+
+    It 'errors when AppId matches no service principal' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal { @() }
+        $err = $null
+        $out = New-RBAC4AppConfig -AppId '11111111-1111-1111-1111-111111111111' -OutputPath $TestDrive -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+        $out | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match 'No service principal found for AppId'
+    }
+
+    It 'errors when AppId or display name is ambiguous' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            @([pscustomobject]@{ Id = 's1'; AppId = 'a'; DisplayName = 'Contoso' }, [pscustomobject]@{ Id = 's2'; AppId = 'a'; DisplayName = 'Contoso' })
+        }
+        $e1 = $null; $e2 = $null
+        $null = New-RBAC4AppConfig -AppId '11111111-1111-1111-1111-111111111111' -OutputPath $TestDrive -Confirm:$false -ErrorVariable e1 -ErrorAction SilentlyContinue
+        $null = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Confirm:$false -ErrorVariable e2 -ErrorAction SilentlyContinue
+
+        ($e1 -join ';') | Should -Match 'Ambiguous: 2 service principals match AppId'
+        ($e2 -join ';') | Should -Match "Ambiguous displayName 'Contoso' matched 2 SPs.*s1, s2"
+    }
+
     It '-Format Json writes nothing under -WhatIf' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
@@ -240,5 +326,18 @@ Describe 'New-RBAC4AppConfig' {
         $result = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Format Json -OutputPath $emptyDir -WhatIf
         $result | Should -BeNullOrEmpty
         @(Get-ChildItem $emptyDir -Filter '*.json').Count | Should -Be 0
+    }
+
+    It 'does not overwrite an earlier config for the same app written to the same folder' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'no-overwrite') -Force
+        $first = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Confirm:$false
+        $second = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Confirm:$false
+
+        $second | Should -Not -Be $first
+        @(Get-ChildItem -LiteralPath $dir.FullName -Filter 'rbac4app-Contoso-*.yml').Count | Should -Be 2
+        (Split-Path $first -Leaf) | Should -Match '^rbac4app-Contoso-\d{14}-[0-9a-f]{8}\.yml$'
     }
 }

@@ -21,7 +21,7 @@ bld/
 [Bb]in/
 [Oo]bj/
 [Ll]og/
-[Ll]ogs/
+.DS_Store
 
 # .NET Core
 project.lock.json
@@ -57,3 +57,4 @@ nunit-*.xml.env
 # EXORBACforAppManagement build artifacts (build.ps1)
 output/
 testResults.xml
+coverage.xml

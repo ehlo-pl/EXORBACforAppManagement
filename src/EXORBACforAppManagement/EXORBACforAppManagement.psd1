@@ -12,7 +12,7 @@
 RootModule = 'EXORBACforAppManagement.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.8.5'
+ModuleVersion = '0.8.6'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -69,7 +69,7 @@ PowerShellVersion = '5.1'
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = 'New-RBAC4AppEntry', 'New-RegisteredApp', 'Get-RBAC4AppEntry', 'Get-RegisteredAppWithPermission', 'Get-EXORBACforAppRoleAssignment', 'New-RBAC4AppUnifiedGroup', 'New-RBAC4AppDistributionGroup', 'Register-EXOServicePrincipal', 'Convert-ApplicationAccessPolicyToRBAC', 'Test-RBAC4AppEntry', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry', 'New-RBAC4AppConfig', 'Invoke-RBAC4AppConfig', 'New-RBAC4AppManagementScope', 'Resolve-EXOapplicationAccessPolicy', 'Invoke-MsGraphEntraIDApiPerm'
+FunctionsToExport = 'New-RBAC4AppEntry', 'New-RegisteredApp', 'Get-RBAC4AppEntry', 'Get-RBAC4AppRoleAssignment', 'New-RBAC4AppUnifiedGroup', 'New-RBAC4AppDistributionGroup', 'Register-EXOServicePrincipal', 'Convert-ApplicationAccessPolicyToRBAC', 'Test-RBAC4AppEntry', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry', 'New-RBAC4AppConfig', 'Invoke-RBAC4AppConfig', 'New-RBAC4AppManagementScope', 'Resolve-ApplicationAccessPolicy', 'Invoke-MsGraphEntraIDApiPerm'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
@@ -78,8 +78,7 @@ CmdletsToExport = @()
 # VariablesToExport = @()
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
-# Backward-compatible aliases: the pre-0.6.0 RBACforApp names point to the RBAC4App functions.
-AliasesToExport = 'New-RBACforAppEntry', 'Get-RBACforAppEntry', 'Set-RBACforAppEntry', 'Test-RBACforAppEntry', 'Remove-RBACforAppEntry', 'New-RBACforAppUnifiedGroup', 'New-RBACforAppDistributionGroup'
+AliasesToExport = @()
 
 # DSC resources to export from this module
 # DscResourcesToExport = @()
@@ -108,7 +107,7 @@ PrivateData = @{
         # IconUri = ''
 
         # ReleaseNotes of this module
-        ReleaseNotes = '0.6.x - Renamed the RBAC-for-App functions to the RBAC4App form (New-/Get-/Set-/Test-/Remove-RBAC4AppEntry, New-RBAC4AppUnifiedGroup, New-RBAC4AppDistributionGroup); the previous RBACforApp names remain exported as aliases for backward compatibility. Added -AccessGroupType (M365Group default, DistributionList, MailEnabledSecurityGroup) to New-/Set-/Test-/Remove-RBAC4AppEntry and Convert-ApplicationAccessPolicyToRBAC, letting RBAC scope to an EXO-only distribution list or an existing on-prem/hybrid-synced mail-enabled security group (referenced, never created). Added public helper New-RBAC4AppDistributionGroup and private dispatcher New-RBAC4AppScopeGroup. Remove-RBAC4AppEntry never deletes a MailEnabledSecurityGroup and uses Remove-DistributionGroup for a DistributionList. '
+        ReleaseNotes = ''
 
         # Prerelease string of this module
         # Prerelease = ''

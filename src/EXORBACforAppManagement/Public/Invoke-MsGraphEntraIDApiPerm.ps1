@@ -3,20 +3,20 @@
 Adds Microsoft Graph application permissions to an Application Access Policy export.
 
 .DESCRIPTION
-Reads the YAML or JSON file created by Resolve-EXOapplicationAccessPolicy, then uses
+Reads the YAML or JSON file created by Resolve-ApplicationAccessPolicy, then uses
 Microsoft Graph application-role assignments to populate Permissions with granted
 Mail.*, Calendars.*, and Contacts.* application permissions. Run this command in a
 separate session connected to Microsoft Graph.
 
 .PARAMETER Path
 Path to the exported YAML or JSON file. The ConfigPath property from
-Resolve-EXOapplicationAccessPolicy can be piped directly.
+Resolve-ApplicationAccessPolicy can be piped directly.
 
 .PARAMETER OutputPath
 Path for the enriched file. Defaults to a new sibling file, leaving the input unchanged.
 
 .EXAMPLE
-$export = Resolve-EXOapplicationAccessPolicy
+$export = Resolve-ApplicationAccessPolicy
 $export | Invoke-MsGraphEntraIDApiPerm
 
 Reads the exported policy file and writes an enriched copy containing Graph permissions.
@@ -44,7 +44,7 @@ function Invoke-MsGraphEntraIDApiPerm {
                 $policies = @($document.Policies)
             }
             elseif ($extension -in @('.yml', '.yaml')) {
-                $document = ConvertFrom-EXOApplicationAccessPolicyYaml -Content $content
+                $document = ConvertFrom-ApplicationAccessPolicyYaml -Content $content
                 $policies = @($document.Policies)
             }
             else {
@@ -136,7 +136,7 @@ function Invoke-MsGraphEntraIDApiPerm {
             ([pscustomobject]@{ Policies = @($result.Policies) } | ConvertTo-Json -Depth 6)
         }
         else {
-            ConvertTo-EXOApplicationAccessPolicyYaml -Policies @($result.Policies)
+            ConvertTo-ApplicationAccessPolicyYaml -Policies @($result.Policies)
         }
 
         if ($PSCmdlet.ShouldProcess($outputFile, 'Write Application Access Policy permissions')) {

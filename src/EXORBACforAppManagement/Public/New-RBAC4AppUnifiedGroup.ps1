@@ -13,7 +13,7 @@ place and a warning is emitted. A summary object describing the resolved group i
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
 .PARAMETER Name
-Name and Alias of the Unified Group. Sanitized via Get-SafeName (<= 63 chars, alphanumeric/dash
+Name and Alias of the Unified Group. Sanitized via Format-RBAC4AppSafeName (<= 63 chars, alphanumeric/dash
 only - spaces, tabs, commas, semicolons, and other characters Exchange's Alias rejects are
 stripped) regardless of whether the caller already sanitized it.
 
@@ -78,7 +78,7 @@ function New-RBAC4AppUnifiedGroup {
         # --- Name/Alias must be free of spaces and other characters Exchange's Alias rejects.
         # Callers such as New-RBAC4AppEntry already pass an already-safe name (sanitizing again is
         # a no-op then), but a caller invoking this directly may not have - always sanitize.
-        $Name = Get-SafeName -s $Name
+        $Name = Format-RBAC4AppSafeName -Value $Name -MaxLength $script:RBAC4AppNameMaxLength.Group
 
         if (-not $DisplayName) { $DisplayName = '{0} - RBAC for APP' -f $Name }
 

@@ -244,7 +244,7 @@ function New-RBAC4AppEntry {
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [string] $ManagementScopePrefix = 'MSRAo1P',
+        [string] $ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix,
 
         [Parameter()]
         [string[]] $ScopeRecipients,
@@ -289,11 +289,7 @@ function New-RBAC4AppEntry {
         }
 
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = switch ($AccessGroupType) {
-                'DistributionList'         { 'UDLRAo1P' }
-                'MailEnabledSecurityGroup' { 'USRAo1P' }
-                default                    { 'Um365RAo1P' }
-            }
+            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
 
         if (-not $PSBoundParameters.ContainsKey('RegisteredAppName') -and
@@ -386,8 +382,7 @@ function New-RBAC4AppEntry {
                     throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup; on-prem/hybrid-synced groups are referenced by their existing name, not generated."
                 }
                 else {
-                    $umGroupName = "{0}-{1}" -f $GroupPrefix, $sp.DisplayName
-                    $umGroupName = Get-SafeName($umGroupName)
+                    $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName
                 }
                 $result.ScopeGroupName = $umGroupName
 
@@ -514,13 +509,13 @@ function New-RBAC4AppEntry {
             }
 
             # --- Role assignments
-            $rolesNormalized = foreach ($r in @($Role)) { Get-NormalizeRole $r }
+            $rolesNormalized = foreach ($r in @($Role)) { ConvertTo-RBAC4AppRoleName -Role $r }
             $result.RolesNormalized = @($rolesNormalized)
 
             foreach ($roleItem in $rolesNormalized) {
                 $ShortRoleName = $shortRoleMap[$roleItem]
 
-                $rbacNameBase = Get-SafeName -s ("{0}-{1}" -f $ShortRoleName,$sp.DisplayName) -max 63
+                $rbacNameBase = Get-RBAC4AppRoleAssignmentName -ShortRoleName $ShortRoleName -DisplayName $sp.DisplayName
                 $result.RoleAssignmentsName += $rbacNameBase
 
                 # --- Skip creation if a role assignment with this deterministic name already
