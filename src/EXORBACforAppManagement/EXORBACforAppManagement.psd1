@@ -12,7 +12,7 @@
 RootModule = 'EXORBACforAppManagement.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.8.5'
+ModuleVersion = '0.8.6'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -108,7 +108,7 @@ PrivateData = @{
         # IconUri = ''
 
         # ReleaseNotes of this module
-        ReleaseNotes = '0.6.x - Renamed the RBAC-for-App functions to the RBAC4App form (New-/Get-/Set-/Test-/Remove-RBAC4AppEntry, New-RBAC4AppUnifiedGroup, New-RBAC4AppDistributionGroup); the previous RBACforApp names remain exported as aliases for backward compatibility. Added -AccessGroupType (M365Group default, DistributionList, MailEnabledSecurityGroup) to New-/Set-/Test-/Remove-RBAC4AppEntry and Convert-ApplicationAccessPolicyToRBAC, letting RBAC scope to an EXO-only distribution list or an existing on-prem/hybrid-synced mail-enabled security group (referenced, never created). Added public helper New-RBAC4AppDistributionGroup and private dispatcher New-RBAC4AppScopeGroup. Remove-RBAC4AppEntry never deletes a MailEnabledSecurityGroup and uses Remove-DistributionGroup for a DistributionList. '
+        ReleaseNotes = ''
 
         # Prerelease string of this module
         # Prerelease = ''
