@@ -7,7 +7,7 @@ BeforeAll {
     function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
     function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
-    function global:Set-UnifiedGroup { param($Identity) }
+    function global:Set-UnifiedGroup { param($Identity, $IsMemberAllowedToEditContent, $AutoSubscribeNewMembers, $AlwaysSubscribeMembersToCalendarEvents, $Language, $SubscriptionEnabled, $HiddenFromAddressListsEnabled, $ConnectorsEnabled) }
     function global:Get-Recipient { }
 }
 
@@ -123,6 +123,91 @@ Describe 'New-RBAC4AppUnifiedGroup' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
             $ChangeReference -eq 'INC987654' -and $AccessGroupType -eq 'M365Group' -and $ScopeGroupName -eq 'Um365RAo1-Contoso'
         }
+    }
+
+    It 'returns the re-read group and applies the hardening settings after creation' {
+        $script:lookups = 0
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
+            $script:lookups++
+            if ($script:lookups -gt 1) { [pscustomobject]@{ DisplayName = 'configured'; Identity = 'g'; ManagedBy = @('owner@contoso.com'); HiddenFromAddressListsEnabled = $true } }
+        }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'created'; Alias = 'g'; AccessType = 'Private' } }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.AlreadyExisted | Should -BeFalse
+        $res.DisplayName | Should -Be 'configured'
+        $res.Group.HiddenFromAddressListsEnabled | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1 -ParameterFilter {
+            $Identity -eq 'Um365RAo1-Contoso' -and $HiddenFromAddressListsEnabled -eq $true -and $SubscriptionEnabled -eq $false -and
+            $ConnectorsEnabled -eq $false -and $AutoSubscribeNewMembers -eq $false
+        }
+    }
+
+    It 'creates a Private group with the default display name and the bootstrap member' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+
+        $null = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter {
+            $DisplayName -eq 'Um365RAo1-Contoso - RBAC for APP' -and $AccessType -eq 'Private' -and $Members -contains 'GraphAPI-Dummy'
+        }
+    }
+
+    It 'omits the bootstrap member when -BootstrapMember is empty' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+
+        $null = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -BootstrapMember '' -Confirm:$false
+
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 1 -ParameterFilter { @($Members).Count -eq 0 }
+    }
+
+    It 'rethrows when New-UnifiedGroup fails and does not configure the group' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { throw 'boom from EXO' }
+
+        { New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false } | Should -Throw '*boom from EXO*'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 0
+    }
+
+    It 'returns nothing when New-UnifiedGroup returns no object' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { $null }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 0
+    }
+
+    It 'still creates and returns the group when debug output is enabled' {
+        $script:lookups = 0
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
+            $script:lookups++
+            if ($script:lookups -gt 1) { [pscustomobject]@{ DisplayName = 'configured'; Identity = 'g'; ManagedBy = @('owner@contoso.com') } }
+        }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'created'; Alias = 'g'; AccessType = 'Private' } }
+
+        $prev = $DebugPreference
+        try {
+            $DebugPreference = 'Continue'
+            $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false 5>$null
+        }
+        finally { $DebugPreference = $prev }
+
+        $res.DisplayName | Should -Be 'configured'
+    }
+
+    It 'does not call Save-RBAC4AppChangeReferenceRecord when -ChangeReference is not supplied' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.ChangeReferencePath | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 0
     }
 
     It 'does not create under -WhatIf' {
