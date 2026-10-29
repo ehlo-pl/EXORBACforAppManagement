@@ -16,7 +16,7 @@ Describe 'EXORBACforAppManagement module' {
 
     It 'exports all public functions' {
         $exported = (Get-Command -Module EXORBACforAppManagement -CommandType Function).Name | Sort-Object
-        $exported | Should -Be @('Convert-ApplicationAccessPolicyToRBAC', 'Get-RBAC4AppEntry', 'Get-RegisteredAppWithPermission', 'Invoke-MsGraphEntraIDApiPerm', 'Invoke-RBAC4AppConfig', 'New-RBAC4AppConfig', 'New-RBAC4AppDistributionGroup', 'New-RBAC4AppEntry', 'New-RBAC4AppManagementScope', 'New-RBAC4AppUnifiedGroup', 'New-RegisteredApp', 'Register-EXOServicePrincipal', 'Remove-RBAC4AppEntry', 'Resolve-EXOapplicationAccessPolicy', 'Set-RBAC4AppEntry', 'Test-RBAC4AppEntry')
+        $exported | Should -Be @('Convert-ApplicationAccessPolicyToRBAC', 'Get-EXORBACforAppRoleAssignment', 'Get-RBAC4AppEntry', 'Get-RegisteredAppWithPermission', 'Invoke-MsGraphEntraIDApiPerm', 'Invoke-RBAC4AppConfig', 'New-RBAC4AppConfig', 'New-RBAC4AppDistributionGroup', 'New-RBAC4AppEntry', 'New-RBAC4AppManagementScope', 'New-RBAC4AppUnifiedGroup', 'New-RegisteredApp', 'Register-EXOServicePrincipal', 'Remove-RBAC4AppEntry', 'Resolve-EXOapplicationAccessPolicy', 'Set-RBAC4AppEntry', 'Test-RBAC4AppEntry')
     }
 
     It 'exports the pre-0.6.0 RBACforApp names as aliases to the RBAC4App functions' {
