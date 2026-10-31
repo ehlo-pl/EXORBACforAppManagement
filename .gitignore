@@ -58,3 +58,11 @@ nunit-*.xml.env
 output/
 testResults.xml
 coverage.xml
+# potential output files from the scripts
+*.xlsx
+*.csv
+*.clixml
+*.json
+*.log
+*.yaml
+*.yml
