@@ -276,6 +276,31 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
             $result.Name | Should -Be 'AppMailboxSettings-Tailspin'
         }
 
+        It 'resolves a service principal when the assignee name omits the _SP suffix' {
+            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+                [pscustomobject]@{
+                    Name = 'AppMailboxSettings-Tailspin'
+                    Role = 'Application MailboxSettings.Read'
+                    RoleAssigneeName = 'Tailspin'
+                    RoleAssigneeType = 'ServicePrincipal'
+                    CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'
+                    RecipientWriteScope = 'Group'
+                    Enabled = $true
+                }
+            }
+
+            $errors = @()
+            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $TestDrive -ErrorVariable errors
+            $path = Join-Path $TestDrive 'rbac4app-AppMailboxSettings-Tailspin.yml'
+            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $path } {
+                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
+            }
+
+            $errors | Should -BeNullOrEmpty
+            $config.Application.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
+            $config.Application.SpObjectId | Should -Be '66666666-6666-6666-6666-666666666666'
+        }
+
         It 'writes all assignments to one JSON file when an explicit filename is supplied' {
             Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
                 @(
