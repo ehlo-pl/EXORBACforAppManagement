@@ -16,6 +16,8 @@ assignments are bound to a management scope over the scope group's members.
 
 The config file's format (YAML or JSON) is auto-detected from the -Path extension (.json vs
 .yml/.yaml) unless -Format overrides it.
+Files containing an array of schema-compatible configs are also accepted and each entry is
+provisioned independently.
 
 This separates the two modules into distinct PowerShell sessions, avoiding the MSAL/WAM
 assembly conflict that can occur when both Microsoft.Graph and ExchangeOnlineManagement are
@@ -79,10 +81,47 @@ function Invoke-RBAC4AppConfig {
 
         $content = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
         try {
-            $config = if ($resolvedFormat -eq 'Json') { $content | ConvertFrom-Json } else { ConvertFrom-RBAC4AppYaml -Content $content }
+            $config = if ($resolvedFormat -eq 'Json' -or $content.TrimStart().StartsWith('[')) {
+                $content | ConvertFrom-Json
+            }
+            else {
+                ConvertFrom-RBAC4AppYaml -Content $content
+            }
         }
         catch {
             Write-Error "Config '$Path' could not be parsed as $resolvedFormat`: $($_.Exception.Message)"
+            return
+        }
+
+        if ($config -is [array]) {
+            $originalConfirmPreference = $ConfirmPreference
+            if ($PSBoundParameters.ContainsKey('Confirm') -and -not $Confirm) {
+                $ConfirmPreference = 'None'
+            }
+            try {
+                foreach ($configEntry in $config) {
+                    $entryPath = Join-Path ([System.IO.Path]::GetTempPath()) ("rbac4app-{0}.json" -f [guid]::NewGuid().ToString('N'))
+                    try {
+                        $entryJson = ConvertTo-Json -InputObject $configEntry -Depth 6
+                        [System.IO.File]::WriteAllText($entryPath, $entryJson, [System.Text.Encoding]::UTF8)
+                        $invokeParameters = @{ Path = $entryPath; Format = 'Json' }
+                        if ($WhatIfPreference) { $invokeParameters.WhatIf = $true }
+                        if ($PSBoundParameters.ContainsKey('Confirm') -and $Confirm) { $invokeParameters.Confirm = $true }
+                        foreach ($entryResult in @(Invoke-RBAC4AppConfig @invokeParameters)) {
+                            if ($entryResult -and $entryResult.PSObject.Properties['IdentityInput']) {
+                                $entryResult.IdentityInput = $Path
+                            }
+                            $entryResult
+                        }
+                    }
+                    finally {
+                        Remove-Item -LiteralPath $entryPath -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            finally {
+                $ConfirmPreference = $originalConfirmPreference
+            }
             return
         }
 

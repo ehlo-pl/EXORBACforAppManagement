@@ -67,6 +67,17 @@ RBAC role assignments. With no identity filter, returns all policies. The existi
 -RegisteredAppName, -AppId, and -SpObjectId filters limit the result to that application.
 Requires an Exchange Online session where Get-ApplicationAccessPolicy is available.
 
+.PARAMETER ExportConfig
+Export each returned RBAC role assignment as a schema-compatible YAML or JSON config for
+Invoke-RBAC4AppConfig. By default, files are written to the current directory.
+
+.PARAMETER ExportPath
+Optional output path. A directory writes one normalized file per role assignment; a file path
+contains the config for one assignment or all exported configs when there are multiple assignments.
+
+.PARAMETER ExportFormat
+Config format to write: Yaml (default) or Json.
+
 .EXAMPLE
 Get-RBAC4AppEntry
 
@@ -109,6 +120,11 @@ Returns all Application Access Policies, without resolving RBAC role assignments
 Get-RBAC4AppEntry -ApplicationAccessPolicy -AppId '11111111-2222-3333-4444-555555555555'
 
 Returns Application Access Policies for the specified application.
+
+.EXAMPLE
+Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -ExportConfig -ExportFormat Json
+
+Exports each matching role assignment as a JSON config for Invoke-RBAC4AppConfig.
 
 .OUTPUTS
 PSCustomObject
@@ -200,7 +216,7 @@ Performance / behavior notes:
   several assignments/applications is only read once.
 #>
 function Get-RBAC4AppEntry {
-    [CmdletBinding(DefaultParameterSetName = 'All')]
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low', DefaultParameterSetName = 'All')]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'ByName')]
@@ -237,10 +253,25 @@ function Get-RBAC4AppEntry {
         [switch] $ByApplication,
 
         [Parameter()]
-        [switch] $ApplicationAccessPolicy
+        [switch] $ApplicationAccessPolicy,
+
+        [Parameter()]
+        [switch] $ExportConfig,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ExportPath,
+
+        [Parameter()]
+        [ValidateSet('Yaml', 'Json')]
+        [string] $ExportFormat = 'Yaml'
     )
 
     process {
+        if ($ExportConfig -and $ApplicationAccessPolicy) {
+            throw '-ExportConfig cannot be combined with -ApplicationAccessPolicy.'
+        }
+
         # --- Resolve the service principal when an application filter is requested.
         $sp = $null
         try {
@@ -351,6 +382,146 @@ function Get-RBAC4AppEntry {
         # --- Scope resolution, cached per distinct scope group name for the duration of the call.
         $scopeCache = @{}
 
+        $exportCount = if ($ExportConfig) { @($assignments).Count } else { 0 }
+        $combinedConfigs = [System.Collections.Generic.List[object]]::new()
+        $exportPathIsFile = [bool](
+            $ExportPath -and
+            -not (Test-Path -LiteralPath $ExportPath -PathType Container) -and
+            [string]$ExportPath -notmatch '[\\/]$' -and
+            [System.IO.Path]::GetExtension($ExportPath)
+        )
+
+        $exportAssignment = {
+            param(
+                [psobject] $Assignment,
+                [object] $ResolvedSp,
+                [psobject] $Scope
+            )
+
+            if (-not $Assignment -or -not $ResolvedSp -or -not $ResolvedSp.AppId -or -not $ResolvedSp.ObjectId) {
+                Write-Error -Message ("Cannot export role assignment '{0}' because its service principal AppId and object id could not be resolved." -f $Assignment.Name)
+                return
+            }
+
+            if ([string]$Assignment.Role -notlike 'Application *') {
+                Write-Error -Message ("Cannot export role assignment '{0}' because '{1}' is not an application role." -f $Assignment.Name, $Assignment.Role)
+                return
+            }
+
+            $scopeKind = if ($Scope.ScopeKind -eq 'GroupDirect') { 'Group' } else { [string]$Scope.ScopeKind }
+            if ($scopeKind -notin @('Group', 'Recipients', 'Tag', 'Filter')) {
+                Write-Error -Message ("Cannot export role assignment '{0}' because its recipient scope could not be resolved to a supported config scope." -f $Assignment.Name)
+                return
+            }
+
+            $resolvedGroupType = if ($Scope.ScopeGroupType -in @('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')) {
+                [string]$Scope.ScopeGroupType
+            }
+            else { $null }
+
+            if ($scopeKind -eq 'Group' -and (-not $Scope.ScopeGroupName -or -not $resolvedGroupType)) {
+                Write-Error -Message ("Cannot export role assignment '{0}' because its scope group name or type could not be resolved." -f $Assignment.Name)
+                return
+            }
+            $accessGroupType = if ($resolvedGroupType) { $resolvedGroupType } else { 'DistributionList' }
+
+            $scopeTagAttribute = 'CustomAttribute1'
+            $scopeTagValue = ''
+            $scopeFilter = ''
+            if ($scopeKind -eq 'Tag' -and [string]$Scope.ScopeFilter -match "(?i)^\s*(CustomAttribute(?:[1-9]|1[0-5]))\s+-eq\s+'((?:''|[^'])*)'\s*$") {
+                $scopeTagAttribute = $Matches[1]
+                $scopeTagValue = $Matches[2].Replace("''", "'")
+            }
+            elseif ($scopeKind -eq 'Tag') {
+                $scopeKind = 'Filter'
+                $scopeFilter = [string]$Scope.ScopeFilter
+            }
+            elseif ($scopeKind -eq 'Filter') {
+                $scopeFilter = [string]$Scope.ScopeFilter
+            }
+
+            if (($scopeKind -eq 'Recipients' -and @($Scope.Members).Count -eq 0) -or
+                ($scopeKind -eq 'Filter' -and -not $scopeFilter)) {
+                Write-Error -Message ("Cannot export role assignment '{0}' because its {1} scope data is incomplete." -f $Assignment.Name, $scopeKind)
+                return
+            }
+
+            $accessGroupName = if ($scopeKind -eq 'Group') {
+                if ($Scope.ScopeGroupName) { [string]$Scope.ScopeGroupName } else { [string]$Scope.ScopeName }
+            }
+            else { '' }
+            $scopeRecipients = if ($scopeKind -eq 'Recipients') { @($Scope.Members) } else { @() }
+            $config = ConvertTo-RBAC4AppConfig `
+                -AppId ([string]$ResolvedSp.AppId) `
+                -SpObjectId ([string]$ResolvedSp.ObjectId) `
+                -DisplayName ([string]($ResolvedSp.DisplayName -replace '_SP$', '')) `
+                -Roles ([string]$Assignment.Role) `
+                -AccessGroupType $accessGroupType `
+                -GroupPrefix (Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $accessGroupType) `
+                -AccessGroupName $accessGroupName `
+                -Members $(if ($scopeKind -eq 'Group') { @($Scope.Members) } else { @() }) `
+                -ManagedBy @('GraphAPI-Dummy-owner') `
+                -ScopeKind $scopeKind `
+                -ManagementScopeName $(if ($Scope.ManagementScope) { [string]$Scope.ManagementScope } else { '' }) `
+                -ManagementScopePrefix $script:RBAC4AppDefaultManagementScopePrefix `
+                -ScopeRecipients $scopeRecipients `
+                -ScopeTagAttribute $scopeTagAttribute `
+                -ScopeTagValue $scopeTagValue `
+                -ScopeFilter $scopeFilter
+
+            $extension = if ($ExportFormat -eq 'Json') { '.json' } else { '.yml' }
+            if ($exportPathIsFile -and $exportCount -gt 1) {
+                $combinedConfigs.Add($config)
+                return
+            }
+
+            $safeName = Format-RBAC4AppSafeName -Value ([string]$Assignment.Name) -MaxLength 120
+            if (-not $safeName) {
+                $safeName = Format-RBAC4AppSafeName -Value ("{0}-{1}" -f $ResolvedSp.DisplayName, $Assignment.Role) -MaxLength 120
+            }
+            $fileName = "rbac4app-$safeName$extension"
+            $targetPath = $null
+
+            if (-not $ExportPath) {
+                $targetPath = Join-Path (Get-Location).Path $fileName
+            }
+            elseif ((Test-Path -LiteralPath $ExportPath -PathType Container) -or
+                [string]$ExportPath -match '[\\/]$' -or
+                -not [System.IO.Path]::GetExtension($ExportPath)) {
+                $targetPath = Join-Path $ExportPath $fileName
+            }
+            elseif ($exportPathIsFile) {
+                $targetPath = [System.IO.Path]::ChangeExtension($ExportPath, $extension)
+            }
+
+            if ($PSCmdlet.ShouldProcess($targetPath, "Write RBAC4App config ($ExportFormat)")) {
+                $parent = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($targetPath))
+                if (-not [System.IO.Directory]::Exists($parent)) {
+                    [void][System.IO.Directory]::CreateDirectory($parent)
+                }
+                $serialized = if ($ExportFormat -eq 'Json') { $config | ConvertTo-Json -Depth 6 } else { ConvertTo-RBAC4AppYaml -Config $config }
+                [System.IO.File]::WriteAllText($targetPath, $serialized, [System.Text.Encoding]::UTF8)
+                Write-Verbose "Config written to '$targetPath'."
+            }
+        }
+
+        $writeCombinedExport = {
+            if ($combinedConfigs.Count -eq 0) { return }
+
+            $extension = if ($ExportFormat -eq 'Json') { '.json' } else { '.yml' }
+            $targetPath = [System.IO.Path]::ChangeExtension($ExportPath, $extension)
+            if ($PSCmdlet.ShouldProcess($targetPath, "Write $($combinedConfigs.Count) RBAC4App configs ($ExportFormat)")) {
+                $parent = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($targetPath))
+                if (-not [System.IO.Directory]::Exists($parent)) {
+                    [void][System.IO.Directory]::CreateDirectory($parent)
+                }
+                # JSON is a YAML subset, so the same multi-config payload is valid in either format.
+                $serialized = ConvertTo-Json -InputObject @($combinedConfigs) -Depth 6
+                [System.IO.File]::WriteAllText($targetPath, $serialized, [System.Text.Encoding]::UTF8)
+                Write-Verbose "Config written to '$targetPath'."
+            }
+        }
+
         function Get-DisplayNameFor([string] $assigneeName, [object] $resolvedSp, [string] $roleAssigneeType) {
             if ($resolvedSp) { return [string]$resolvedSp.DisplayName -replace '_SP$', '' }
             if ($roleAssigneeType -eq 'ServicePrincipal') { return ($assigneeName -replace '_SP$', '') }
@@ -373,6 +544,13 @@ function Get-RBAC4AppEntry {
                 $scopeKinds = @($scopes | Where-Object { $_.ScopeKind } | ForEach-Object { $_.ScopeKind } | Sort-Object -Unique)
                 $scopeMembers = @($scopes | ForEach-Object { $_.Members } | Where-Object { $_ } | Sort-Object -Unique)
 
+                if ($ExportConfig) {
+                    foreach ($assignment in $assignmentGroup.Group) {
+                        $assignmentScope = Resolve-RBAC4AppScope -Assignment $assignment -Cache $scopeCache
+                        & $exportAssignment $assignment $resolvedSp $assignmentScope
+                    }
+                }
+
                 [pscustomobject][ordered]@{
                     DisplayName             = Get-DisplayNameFor $assigneeName $resolvedSp 'ServicePrincipal'
                     AppId                   = if ($resolvedSp) { [string]$resolvedSp.AppId } else { $null }
@@ -391,6 +569,7 @@ function Get-RBAC4AppEntry {
                     DisabledAssignmentCount = @($assignmentGroup.Group | Where-Object { -not $_.Enabled }).Count
                 }
             }
+            if ($ExportConfig) { & $writeCombinedExport }
             return
         }
 
@@ -398,6 +577,10 @@ function Get-RBAC4AppEntry {
             $assigneeName = [string]$a.RoleAssigneeName
             $resolvedSp = $spByAssignee[$assigneeName]
             $scope = Resolve-RBAC4AppScope -Assignment $a -Cache $scopeCache
+
+            if ($ExportConfig) {
+                & $exportAssignment $a $resolvedSp $scope
+            }
 
             [pscustomobject][ordered]@{
                 Name               = $a.Name
@@ -421,5 +604,6 @@ function Get-RBAC4AppEntry {
                 Identity           = $a.Identity
             }
         }
+        if ($ExportConfig) { & $writeCombinedExport }
     }
 }
