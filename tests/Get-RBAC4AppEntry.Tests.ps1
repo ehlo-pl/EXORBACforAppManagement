@@ -180,8 +180,10 @@ Describe 'Get-RBAC4AppEntry -ApplicationAccessPolicy' {
             [pscustomobject]@{ AppId = '11111111-1111-1111-1111-111111111111'; AccessRight = 'RestrictAccess'; ScopeName = 'ContosoGroup'; Description = 'Contoso policy' }
             [pscustomobject]@{ AppId = '33333333-3333-3333-3333-333333333333'; AccessRight = 'RestrictAccess'; ScopeName = 'FabrikamGroup'; Description = 'Fabrikam policy' }
         )
+        $script:PolicyAppIdWasBound = $null
         Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy {
             param([string]$AppId)
+            $script:PolicyAppIdWasBound = $PSBoundParameters.ContainsKey('AppId')
             if ($AppId) { $script:Policies | Where-Object AppId -eq $AppId }
             else { $script:Policies }
         }
@@ -193,7 +195,8 @@ Describe 'Get-RBAC4AppEntry -ApplicationAccessPolicy' {
 
         $r.Count | Should -Be 2
         ($r.AppId | Sort-Object) | Should -Be @('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333')
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1 -ParameterFilter { -not $AppId }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1
+        $script:PolicyAppIdWasBound | Should -BeFalse
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
     }
 
