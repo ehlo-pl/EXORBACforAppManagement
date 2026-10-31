@@ -8,21 +8,15 @@ AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
 }
 
-# The helper writes under the user profile folder; point it at TestDrive so no test touches the real profile.
+# GetFolderPath('UserProfile') ignores environment overrides on Windows; redirect the directory join instead.
 Describe 'Save-RBAC4AppChangeReferenceRecord' {
     BeforeEach {
-        $script:savedHome = $env:HOME
-        $script:savedProfile = $env:USERPROFILE
-        $env:HOME = $TestDrive
-        $env:USERPROFILE = $TestDrive
+        Mock -ModuleName EXORBACforAppManagement Join-Path {
+            Microsoft.PowerShell.Management\Join-Path -Path $TestDrive -ChildPath '.EXORBACforAppManagement'
+        } -ParameterFilter { $ChildPath -eq '.EXORBACforAppManagement' }
     }
 
-    AfterEach {
-        $env:HOME = $script:savedHome
-        $env:USERPROFILE = $script:savedProfile
-    }
-
-    It 'writes a YAML record under <profile>/.EXORBACforAppManagement and returns its path' {
+    It 'writes a YAML record under the user profile directory and returns its path' {
         $path = InModuleScope EXORBACforAppManagement {
             Save-RBAC4AppChangeReferenceRecord -ChangeReference 'CHG123456' -Source 'New-RBAC4AppUnifiedGroup' `
                 -AccessGroupType 'M365Group' -ScopeGroupName 'Um365RAo1-Contoso' -ApplicationName 'Contoso' `
@@ -30,6 +24,9 @@ Describe 'Save-RBAC4AppChangeReferenceRecord' {
         }
 
         $path | Should -Be (Join-Path $TestDrive '.EXORBACforAppManagement' 'CHG123456.yaml')
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Join-Path -Times 1 -Exactly -ParameterFilter {
+            $Path -eq [Environment]::GetFolderPath('UserProfile') -and $ChildPath -eq '.EXORBACforAppManagement'
+        }
         Test-Path -LiteralPath $path | Should -BeTrue
         $text = Get-Content -LiteralPath $path -Raw
         $text | Should -Match '(?m)^---'
