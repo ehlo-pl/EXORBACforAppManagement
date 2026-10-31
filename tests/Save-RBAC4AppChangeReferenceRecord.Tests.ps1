@@ -12,6 +12,9 @@ AfterAll {
 Describe 'Save-RBAC4AppChangeReferenceRecord' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Join-Path {
+            Microsoft.PowerShell.Management\Join-Path -Path $Path -ChildPath $ChildPath
+        }
+        Mock -ModuleName EXORBACforAppManagement Join-Path {
             Microsoft.PowerShell.Management\Join-Path -Path $TestDrive -ChildPath '.EXORBACforAppManagement'
         } -ParameterFilter { $ChildPath -eq '.EXORBACforAppManagement' }
     }
@@ -26,6 +29,10 @@ Describe 'Save-RBAC4AppChangeReferenceRecord' {
         $path | Should -Be (Join-Path $TestDrive '.EXORBACforAppManagement' 'CHG123456.yaml')
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Join-Path -Times 1 -Exactly -ParameterFilter {
             $Path -eq [Environment]::GetFolderPath('UserProfile') -and $ChildPath -eq '.EXORBACforAppManagement'
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Join-Path -Times 1 -Exactly -ParameterFilter {
+            $Path -eq (Microsoft.PowerShell.Management\Join-Path -Path $TestDrive -ChildPath '.EXORBACforAppManagement') -and
+            $ChildPath -eq 'CHG123456.yaml'
         }
         Test-Path -LiteralPath $path | Should -BeTrue
         $text = Get-Content -LiteralPath $path -Raw
