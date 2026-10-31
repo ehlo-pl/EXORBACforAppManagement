@@ -241,6 +241,117 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
         }
     }
 
+    Describe 'Get-RBAC4AppEntry -ExportConfig' {
+        BeforeEach {
+            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+                $script:Assignments | Where-Object Role -eq 'Application MailboxSettings.Read'
+            }
+            Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { $script:ExoServicePrincipals }
+            Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+                if ($Identity -eq 'UDLRAo1P-Tailspin') {
+                    [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' }
+                }
+            }
+            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember {
+                @([pscustomobject]@{ PrimarySmtpAddress = 'shared@tailspin.com'; Name = 'shared' })
+            }
+        }
+
+        It 'writes a YAML config compatible with Invoke-RBAC4AppConfig using a normalized assignment filename' {
+            $result = Get-RBAC4AppEntry -ExportConfig -ExportPath $TestDrive
+            $path = Join-Path $TestDrive 'rbac4app-AppMailboxSettings-Tailspin.yml'
+
+            Test-Path -LiteralPath $path | Should -BeTrue
+            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $path } {
+                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
+            }
+            $config.SchemaVersion | Should -Be '4.0'
+            $config.Application.DisplayName | Should -Be 'Tailspin'
+            $config.Application.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
+            @($config.Rbac.Roles) | Should -Be @('Application MailboxSettings.Read')
+            $config.RbacScope.ScopeKind | Should -Be 'Group'
+            $config.RbacScope.AccessGroupName | Should -Be 'UDLRAo1P-Tailspin'
+            @($config.RbacScope.Members) | Should -Contain 'shared@tailspin.com'
+            $result.Name | Should -Be 'AppMailboxSettings-Tailspin'
+        }
+
+        It 'writes all assignments to one JSON file when an explicit filename is supplied' {
+            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+                @(
+                    [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
+                    [pscustomobject]@{ Name = 'AppCldR-Fabrikam'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
+                    [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
+                )
+            }
+            Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+                if ($Identity -eq 'UDLRAo1P-Tailspin') {
+                    [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' }
+                }
+            }
+            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember {
+                @([pscustomobject]@{ PrimarySmtpAddress = 'shared@tailspin.com'; Name = 'shared' })
+            }
+
+            $path = Join-Path $TestDrive 'inventory.yml'
+            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $path -ExportFormat Json
+            $path = Join-Path $TestDrive 'inventory.json'
+
+            Test-Path -LiteralPath $path | Should -BeTrue
+            $configs = @(Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
+            $configs.Count | Should -Be 3
+            ($configs | Where-Object { $_.Application.DisplayName -eq 'Contoso' }).Rbac.Roles | Should -Be 'Application Mail.Send'
+            $configs.SchemaVersion | Should -Be @('4.0', '4.0', '4.0')
+        }
+
+        It 'exports each ByApplication result to a specifically named JSON config' {
+            $path = Join-Path $TestDrive 'by-application.json'
+            $result = Get-RBAC4AppEntry -ByApplication -ExportConfig -ExportPath $path -ExportFormat Json
+
+            Test-Path -LiteralPath $path | Should -BeTrue
+            $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            @($config.Rbac.Roles) | Should -Be @('Application MailboxSettings.Read')
+            $result.DisplayName | Should -Be 'Tailspin'
+        }
+
+        It 'exports recipient-scoped assignments with the resolved recipient list' {
+            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+                [pscustomobject]@{
+                    Name = 'AppMailSend-Tailspin'
+                    Role = 'Application Mail.Send'
+                    RoleAssigneeName = 'Tailspin_SP'
+                    RoleAssigneeType = 'ServicePrincipal'
+                    CustomResourceScope = 'MSRAo1P-Tailspin'
+                    RecipientWriteScope = 'CustomRecipientScope'
+                    Enabled = $true
+                }
+            }
+            Mock -ModuleName EXORBACforAppManagement Get-ManagementScope {
+                [pscustomobject]@{
+                    Name = $Identity
+                    RecipientFilter = "PrimarySmtpAddress -eq 'alice@tailspin.com' -or PrimarySmtpAddress -eq 'bob@tailspin.com'"
+                }
+            }
+
+            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $TestDrive
+            $path = Join-Path $TestDrive 'rbac4app-AppMailSend-Tailspin.yml'
+            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $path } {
+                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
+            }
+
+            $config.RbacScope.ScopeKind | Should -Be 'Recipients'
+            @($config.RbacScope.ScopeRecipients) | Should -Be @('alice@tailspin.com', 'bob@tailspin.com')
+        }
+
+        It 'honors WhatIf without writing config files' {
+            $whatIfPath = Join-Path $TestDrive 'whatif'
+            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $whatIfPath -WhatIf
+
+            Test-Path -LiteralPath $whatIfPath | Should -BeFalse
+        }
+    }
+
     It 'returns one row per distinct registered application' {
         $r = Get-RBAC4AppEntry -ByApplication
 

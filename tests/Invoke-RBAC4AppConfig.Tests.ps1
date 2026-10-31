@@ -267,6 +267,25 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
     }
 
+    It 'reads every config in a multi-config YAML-compatible JSON file' {
+        $config = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $script:testYaml } {
+            ConvertFrom-RBAC4AppYaml -Content $Content
+        }
+        $secondConfig = $config | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+        $secondConfig.Application.AppId = '33333333-3333-3333-3333-333333333333'
+        $secondConfig.Application.SpObjectId = '44444444-4444-4444-4444-444444444444'
+        $secondConfig.Application.DisplayName = 'Fabrikam'
+        $multiConfigPath = Join-Path $TestDrive 'multi-config.yml'
+        Set-Content -LiteralPath $multiConfigPath -Value (ConvertTo-Json -InputObject @($config, $secondConfig) -Depth 6)
+
+        $results = @(Invoke-RBAC4AppConfig -Path $multiConfigPath -Confirm:$false)
+
+        $results.Count | Should -Be 2
+        ($results.ResolvedDisplay | Sort-Object) | Should -Be @('Contoso', 'Fabrikam')
+        $results.IdentityInput | Should -Be @($multiConfigPath, $multiConfigPath)
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 2
+    }
+
     It 'creates a separate scope group and management scope for each role when configured' {
         $separateConfig = Join-Path $TestDrive 'test-config-separate-role-scopes.yml'
         $yaml = $script:testYaml -replace 'SchemaVersion: "3.0"', 'SchemaVersion: "4.0"'
