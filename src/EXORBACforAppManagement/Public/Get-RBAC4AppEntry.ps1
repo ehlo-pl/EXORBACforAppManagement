@@ -372,6 +372,12 @@ function Get-RBAC4AppEntry {
             if ($spByAssignee.ContainsKey($assigneeName)) { continue }
 
             $resolved = $allExoServicePrincipals | Where-Object { $_ -and ([string]$_.DisplayName -eq $assigneeName) } | Select-Object -First 1
+            if (-not $resolved -and $assigneeName) {
+                $normalizedAssigneeName = $assigneeName -replace '_SP$', ''
+                $resolved = $allExoServicePrincipals |
+                    Where-Object { $_ -and (([string]$_.DisplayName -replace '_SP$', '') -eq $normalizedAssigneeName) } |
+                    Select-Object -First 1
+            }
             $spByAssignee[$assigneeName] = $resolved
 
             if (-not $resolved -and $a.RoleAssigneeType -eq 'ServicePrincipal' -and $warnedAssignees.Add($assigneeName)) {
