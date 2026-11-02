@@ -590,3 +590,49 @@ Describe 'Get-RBAC4AppEntry management scope resolution' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementScope -Times 0
     }
 }
+Describe 'Get-RBAC4AppEntry validation and failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { $script:ExoServicePrincipals }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { $script:Assignments }
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { }
+    }
+
+    It 'throws when -ExportConfig is combined with -ApplicationAccessPolicy' {
+        { Get-RBAC4AppEntry -ExportConfig -ApplicationAccessPolicy } | Should -Throw '*cannot be combined*'
+    }
+
+    It 'resolves the application by -SpObjectId' {
+        $r = @(Get-RBAC4AppEntry -SpObjectId '22222222-2222-2222-2222-222222222222')
+        $r.Count | Should -Be 1
+        $r[0].RoleAssigneeName | Should -Be 'Contoso_SP'
+    }
+
+    It 'writes an error and returns nothing when the application cannot be resolved' {
+        $r = Get-RBAC4AppEntry -AppId '99999999-9999-9999-9999-999999999999' -ErrorVariable err -ErrorAction SilentlyContinue
+        $r | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match 'No Exchange Online service principal found'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
+    }
+
+    It 'filters -ApplicationAccessPolicy by the AppId of an application resolved by name' {
+        $null = Get-RBAC4AppEntry -RegisteredAppName 'Contoso' -ApplicationAccessPolicy
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1 -ParameterFilter {
+            $AppId -eq '11111111-1111-1111-1111-111111111111'
+        }
+    }
+
+    It 'writes an error when Get-ApplicationAccessPolicy is not available in the session' {
+        Mock -ModuleName EXORBACforAppManagement Get-Command { } -ParameterFilter { $Name -eq 'Get-ApplicationAccessPolicy' }
+        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy -ErrorVariable err -ErrorAction SilentlyContinue
+        $r | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match 'Get-ApplicationAccessPolicy is unavailable'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 0
+    }
+
+    It 'writes an error when reading the Application Access Policies fails' {
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { throw 'access denied' }
+        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy -ErrorVariable err -ErrorAction SilentlyContinue
+        $r | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match 'Failed to read Application Access Policies: access denied'
+    }
+}

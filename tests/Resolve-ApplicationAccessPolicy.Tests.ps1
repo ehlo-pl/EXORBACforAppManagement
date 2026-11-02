@@ -70,6 +70,28 @@ Describe 'Resolve-ApplicationAccessPolicy' {
     }
 }
 
+Describe 'Resolve-ApplicationAccessPolicy input and failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { $script:Policies }
+    }
+
+    It 'uses piped policies instead of reading them from Exchange Online' {
+        $result = $script:Policies | Resolve-ApplicationAccessPolicy -OutputPath $TestDrive -Confirm:$false
+        $result.Policies.Count | Should -Be 1
+        $result.Policies[0].AppId | Should -Be '11111111-1111-1111-1111-111111111111'
+        Should -Invoke -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy -Times 0
+    }
+
+    It 'writes an error and no file when reading the policies fails' {
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { throw 'access denied' }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'read-fails') -Force
+        $result = Resolve-ApplicationAccessPolicy -OutputPath $dir.FullName -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+        $result | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match 'Failed to read Application Access Policies: access denied'
+        @(Get-ChildItem -LiteralPath $dir.FullName).Count | Should -Be 0
+    }
+}
+
 Describe 'Invoke-MsGraphEntraIDApiPerm' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { $script:Policies }

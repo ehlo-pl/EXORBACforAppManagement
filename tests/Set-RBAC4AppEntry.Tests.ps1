@@ -369,3 +369,80 @@ Describe 'Set-RBAC4AppEntry -AccessGroupType' {
         ($r.Warnings -join ';') | Should -Match 'BootstrapMember was ignored'
     }
 }
+
+Describe 'Set-RBAC4AppEntry validation and failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        # Everything present by default: group exists, EXO SP exists, management scope exists pointing at
+        # the current group, assignment exists bound to the management scope.
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { [pscustomobject]@{ Name = 'MSRAo1P-Contoso'; RecipientFilter = "MemberOfGroup -eq 'CN=Um365RAo1-Contoso,OU=contoso,DC=prod'" } }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementScope { [pscustomobject]@{ Name = $Name; RecipientFilter = $RecipientRestrictionFilter } }
+        Mock -ModuleName EXORBACforAppManagement Set-ManagementScope { }
+        Mock -ModuleName EXORBACforAppManagement Set-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Identity = $Identity; DistinguishedName = "CN=$Identity,OU=contoso,DC=prod" } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111' }) }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = $Identity; Name = $Identity } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{
+                Name                      = $Identity
+                Role                      = 'Application Mail.Send'
+                RecipientWriteScope       = 'CustomRecipientScope'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'MSRAo1P-Contoso'
+            }
+        }
+        # Delegated module functions + mutating cmdlets.
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppUnifiedGroup { [pscustomobject]@{ OwnerRequested = @('o'); OwnerAdded = @('o'); AlreadyExisted = $false; Group = [pscustomobject]@{ Identity = $Name; DistinguishedName = "CN=$Name,OU=contoso,DC=prod" } } }
+        Mock -ModuleName EXORBACforAppManagement Register-EXOServicePrincipal { [pscustomobject]@{ DisplayName = $DisplayName } }
+        Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
+        Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement Save-RBAC4AppChangeReferenceRecord { Join-Path $TestDrive "$ChangeReference.yaml" }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
+    }
+
+    It 'throws for <Name>' -TestCases @(
+        @{ Name = 'no identity';                         Splat = @{};                                                                         Message = '*must be supplied*' }
+        @{ Name = 'scope name together with prefix';     Splat = @{ RegisteredAppName = 'Contoso'; ManagementScopeName = 'x'; ManagementScopePrefix = 'y' }; Message = '*cannot be used together*' }
+        @{ Name = 'Recipients without -ScopeRecipients'; Splat = @{ RegisteredAppName = 'Contoso'; ScopeKind = 'Recipients' };               Message = '*-ScopeRecipients is required*' }
+        @{ Name = 'Filter without -ScopeFilter';         Splat = @{ RegisteredAppName = 'Contoso'; ScopeKind = 'Filter' };                   Message = '*-ScopeFilter is required*' }
+    ) {
+        param($Splat, $Message)
+        { Set-RBAC4AppEntry @Splat -Confirm:$false } | Should -Throw $Message
+    }
+
+    It 'warns that -ManagementScopeName is ignored with the default RecipientGroupScope' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -ManagementScopeName 'Custom' `
+            -Confirm:$false -WarningAction SilentlyContinue
+        ($r.Warnings -join ';') | Should -Match '-ManagementScopeName only applies to -AssignmentScope ManagementScope'
+    }
+
+    It 'still reconciles when Get-ConnectionInformation fails, warning that member filtering is skipped' {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { throw 'not connected' }
+        $r = Set-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' `
+            -Members 'shared@contoso.com' -Confirm:$false -WarningAction SilentlyContinue
+
+        $r.TenantId | Should -BeNullOrEmpty
+        ($r.Warnings -join ';') | Should -Match 'connection user filtering will be skipped'
+        $r.MembersAdded | Should -Contain 'shared@contoso.com'
+    }
+
+    It 'records an error and is not valid when the management scope cannot be reconciled' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { throw 'scope read failed' }
+        $r = Set-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsValid | Should -BeFalse
+        ($r.Errors -join ';') | Should -Match "Failed to reconcile management scope 'MSRAo1P-Contoso'"
+    }
+
+    It 'records an error and is not valid when a role assignment cannot be created' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { throw 'quota exceeded' }
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsValid | Should -BeFalse
+        ($r.Errors -join ';') | Should -Match "Failed to reconcile role assignment 'AppMailSend-Contoso' \(Application Mail.Send\): quota exceeded"
+    }
+}

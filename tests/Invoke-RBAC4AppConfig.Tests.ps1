@@ -763,3 +763,76 @@ RbacScope:
         }
     }
 }
+
+Describe 'Invoke-RBAC4AppConfig config validation and failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @() }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g' } }
+        Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Add-UnifiedGroupLinks { }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; DistinguishedName = 'CN=Um365RAo1-Contoso,DC=prod' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementScope { [pscustomobject]@{ Name = $Name; RecipientFilter = $RecipientRestrictionFilter } }
+        Mock -ModuleName EXORBACforAppManagement Set-ManagementScope { }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
+        Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { [pscustomobject]@{ DisplayName = 'Contoso_SP' } }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { [pscustomobject]@{ Name = 'AppMailSend-Contoso' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Save-RBAC4AppChangeReferenceRecord { Join-Path $TestDrive "$ChangeReference.yaml" }
+    }
+
+    It 'rejects a config with <Name>' -TestCases @(
+        @{ Name = 'no Application.SpObjectId';  Application = @{ AppId = 'a'; DisplayName = 'Contoso' };          Scope = @{};                                         Message = 'missing Application.SpObjectId' }
+        @{ Name = 'no Application.AppId';       Application = @{ SpObjectId = 's'; DisplayName = 'Contoso' };     Scope = @{};                                         Message = 'missing Application.AppId' }
+        @{ Name = 'no Application.DisplayName'; Application = @{ AppId = 'a'; SpObjectId = 's' };                 Scope = @{};                                         Message = 'missing Application.DisplayName' }
+        @{ Name = 'an unknown ScopeKind';        Application = @{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }; Scope = @{ ScopeKind = 'Everyone' };              Message = "unsupported RbacScope.ScopeKind 'Everyone'" }
+        @{ Name = 'Recipients but no recipients'; Application = @{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }; Scope = @{ ScopeKind = 'Recipients' };          Message = 'ScopeKind Recipients but no RbacScope.ScopeRecipients' }
+        @{ Name = 'Filter but no filter';       Application = @{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }; Scope = @{ ScopeKind = 'Filter' };              Message = 'ScopeKind Filter but no RbacScope.ScopeFilter' }
+        @{ Name = 'SeparateScopePerRole with Tag'; Application = @{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }; Scope = @{ ScopeKind = 'Tag'; SeparateScopePerRole = $true }; Message = 'SeparateScopePerRole enabled but ScopeKind is' }
+    ) {
+        param($Name, $Application, $Scope, $Message)
+        $path = Join-Path $TestDrive ("invalid-{0}.json" -f [guid]::NewGuid().ToString('N'))
+        [pscustomobject]@{
+            SchemaVersion = '4.1'
+            Application   = [pscustomobject]$Application
+            Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
+            RbacScope     = [pscustomobject]$Scope
+        } | ConvertTo-Json -Depth 6 | Set-Content $path -Encoding UTF8
+
+        $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+        $res | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match ([regex]::Escape($Message))
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ServicePrincipal -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'records an error for a MailEnabledSecurityGroup config without AccessGroupName' {
+        $path = Join-Path $TestDrive 'mesg-no-name.yml'
+        Set-Content $path -Value ($script:testYaml -replace 'AccessGroupType: M365Group', 'AccessGroupType: MailEnabledSecurityGroup') -Encoding UTF8
+
+        $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false
+
+        ($res.Errors -join ';') | Should -Match '-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'warns about and skips a member that does not resolve' {
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+        ($res.Warnings -join ';') | Should -Match "Recipient not found for 'shared@contoso.com' \(skipped\)"
+        $res.MembersAdded | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 0
+    }
+
+    It 'records an error instead of throwing when the role assignment cannot be created' {
+        Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { throw 'quota exceeded' }
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+        ($res.Errors -join ';') | Should -Match 'quota exceeded'
+    }
+}

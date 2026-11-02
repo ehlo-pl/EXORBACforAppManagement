@@ -602,7 +602,8 @@ CHANGELOG.md                     # version history
 
 - **Init** installs Pester (>= 5) and PSScriptAnalyzer if missing.
 - **Analyze** runs PSScriptAnalyzer over `src`; fails only on Error-severity findings.
-- **Test** runs Pester, writes `testResults.xml` (NUnit) and `coverage.xml` (JaCoCo), and fails below `-CoverageThreshold` percent code coverage (default 90).
+- **Test** runs Pester, writes `testResults.xml` (NUnit) and `coverage.xml` (JaCoCo), and fails below `-CoverageThreshold` percent code coverage (default 94). Run
+  `./scripts/Show-CoverageGaps.ps1` afterwards to list the files and line numbers the tests miss.
 - **Build** assembles the module into `output/<version>/EXORBACforAppManagement` and validates the manifest.
 
 Tests mock the Graph/EXO cmdlets, so the suite runs without those modules installed (this is what

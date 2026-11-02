@@ -281,3 +281,70 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
             Should -Throw '*cannot be used together*'
     }
 }
+
+Describe 'Remove-RBAC4AppEntry validation and failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso' } }
+        # One own assignment scoped to the group.
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @([pscustomobject]@{
+                Name                      = 'AppMailSend-Contoso'
+                Role                      = 'Application Mail.Send'
+                RoleAssigneeName          = 'Contoso_SP'
+                RecipientWriteScope       = 'Group'
+                CustomRecipientWriteScope = $null
+                CustomResourceScope       = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'
+            })
+        }
+        # Only the bootstrap placeholder member.
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks { @([pscustomobject]@{ PrimarySmtpAddress = $null; Name = 'GraphAPI-Dummy' }) }
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Remove-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { [pscustomobject]@{ Name = 'MSRAo1P-Contoso'; RecipientFilter = "MemberOfGroup -eq 'CN=g,DC=prod'" } }
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementScope { }
+    }
+
+    It 'records an error for MailEnabledSecurityGroup without -AccessGroupName' {
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -Confirm:$false
+        ($r.Errors -join ';') | Should -Match '-AccessGroupName is required'
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment -Times 0
+    }
+
+    It 'still runs when the tenant id cannot be read' {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { throw 'not connected' }
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+        $r.TenantId | Should -BeNullOrEmpty
+        $r.IsRemoved | Should -BeTrue
+    }
+
+    It 'reports a failed role assignment removal and leaves the management scope and group in place' {
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { throw 'denied' }
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeFalse
+        ($r.Errors -join ';') | Should -Match "Failed to remove role assignment 'AppMailSend-Contoso': denied"
+        ($r.Warnings -join ';') | Should -Match "Management scope 'MSRAo1P-Contoso' was left in place because removing role assignments failed"
+        $r.ManagementScopeRemoved | Should -BeFalse
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementScope -Times 0
+    }
+
+    It 'reports a failed management scope removal' {
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementScope { throw 'scope busy' }
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeFalse
+        $r.ManagementScopeRemoved | Should -BeFalse
+        ($r.Errors -join ';') | Should -Match "Failed to remove management scope 'MSRAo1P-Contoso': scope busy"
+    }
+
+    It 'reports a failed group removal' {
+        Mock -ModuleName EXORBACforAppManagement Remove-UnifiedGroup { throw 'group locked' }
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeFalse
+        $r.GroupRemoved | Should -BeFalse
+        ($r.Errors -join ';') | Should -Match "Failed to remove M365Group 'Um365RAo1-Contoso': group locked"
+    }
+}

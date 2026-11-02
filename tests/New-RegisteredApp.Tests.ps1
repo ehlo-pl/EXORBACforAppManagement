@@ -44,4 +44,20 @@ Describe 'New-RegisteredApp' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-MgApplication -Times 0
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-MgServicePrincipal -Times 0
     }
+
+    It 'records an error instead of throwing when the application cannot be created' {
+        Mock -ModuleName EXORBACforAppManagement New-MgApplication { throw 'Insufficient privileges' }
+        $r = New-RegisteredApp -DisplayName 'Contoso Mail App' -Confirm:$false
+        ($r.Errors -join ';') | Should -Match 'Insufficient privileges'
+        $r.AppId | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-MgServicePrincipal -Times 0
+    }
+
+    It 'records an error and keeps the application ids when the service principal cannot be created' {
+        Mock -ModuleName EXORBACforAppManagement New-MgServicePrincipal { throw 'replication delay' }
+        $r = New-RegisteredApp -DisplayName 'Contoso Mail App' -Confirm:$false
+        ($r.Errors -join ';') | Should -Match 'replication delay'
+        $r.AppId | Should -Be 'aaaa1111-1111-1111-1111-111111111111'
+        $r.ServicePrincipalId | Should -BeNullOrEmpty
+    }
 }

@@ -327,3 +327,61 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
         { Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -ScopeKind Filter } | Should -Throw '*-ScopeFilter is required*'
     }
 }
+
+Describe 'Test-RBAC4AppEntry validation and failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = 'Um365RAo1-Contoso'; DistinguishedName = $script:GroupDn } }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { $script:ScopeObj }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
+        # Non-parameter-filtered so individual It blocks can fully override it (a parameter-filtered
+        # mock would otherwise keep matching ahead of a plain override).
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            if ($Identity -eq 'AppMailSend-Contoso') {
+                [pscustomobject]@{
+                    Name                      = $Identity
+                    Role                      = 'Application Mail.Send'
+                    RoleAssigneeName          = 'Contoso_SP'
+                    RecipientWriteScope       = 'CustomRecipientScope'
+                    CustomRecipientWriteScope = $null
+                    CustomResourceScope       = 'MSRAo1P-Contoso'
+                    Identity                  = $Identity
+                }
+            }
+        }
+    }
+
+    It 'throws for <Name>' -TestCases @(
+        @{ Name = 'scope name together with prefix';     Splat = @{ ManagementScopeName = 'x'; ManagementScopePrefix = 'y' }; Message = '*cannot be used together*' }
+        @{ Name = 'Recipients without -ScopeRecipients'; Splat = @{ ScopeKind = 'Recipients' };                            Message = '*-ScopeRecipients is required*' }
+        @{ Name = 'Filter without -ScopeFilter';         Splat = @{ ScopeKind = 'Filter' };                                Message = '*-ScopeFilter is required*' }
+        @{ Name = 'RecipientGroupScope with Tag';        Splat = @{ ScopeKind = 'Tag'; AssignmentScope = 'RecipientGroupScope' }; Message = '*can only be used with -ScopeKind Group*' }
+    ) {
+        param($Splat, $Message)
+        { Test-RBAC4AppEntry -RegisteredAppName 'Contoso' @Splat } | Should -Throw $Message
+    }
+
+    It 'still validates when the tenant id cannot be read' {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { throw 'not connected' }
+        $r = Test-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1'
+        $r.TenantId | Should -BeNullOrEmpty
+        $r.IsValid | Should -BeTrue
+    }
+
+    It 'warns and reports a filter mismatch when the expected filter cannot be built' {
+        # No recipient resolves, so ConvertTo-RBAC4AppRecipientFilter refuses to build an empty filter.
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { }
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -ScopeKind Recipients -ScopeRecipients 'ghost@contoso.com'
+
+        ($r.Warnings -join ';') | Should -Match 'Could not build the expected management scope filter'
+        $r.ManagementScopeFilterMatches | Should -BeFalse
+        $r.IsValid | Should -BeFalse
+    }
+
+    It 'records an error when the service principal cannot be resolved' {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Nobody'
+        ($r.Errors -join ';') | Should -Match 'No Exchange Online service principal found'
+        $r.IsValid | Should -BeFalse
+    }
+}
