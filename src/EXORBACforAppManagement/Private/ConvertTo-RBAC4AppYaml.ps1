@@ -34,6 +34,18 @@
         )
 
         if ($null -eq $Value) { return }
+        if ($Name -in @('Roles', 'Members', 'ManagedBy', 'ScopeRecipients')) {
+            $items = @($Value | Where-Object { $null -ne $_ -and [string]$_ -ne '' })
+            if ($items.Count -eq 0) {
+                if ($Name -eq 'Members') { $lines.Add("$Indent$($Name): []") }
+                return
+            }
+            $lines.Add("$Indent$($Name):")
+            foreach ($item in $items) {
+                $lines.Add("$Indent  - $(ConvertTo-RBAC4AppYamlScalar $item)")
+            }
+            return
+        }
         if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
             $items = @($Value | Where-Object { $null -ne $_ -and [string]$_ -ne '' })
             if ($items.Count -eq 0) {

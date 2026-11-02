@@ -438,7 +438,7 @@ function Invoke-RBAC4AppConfig {
                                 $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped directly to group '$umGroupName'; leaving it as-is. Run Set-RBAC4AppEntry -AssignmentScope ManagementScope to move it to management scope '$scopeName'."
                             }
                             default {
-                                $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not management scope '$scopeName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                                $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not management scope '$scopeName'; leaving it as-is. Use Set-RBAC4AppEntry -AssignmentScope ManagementScope to re-scope it."
                             }
                         }
                     }
