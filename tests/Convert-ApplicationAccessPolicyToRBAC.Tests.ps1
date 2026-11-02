@@ -233,3 +233,93 @@ Describe 'Get-LegacyScopeRoleMap' {
         }
     }
 }
+
+Describe 'Convert-ApplicationAccessPolicyToRBAC failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy {
+            [pscustomobject]@{
+                AppId       = '11111111-1111-1111-1111-111111111111'
+                AccessRight = 'RestrictAccess'
+                ScopeName   = 'EvenUsers'
+                Description = 'Restrict app to EvenUsers'
+            }
+        }
+
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            # Pester only defines the parameter variable when it was bound on the call,
+            # so Test-Path is the StrictMode-safe way to tell the two call shapes apart.
+            if (Test-Path variable:ServicePrincipalId) {
+                # Resource service principal (e.g. Microsoft Graph) AppRoles catalog.
+                return [pscustomobject]@{
+                    Id       = $ServicePrincipalId
+                    AppRoles = @(
+                        [pscustomobject]@{ Id = 'role-mailread'; Value = 'Mail.Read' }
+                        [pscustomobject]@{ Id = 'role-ews';      Value = 'full_access_as_app' }
+                        [pscustomobject]@{ Id = 'role-dir';      Value = 'Directory.Read.All' }
+                    )
+                }
+            }
+            # App service principal resolution by appId filter.
+            [pscustomobject]@{
+                DisplayName = 'Contoso'
+                AppId       = '11111111-1111-1111-1111-111111111111'
+                Id          = '22222222-2222-2222-2222-222222222222'
+            }
+        }
+
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipalAppRoleAssignment {
+            @(
+                [pscustomobject]@{ AppRoleId = 'role-mailread'; ResourceId = '99999999-9999-9999-9999-999999999999' }
+                [pscustomobject]@{ AppRoleId = 'role-ews';      ResourceId = '99999999-9999-9999-9999-999999999999' }
+                [pscustomobject]@{ AppRoleId = 'role-dir';      ResourceId = '99999999-9999-9999-9999-999999999999' }
+            )
+        }
+
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember {
+            @(
+                [pscustomobject]@{ PrimarySmtpAddress = 'user1@contoso.com' }
+                [pscustomobject]@{ PrimarySmtpAddress = 'user2@contoso.com' }
+            )
+        }
+
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppEntry {
+            [pscustomobject]@{ Warnings = @(); Errors = @() }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-MgContext {
+            [pscustomobject]@{ TenantId = 'tenant-id-123' }
+        }
+    }
+
+    It 'writes an error when reading the Application Access Policies fails' {
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { throw 'access denied' }
+        $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+        $r | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match 'Failed to read Application Access Policies: access denied'
+    }
+
+    It 'returns nothing when there are no policies to convert' {
+        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { }
+        $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Confirm:$false
+        $r | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 0
+    }
+
+    It 'writes the config without a TenantId when Get-MgContext fails' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgContext { throw 'not connected' }
+        $r = Convert-ApplicationAccessPolicyToRBAC -Format Json -OutputPath $TestDrive -Confirm:$false
+        $r.Errors | Should -BeNullOrEmpty
+        (Get-Content $r.ConfigPath -Raw | ConvertFrom-Json).PSObject.Properties.Name | Should -Not -Contain 'TenantId'
+    }
+
+    It 'records a grant whose permission name cannot be resolved as skipped' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipalAppRoleAssignment {
+            @(
+                [pscustomobject]@{ AppRoleId = 'role-mailread'; ResourceId = '99999999-9999-9999-9999-999999999999' }
+                [pscustomobject]@{ AppRoleId = 'role-unknown';  ResourceId = '99999999-9999-9999-9999-999999999999' }
+            )
+        }
+        $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Confirm:$false
+        $r.SkippedPermissions | Should -Contain 'AppRoleId role-unknown (could not resolve permission name)'
+        $r.ConfigPath | Should -Not -BeNullOrEmpty
+    }
+}

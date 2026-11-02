@@ -15,7 +15,13 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 - `build.ps1 -Task Test` now collects Pester code coverage (`coverage.xml`, JaCoCo) and fails below
-  `-CoverageThreshold` (default 90%); CI uploads the file with the test results.
+  `-CoverageThreshold` (default 90%); CI uploads the file with the test results. `scripts/Show-CoverageGaps.ps1` lists the uncovered lines per file.
+- `build.ps1 -Task Test` never stops for a ShouldProcess confirmation prompt (`$ConfirmPreference` is
+  `None` for the run), so a test missing `-Confirm:$false` cannot hang an interactive build.
+- Tests for parameter-validation throws and failure paths (a throwing Exchange Online / Graph cmdlet
+  must surface in `Errors`/`Warnings` or as a written error, not crash) across `New-`/`Set-`/`Test-`/
+  `Remove-`/`Get-RBAC4AppEntry`, `Invoke-RBAC4AppConfig`, `Convert-ApplicationAccessPolicyToRBAC`,
+  `Resolve-ApplicationAccessPolicy`, `New-RegisteredApp`, and `ConvertTo-RBAC4AppRecipientFilter`.
 - Tests for the error/edge paths of `Invoke-MsGraphEntraIDApiPerm`, `New-RBAC4AppConfig`,
   `New-RBAC4AppDistributionGroup`, `New-RBAC4AppUnifiedGroup` and `Save-RBAC4AppChangeReferenceRecord`.
 

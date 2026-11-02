@@ -84,6 +84,39 @@ Describe 'ConvertTo-RBAC4AppRecipientFilter' {
     }
 }
 
+Describe 'ConvertTo-RBAC4AppRecipientFilter input validation' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { }
+    }
+
+    It 'throws for <Name>' -TestCases @(
+        @{ Name = 'a Group filter without a group identity'; Splat = @{ ScopeKind = 'Group' };                         Message = '*scope group identity is required*' }
+        @{ Name = 'a Recipients filter without recipients';   Splat = @{ ScopeKind = 'Recipients'; Recipients = @() }; Message = '*must contain at least one recipient*' }
+        @{ Name = 'a Filter filter without OPATH';            Splat = @{ ScopeKind = 'Filter'; Filter = '   ' };         Message = '*-ScopeFilter is required*' }
+    ) {
+        param($Splat, $Message)
+        InModuleScope EXORBACforAppManagement -Parameters @{ Splat = $Splat; Message = $Message } {
+            param($Splat, $Message)
+            { ConvertTo-RBAC4AppRecipientFilter @Splat } | Should -Throw $Message
+        }
+    }
+
+    It 'keeps unresolved recipients as typed with -AllowUnresolved' {
+        InModuleScope EXORBACforAppManagement {
+            ConvertTo-RBAC4AppRecipientFilter -ScopeKind Recipients -Recipients 'ghost@contoso.com' -AllowUnresolved |
+                Should -Be "PrimarySmtpAddress -eq 'ghost@contoso.com'"
+        }
+    }
+
+    It 'warns when more than 50 recipients produce a long filter' {
+        InModuleScope EXORBACforAppManagement {
+            $many = 1..51 | ForEach-Object { "user$_@contoso.com" }
+            $null = ConvertTo-RBAC4AppRecipientFilter -ScopeKind Recipients -Recipients $many -AllowUnresolved -WarningVariable w -WarningAction SilentlyContinue
+            ($w -join ';') | Should -Match '51 recipients produce a long management scope filter'
+        }
+    }
+}
+
 Describe 'ConvertFrom-RBAC4AppRecipientFilter' {
     It 'classifies a Group filter, tolerating EXO-added parentheses' {
         InModuleScope EXORBACforAppManagement {

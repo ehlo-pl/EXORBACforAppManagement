@@ -418,3 +418,48 @@ Describe 'New-RBAC4AppEntry management scope' {
         { New-RBAC4AppEntry -RegisteredAppName 'Contoso' -ManagementScopeName 'a' -ManagementScopePrefix 'b' -WhatIf } | Should -Throw '*cannot be used together*'
     }
 }
+
+Describe 'New-RBAC4AppEntry validation and failure paths' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementScope { [pscustomobject]@{ Name = $Name; RecipientFilter = $RecipientRestrictionFilter } }
+        Mock -ModuleName EXORBACforAppManagement Set-ManagementScope { }
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppDistributionGroup { [pscustomobject]@{ OwnerRequested = @('o'); OwnerAdded = @('o'); Group = [pscustomobject]@{ Name = 'UDLRAo1P-Contoso'; DistinguishedName = "CN=UDLRAo1P-Contoso,OU=contoso,DC=prod" } } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Add-DistributionGroupMember { }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = "$Identity" } }
+        Mock -ModuleName EXORBACforAppManagement Register-EXOServicePrincipal { }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { [pscustomobject]@{ Name = $Name } }
+        Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
+    }
+
+    It 'throws for <Name>' -TestCases @(
+        @{ Name = 'scope name together with prefix';     Splat = @{ ManagementScopeName = 'x'; ManagementScopePrefix = 'y' }; Message = '*cannot be used together*' }
+        @{ Name = 'Recipients without -ScopeRecipients'; Splat = @{ ScopeKind = 'Recipients' };                            Message = '*-ScopeRecipients is required*' }
+        @{ Name = 'Filter without -ScopeFilter';         Splat = @{ ScopeKind = 'Filter' };                                Message = '*-ScopeFilter is required*' }
+        @{ Name = 'group name together with prefix';     Splat = @{ AccessGroupName = 'x'; GroupPrefix = 'y' };            Message = '*cannot be used together*' }
+    ) {
+        param($Splat, $Message)
+        { New-RBAC4AppEntry -RegisteredAppName 'Contoso' @Splat -Confirm:$false } | Should -Throw $Message
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'still provisions when Get-ConnectionInformation fails, warning that member filtering is skipped' {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { throw 'not connected' }
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Members 'shared@contoso.com' -Role 'Mail.Send' -Confirm:$false -WarningAction SilentlyContinue
+
+        $r.TenantId | Should -BeNullOrEmpty
+        ($r.Warnings -join ';') | Should -Match 'connection user filtering will be skipped'
+        $r.MembersAdded | Should -Contain 'shared@contoso.com'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
+    }
+
+    It 'records an error instead of throwing when the role assignment cannot be created' {
+        Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { throw 'quota exceeded' }
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+        ($r.Errors -join ';') | Should -Match 'quota exceeded'
+    }
+}

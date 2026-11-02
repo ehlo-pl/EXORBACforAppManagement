@@ -12,6 +12,9 @@ Runs the module's quality gates and packaging steps. Tasks:
   Build   - copy the module to ./output and validate the manifest
   All     - Init, Clean, Analyze, Test, Build (default)
 
+Every task runs unattended: Init trusts PSGallery for its installs, and Test suppresses
+ShouldProcess confirmation prompts, so the script never waits for an interactive decision.
+
 .EXAMPLE
 ./build.ps1
 Runs the full pipeline.
@@ -131,7 +134,17 @@ function Invoke-Test {
     $config.CodeCoverage.Enabled = $true
     $config.CodeCoverage.Path = $SrcPath
     $config.CodeCoverage.OutputPath = $CoverageFile
-    $result = Invoke-Pester -Configuration $config
+    # Never stop for a ShouldProcess confirmation: a test that forgets -Confirm:$false would
+    # otherwise block an interactive run waiting for Y/N. Module functions resolve preference
+    # variables from the global scope, not this script's, so set (and restore) it there.
+    $originalConfirmPreference = $global:ConfirmPreference
+    $global:ConfirmPreference = 'None'
+    try {
+        $result = Invoke-Pester -Configuration $config
+    }
+    finally {
+        $global:ConfirmPreference = $originalConfirmPreference
+    }
     if ($result.FailedCount -gt 0) {
         throw "$($result.FailedCount) test(s) failed."
     }
