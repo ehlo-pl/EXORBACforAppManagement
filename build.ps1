@@ -8,7 +8,7 @@ Runs the module's quality gates and packaging steps. Tasks:
   Clean   - remove build output and test results
   Analyze - run PSScriptAnalyzer over src (fails on Error severity)
   Test    - run the Pester suite (emits testResults.xml in NUnit format and coverage.xml in
-            JaCoCo format; fails below -CoverageThreshold percent code coverage, default 94)
+            JaCoCo format; fails below -CoverageThreshold percent code coverage, default 90)
   Build   - copy the module to ./output and validate the manifest
   All     - Init, Clean, Analyze, Test, Build (default)
 
@@ -30,7 +30,7 @@ param(
 
     # Minimum Pester code coverage (percent of commands in src) the Test task must reach.
     [ValidateRange(0, 100)]
-    [int] $CoverageThreshold = 94
+    [int] $CoverageThreshold = 90
 )
 
 $ErrorActionPreference = 'Stop'

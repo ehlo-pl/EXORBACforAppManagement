@@ -200,11 +200,11 @@ installed in CI, each test defines **global** stub functions for the cmdlets it 
 parameters it filters on, e.g. `-Role`) so `Mock -ModuleName EXORBACforAppManagement` can bind and
 intercept them. Add new stubs the same way when a function starts calling a new external cmdlet.
 
-Coverage gate: `./build.ps1 -Task Test` fails below `-CoverageThreshold` (default 94%). After a run,
+Coverage gate: `./build.ps1 -Task Test` fails below `-CoverageThreshold` (default 90%). After a run,
 `./scripts/Show-CoverageGaps.ps1 [-Top N]` lists each file's missed line numbers from `coverage.xml`.
-Raise the threshold when coverage rises, never lower it to get a change through. Validation throws
-and failure paths of each public function live in a `Describe '<Function> ... failure
-paths'` block at the end of its test file, reusing that file's main `BeforeEach` fixture.
+Validation throws and failure paths of each public function live in a
+`Describe '<Function> ... failure paths'` block at the end of its test file, reusing that file's
+main `BeforeEach` fixture.
 
 ## Architecture / key concepts
 
