@@ -1,5 +1,15 @@
 # Requires connected Microsoft Graph and Exchange Online sessions.
 # Excel export requires the ImportExcel module.
+# Assignment identity and scope resolution use Get-RBAC4AppEntry from this repository's module.
+
+$modulePath = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'src') 'EXORBACforAppManagement'
+Import-Module (Join-Path $modulePath 'EXORBACforAppManagement.psd1') -Force -ErrorAction Stop
+
+$moduleAssignments = @(Get-RBAC4AppEntry -ScopeType All)
+$moduleAssignmentByName = @{}
+foreach ($assignment in $moduleAssignments) {
+    $moduleAssignmentByName[[string]$assignment.Name] = $assignment
+}
 
 $mm = @(
     Get-ManagementRoleAssignment -ErrorAction Stop |
@@ -18,28 +28,16 @@ $applicationAccessPolicy = @(
 
 function Resolve-ReportServicePrincipal {
     param(
-        [string]$ServicePrincipalId,
+        [Parameter(Mandatory)]
         [string]$AppId
     )
 
     try {
-        if ($AppId) {
-            $appGuid = [guid]::Parse($AppId)
-
-            $principals = @(
-                Get-MgServicePrincipal -Filter "appId eq '$appGuid'" `
-                    -All -ErrorAction Stop
-            )
-        } else {
-            if ([string]::IsNullOrWhiteSpace($ServicePrincipalId)) {
-                throw 'EffectiveUserName contains no service-principal ID.'
-            }
-
-            $principals = @(
-                Get-MgServicePrincipal -ServicePrincipalId $ServicePrincipalId `
-                    -ErrorAction Stop
-            )
-        }
+        $appGuid = [guid]::Parse($AppId)
+        $principals = @(
+            Get-MgServicePrincipal -Filter "appId eq '$appGuid'" `
+                -All -ErrorAction Stop
+        )
 
         if ($principals.Count -ne 1) {
             throw "Expected one service principal; found $($principals.Count)."
@@ -50,8 +48,7 @@ function Resolve-ReportServicePrincipal {
             Error     = $null
         }
     } catch {
-        $identity = if ($AppId) { $AppId } else { $ServicePrincipalId }
-        $message = "Service-principal lookup failed for '$identity': $($_.Exception.Message)"
+        $message = "Service-principal lookup failed for '$AppId': $($_.Exception.Message)"
         Write-Warning $message
 
         [pscustomobject]@{
@@ -66,6 +63,7 @@ function New-JoinedReportRow {
         $Assignment,
         $ServicePrincipal,
         $Policy,
+        [string]$AppId,
         $ScopeAddress,
         $ScopeType,
         [string[]]$Errors = @()
@@ -73,7 +71,7 @@ function New-JoinedReportRow {
 
     $pCode = $null
     $displayName = $null
-    $appId = $null
+    $appId = $AppId
     $spType = $null
     $createdDateTime = $null
 
@@ -142,13 +140,26 @@ $res = @(
     foreach ($m in $mm) {
         $itemErrors = [System.Collections.Generic.List[string]]::new()
 
-        $spId = [string]$m.EffectiveUserName
-        if (-not $spCache.ContainsKey($spId)) {
-            $spCache[$spId] = Resolve-ReportServicePrincipal `
-                -ServicePrincipalId $spId
+        $moduleAssignment = $moduleAssignmentByName[[string]$m.Name]
+        $appId = if ($moduleAssignment) { [string]$moduleAssignment.AppId } else { '' }
+        if ($appId -and -not $spCache.ContainsKey($appId)) {
+            $spCache[$appId] = Resolve-ReportServicePrincipal -AppId $appId
         }
 
-        $lookup = $spCache[$spId]
+        $lookup = if ($appId) {
+            $spCache[$appId]
+        } else {
+            $message = if ($moduleAssignment) {
+                "The EXO service principal for assignment '$($m.Name)' has no resolved AppId."
+            } else {
+                "Assignment '$($m.Name)' was not returned by Get-RBAC4AppEntry."
+            }
+            Write-Warning $message
+            [pscustomobject]@{
+                Principal = $null
+                Error     = $message
+            }
+        }
         $rex = $lookup.Principal
 
         if ($lookup.Error) {
@@ -158,41 +169,37 @@ $res = @(
         $scopeType = $null
         $scopeAddress = $null
 
-        # Scope resolution is independent of Graph resolution.
-        try {
-            switch ($m.RecipientWriteScope) {
-                'CustomRecipientScope' {
-                    $scopeType = 'RecipientFilter'
-                    $scopeAddress = (
-                        Get-ManagementScope -Identity $m.CustomResourceScope `
-                            -ErrorAction Stop
-                    ).RecipientFilter
+        if ($moduleAssignment) {
+            if ($moduleAssignment.ScopeKind -in @('Group', 'GroupDirect')) {
+                $scopeType = [string]$moduleAssignment.ScopeGroupType
+                $scopeAddress = [string]$moduleAssignment.Scope
+                try {
+                    $group = Get-Recipient -Identity $moduleAssignment.Scope `
+                        -ErrorAction Stop | Select-Object -First 1
+                    if ($group) {
+                        $scopeType = [string]$group.RecipientTypeDetails
+                        $scopeAddress = [string]$group.PrimarySmtpAddress
+                    }
+                } catch {
+                    $message = "Scope lookup failed for assignment '$($m.Name)' (group '$($moduleAssignment.Scope)'): $($_.Exception.Message)"
+                    Write-Warning $message
+                    $itemErrors.Add($message)
                 }
-                'Group' {
-                    $group = Get-Recipient -Identity $m.CustomResourceScope `
-                        -ErrorAction Stop
-
-                    $scopeType = $group.RecipientTypeDetails
-                    $scopeAddress = [string]$group.PrimarySmtpAddress
-                }
-                default {
-                    $scopeType = [string]$m.RecipientWriteScope
-                }
+            } elseif ($moduleAssignment.ScopeKind) {
+                $scopeType = [string]$moduleAssignment.ScopeKind
+                $scopeAddress = [string]$moduleAssignment.ScopeFilter
+            } else {
+                $scopeType = [string]$m.RecipientWriteScope
             }
-        } catch {
-            $message = "Scope lookup failed for assignment '$($m.Name)' (scope '$($m.CustomResourceScope)'): $($_.Exception.Message)"
-            Write-Warning $message
-            $itemErrors.Add($message)
         }
 
         $policies = @()
 
-        if ($rex) {
-            $rbacAppIds[[string]$rex.AppId] = $true
-
+        if ($appId) {
+            $rbacAppIds[$appId] = $true
             $policies = @(
                 $applicationAccessPolicy |
-                    Where-Object { $_.AppId -eq $rex.AppId }
+                    Where-Object { $_.AppId -eq $appId }
             )
         }
 
@@ -201,6 +208,7 @@ $res = @(
             ServicePrincipal = $rex
             ScopeAddress     = $scopeAddress
             ScopeType        = $scopeType
+            AppId            = $appId
             Errors           = $itemErrors.ToArray()
         }
 
@@ -213,7 +221,7 @@ $res = @(
         }
     }
 
-    # Retain every policy not matched to a successfully resolved RBAC app.
+    # Retain every policy not matched to an RBAC app.
     foreach ($policy in $applicationAccessPolicy) {
         $appId = [string]$policy.AppId
 
