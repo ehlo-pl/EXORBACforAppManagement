@@ -36,8 +36,9 @@ $script:RBAC4AppConfigSchemaVersion = '4.1'
 $script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1')
 
 # Values a config file falls back to when a key is absent. ConvertTo-RBAC4AppConfig omits any key
-# equal to its default (or empty, or unused by the selected ScopeKind/AssignmentScope), and
-# Complete-RBAC4AppConfig fills them back in on read, so both sides must use this one table.
+# equal to its default (or empty unless explicitly overridden, or unused by the selected
+# ScopeKind/AssignmentScope), and Complete-RBAC4AppConfig fills absent keys back in on read, so both
+# sides must use this one table.
 # GroupPrefix defaults per AccessGroupType (Get-RBAC4AppDefaultGroupPrefix), ManagementScopePrefix to
 # $script:RBAC4AppDefaultManagementScopePrefix, and AssignmentScope per schema version (see
 # Complete-RBAC4AppConfig).

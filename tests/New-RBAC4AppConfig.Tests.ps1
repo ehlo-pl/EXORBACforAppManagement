@@ -294,6 +294,36 @@ Describe 'New-RBAC4AppConfig' {
         $parsed.RbacScope.SeparateScopePerRole  | Should -BeFalse
     }
 
+    It 'round-trips explicit empty Members and BootstrapMember overrides in YAML and JSON' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+
+        foreach ($format in 'Yaml', 'Json') {
+            $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Members @() -BootstrapMember '' `
+                -Format $format -OutputPath $TestDrive -Confirm:$false
+            $content = Get-Content $outFile -Raw
+            if ($format -eq 'Yaml') {
+                $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } {
+                    param($Content)
+                    ConvertFrom-RBAC4AppYaml -Content $Content
+                }
+                $content | Should -Match 'Members: \[\]'
+                $content | Should -Match 'BootstrapMember: ""'
+            }
+            else {
+                $parsed = $content | ConvertFrom-Json
+                $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Config = $parsed } {
+                    param($Config)
+                    Complete-RBAC4AppConfig -Config $Config
+                }
+            }
+
+            @($parsed.RbacScope.Members) | Should -BeNullOrEmpty
+            $parsed.RbacScope.BootstrapMember | Should -Be ''
+        }
+    }
+
     It 'requires -ScopeRecipients for -ScopeKind Recipients' {
         { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Recipients -OutputPath $TestDrive -Confirm:$false } |
             Should -Throw '*-ScopeRecipients is required*'
