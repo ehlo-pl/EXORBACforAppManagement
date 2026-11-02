@@ -109,7 +109,9 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         $config.RbacScope.ManagedBy | Should -Be @('owner@contoso.com')
         $config.Application.AppId | Should -Be $r.AppId
         $config.Application.DisplayName | Should -Be 'Contoso'
-        $config.RbacScope.ManagementScopePrefix | Should -Be 'MSRAo1P'
+        $config.RbacScope.AssignmentScope | Should -Be 'ManagementScope'
+        # Default management scope prefix is left out of the file.
+        $config.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ManagementScopePrefix'
         $r.ConfigPath | Should -Match '\.json$'
     }
 
@@ -207,10 +209,13 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         $r.ConfigPath | Should -BeNullOrEmpty
     }
 
-    It 'filters policies by AppId and keeps the M365Group default prefix' {
+    It 'filters policies by AppId and omits the M365Group default prefix' {
         $r = Convert-ApplicationAccessPolicyToRBAC -AppId '11111111-1111-1111-1111-111111111111' `
             -AccessGroupType M365Group -Format Json -OutputPath $TestDrive -Confirm:$false
-        (Get-Content $r.ConfigPath -Raw | ConvertFrom-Json).RbacScope.GroupPrefix | Should -Be 'Um365RAo1P'
+        $config = Get-Content $r.ConfigPath -Raw | ConvertFrom-Json
+        $config.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'GroupPrefix'
+        $completed = InModuleScope EXORBACforAppManagement -Parameters @{ Config = $config } { param($Config) Complete-RBAC4AppConfig -Config $Config }
+        $completed.RbacScope.GroupPrefix | Should -Be 'Um365RAo1P'
         Should -Invoke -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy -Times 1 -ParameterFilter {
             $AppId -eq '11111111-1111-1111-1111-111111111111'
         }

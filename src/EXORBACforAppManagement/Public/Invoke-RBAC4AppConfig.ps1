@@ -129,6 +129,10 @@ function Invoke-RBAC4AppConfig {
             return
         }
 
+        # Keys left out of the file (ConvertTo-RBAC4AppConfig omits unused/default entries) take
+        # their defaults; YAML input already went through this in ConvertFrom-RBAC4AppYaml.
+        $config = Complete-RBAC4AppConfig -Config $config
+
         if ([string]$config.SchemaVersion -notin $script:RBAC4AppConfigSupportedSchemaVersions) {
             Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)' (or '4.0'/'3.0', treated as AssignmentScope ManagementScope). Re-generate the config with New-RBAC4AppConfig."
             return
@@ -161,15 +165,15 @@ function Invoke-RBAC4AppConfig {
         $separateScopePerRole = ([string]$config.RbacScope.SeparateScopePerRole -eq 'true')
 
         # --- Management scope settings (schema 4.0; absent from 3.0 -> Group kind, default prefix)
-        $ScopeKind = if ([string]$config.RbacScope.ScopeKind) { [string]$config.RbacScope.ScopeKind } else { 'Group' }
+        $ScopeKind = [string]$config.RbacScope.ScopeKind
         if ($ScopeKind -notin @('Group', 'Recipients', 'Tag', 'Filter')) {
             Write-Error "Config '$Path' has unsupported RbacScope.ScopeKind '$ScopeKind' (expected Group, Recipients, Tag, or Filter)."
             return
         }
         $ManagementScopeName   = [string]$config.RbacScope.ManagementScopeName
-        $ManagementScopePrefix = if ([string]$config.RbacScope.ManagementScopePrefix) { [string]$config.RbacScope.ManagementScopePrefix } else { $script:RBAC4AppDefaultManagementScopePrefix }
+        $ManagementScopePrefix = [string]$config.RbacScope.ManagementScopePrefix
         $ScopeRecipients       = @($config.RbacScope.ScopeRecipients | Where-Object { $_ })
-        $ScopeTagAttribute     = if ([string]$config.RbacScope.ScopeTagAttribute) { [string]$config.RbacScope.ScopeTagAttribute } else { 'CustomAttribute1' }
+        $ScopeTagAttribute     = [string]$config.RbacScope.ScopeTagAttribute
         $ScopeTagValue         = [string]$config.RbacScope.ScopeTagValue
         $ScopeFilter           = [string]$config.RbacScope.ScopeFilter
         if ($ScopeKind -eq 'Recipients' -and $ScopeRecipients.Count -eq 0) {
@@ -185,8 +189,9 @@ function Invoke-RBAC4AppConfig {
             Write-Error "Config '$Path' has SeparateScopePerRole enabled but ScopeKind is '$ScopeKind'; this option requires ScopeKind Group."
             return
         }
-        # --- Assignment binding (schema 4.1; absent from 4.0/3.0 -> ManagementScope)
-        $AssignmentScope = if ([string]$config.RbacScope.AssignmentScope) { [string]$config.RbacScope.AssignmentScope } else { 'ManagementScope' }
+        # --- Assignment binding (absent -> RecipientGroupScope for a 4.1 Group config, else
+        # ManagementScope; resolved by Complete-RBAC4AppConfig)
+        $AssignmentScope = [string]$config.RbacScope.AssignmentScope
         if ($AssignmentScope -notin @('ManagementScope', 'RecipientGroupScope')) {
             Write-Error "Config '$Path' has unsupported RbacScope.AssignmentScope '$AssignmentScope' (expected ManagementScope or RecipientGroupScope)."
             return

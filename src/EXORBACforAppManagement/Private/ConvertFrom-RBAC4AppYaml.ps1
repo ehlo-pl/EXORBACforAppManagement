@@ -52,13 +52,13 @@ function ConvertFrom-RBAC4AppYaml {
             ChangeReference = ''
         }
         RbacScope     = [pscustomobject]@{
-            AccessGroupType = 'M365Group'
+            AccessGroupType = ''
             GroupPrefix     = ''
             AccessGroupName = ''
             Members         = [System.Collections.Generic.List[string]]::new()
             ManagedBy       = [System.Collections.Generic.List[string]]::new()
-            BootstrapMember = 'GraphAPI-Dummy'
-            ScopeKind             = 'Group'
+            BootstrapMember = ''
+            ScopeKind             = ''
             AssignmentScope       = ''
             ManagementScopeName   = ''
             ManagementScopePrefix = ''
@@ -137,15 +137,12 @@ function ConvertFrom-RBAC4AppYaml {
                     'ScopeTagAttribute'     { $config.RbacScope.ScopeTagAttribute     = $value; $listKey = $null }
                     'ScopeTagValue'         { $config.RbacScope.ScopeTagValue         = $value; $listKey = $null }
                     'ScopeFilter'           { $config.RbacScope.ScopeFilter           = $value; $listKey = $null }
-                    'SeparateScopePerRole'  { $config.RbacScope.SeparateScopePerRole  = ($value -eq 'true'); $listKey = $null }
+                    'SeparateScopePerRole'  { $config.RbacScope.SeparateScopePerRole  = $value; $listKey = $null }
                 }
             }
         }
     }
 
-    if (-not $config.RbacScope.GroupPrefix) {
-        $config.RbacScope.GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $config.RbacScope.AccessGroupType
-    }
-
-    return $config
+    # Keys absent from the file take their defaults.
+    return Complete-RBAC4AppConfig -Config $config
 }

@@ -32,6 +32,14 @@ All notable changes to this project are documented here. The format is based on
   `Invoke-RBAC4AppConfig` honours; `4.0`/`3.0` configs (no key) are still read as `ManagementScope`.
   `Convert-ApplicationAccessPolicyToRBAC` writes `ManagementScope`; `Get-RBAC4AppEntry -ExportConfig`
   writes `RecipientGroupScope` for assignments bound directly to a group and `ManagementScope` otherwise.
+- Generated config files (`New-RBAC4AppConfig`, `Convert-ApplicationAccessPolicyToRBAC`,
+  `Get-RBAC4AppEntry -ExportConfig`, YAML and JSON) now contain only the entries that are actually used:
+  keys the selected `ScopeKind`/`AssignmentScope` ignores, empty values, and defaults are left out. A
+  missing key now always means its default (shared table in `Private/RBAC4AppDefaults.ps1`, filled in on
+  read by the new private `Complete-RBAC4AppConfig`), including for JSON, where missing keys used to read
+  as empty. In a schema `4.1` Group config a missing `AssignmentScope` means `RecipientGroupScope`. The
+  YAML reader's default `AccessGroupType` for a missing key changed from `M365Group` to `DistributionList`,
+  matching the writers.
 - **Breaking:** `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Test-RBAC4AppEntry` take the same
   `-AssignmentScope` parameter with the same `RecipientGroupScope` default (shared private
   `Resolve-RBAC4AppAssignmentScope`). `New-` binds directly to the group and creates no management scope;

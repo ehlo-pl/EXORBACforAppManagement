@@ -116,7 +116,7 @@ src/EXORBACforAppManagement/
                                  # ConvertFrom-RBAC4AppYaml, ConvertTo-/ConvertFrom-RBAC4AppRecipientFilter,
                                  # Get-RBAC4AppManagementScopeName, Test-RBAC4AppRecipientFilterEqual,
                                  # Get-RBAC4AppAssignmentScopeState, Get-RBAC4AppScopeKindWarning,
-                                 # Resolve-RBAC4AppAssignmentScope
+                                 # Resolve-RBAC4AppAssignmentScope, Complete-RBAC4AppConfig
 tests/                           # Pester v5 tests (one *.Tests.ps1 per area)
 build.ps1                        # Init / Clean / Analyze / Test / Build tasks
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)
@@ -229,6 +229,13 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   scope group result) alongside `MembersRequested`/`MembersAdded`. The orchestrator
   captures the delegated functions' warnings via `-WarningVariable` to keep the summary `Warnings`
   (e.g. the group "already exists" note).
+
+- **Config files are sparse:** the private `ConvertTo-RBAC4AppConfig` (every config writer goes
+  through it) writes only used, non-empty, non-default entries; `Complete-RBAC4AppConfig` (called by
+  `ConvertFrom-RBAC4AppYaml` and `Invoke-RBAC4AppConfig`) restores the full shape. Both read the
+  `$script:RBAC4AppConfigDefaults` table in `RBAC4AppDefaults.ps1` - change a default there, never
+  in only one of them. Tests asserting an omitted key use `PSObject.Properties.Name | Should -Not
+  -Contain`.
 
 - **Assignment binding (`-AssignmentScope`):** `New-`/`Set-`/`Test-RBAC4AppEntry` and
   `New-RBAC4AppConfig` (config key `RbacScope.AssignmentScope`, read by `Invoke-RBAC4AppConfig`) take
