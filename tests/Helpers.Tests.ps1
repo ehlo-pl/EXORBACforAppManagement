@@ -110,4 +110,31 @@ Describe 'ConvertTo-RBAC4AppConfig' {
             $parsed.RbacScope.SeparateScopePerRole | Should -BeTrue
         }
     }
+
+    It 'serializes single-item schema lists as YAML sequences' {
+        InModuleScope EXORBACforAppManagement {
+            $config = [pscustomobject]@{
+                SchemaVersion = '4.1'
+                Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'Contoso' }
+                Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send'); ChangeReference = '' }
+                RbacScope     = [pscustomobject]@{
+                    Members         = @('member@contoso.com')
+                    ManagedBy       = @('owner@contoso.com')
+                    ScopeRecipients = @('recipient@contoso.com')
+                }
+            }
+            $config = Complete-RBAC4AppConfig -Config $config
+            $yaml = ConvertTo-RBAC4AppYaml -Config $config
+            $parsed = ConvertFrom-RBAC4AppYaml -Content $yaml
+
+            $yaml | Should -Match 'Roles:\r?\n\s+- "Application Mail\.Send"'
+            $yaml | Should -Match 'Members:\r?\n\s+- "member@contoso\.com"'
+            $yaml | Should -Match 'ManagedBy:\r?\n\s+- "owner@contoso\.com"'
+            $yaml | Should -Match 'ScopeRecipients:\r?\n\s+- "recipient@contoso\.com"'
+            @($parsed.Rbac.Roles) | Should -Be @('Application Mail.Send')
+            @($parsed.RbacScope.Members) | Should -Be @('member@contoso.com')
+            @($parsed.RbacScope.ManagedBy) | Should -Be @('owner@contoso.com')
+            @($parsed.RbacScope.ScopeRecipients) | Should -Be @('recipient@contoso.com')
+        }
+    }
 }

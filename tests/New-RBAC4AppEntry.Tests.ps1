@@ -209,6 +209,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
 
         $r.Errors | Should -BeNullOrEmpty
         ($r.Warnings -join ';') | Should -Match "scoped to 'SomeOtherGroup', not management scope 'MSRAo1P-Contoso'"
+        ($r.Warnings -join ';') | Should -Match 'Set-RBAC4AppEntry -AssignmentScope ManagementScope'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 

@@ -536,6 +536,18 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
+    It 'suggests management-scope mode when an existing assignment is scoped elsewhere' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'SomeOtherGroup_20d5848c-4d61-4b82-a44f-205adc37321f' }
+        }
+
+        $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+        ($res.Warnings -join ';') | Should -Match "not management scope 'MSRAo1P-Contoso'"
+        ($res.Warnings -join ';') | Should -Match 'Set-RBAC4AppEntry -AssignmentScope ManagementScope'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
     It 'records an error when a same-named assignment exists for a different role' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             [pscustomobject]@{
