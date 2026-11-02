@@ -383,7 +383,7 @@ Describe 'Invoke-RBAC4AppConfig' {
 
         $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
 
-        ($res.Warnings -join ';') | Should -Match 'legacy -RecipientGroupScope.*Set-RBAC4AppEntry'
+        ($res.Warnings -join ';') | Should -Match "scoped directly to group.*Set-RBAC4AppEntry -AssignmentScope ManagementScope"
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 

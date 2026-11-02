@@ -18,7 +18,7 @@ BeforeAll {
     function global:Get-Recipient { param([string]$Identity, $RecipientPreviewFilter, $ResultSize) }
     function global:Get-ManagementRoleAssignment { param([string]$Identity, [string]$Role) }
     function global:New-ManagementRoleAssignment { param($App, $Role, $RecipientGroupScope, $CustomResourceScope, $Name) }
-    function global:Set-ManagementRoleAssignment { param($Identity, $CustomResourceScope) }
+    function global:Set-ManagementRoleAssignment { param($Identity, $CustomResourceScope, $RecipientGroupScope) }
     function global:Get-ManagementScope { param($Identity) }
     function global:New-ManagementScope { param($Name, $RecipientRestrictionFilter) }
     function global:Set-ManagementScope { param($Identity, $RecipientRestrictionFilter) }
@@ -100,8 +100,54 @@ Describe 'Set-RBAC4AppEntry reconcile' {
         Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
     }
 
+    It 'RecipientGroupScope (default): leaves an assignment bound directly to the group untouched' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' } }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+
+        $r.IsValid | Should -BeTrue
+        $r.AssignmentScope | Should -Be 'RecipientGroupScope'
+        $r.RoleAssignmentsUnchanged | Should -Contain 'AppMailSend-Contoso'
+        $r.ManagementScopeName | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-ManagementScope -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-ManagementRoleAssignment -Times 0
+    }
+
+    It 'RecipientGroupScope (default): re-binds a management-scoped assignment directly to the group' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+
+        $r.IsValid | Should -BeTrue
+        $r.RoleAssignmentsRescoped | Should -Contain 'AppMailSend-Contoso'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-ManagementRoleAssignment -Times 1 -ParameterFilter {
+            $Identity -eq 'AppMailSend-Contoso' -and $RecipientGroupScope -eq 'Um365RAo1-Contoso' -and -not $CustomResourceScope
+        }
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 0
+    }
+
+    It 'RecipientGroupScope (default): creates a missing assignment bound directly to the group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+
+        $r.RoleAssignmentsCreated | Should -Contain 'AppMailSend-Contoso'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter {
+            $RecipientGroupScope -eq 'Um365RAo1-Contoso' -and -not $CustomResourceScope
+        }
+    }
+
+    It 'RecipientGroupScope (default): moves the assignment to the new group on -NewGroupPrefix' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' } }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -NewGroupPrefix 'Um365Prod' -Role 'Mail.Send' -Confirm:$false
+
+        $r.GroupChanged | Should -BeTrue
+        $r.RoleAssignmentsRescoped | Should -Contain 'AppMailSend-Contoso'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-ManagementRoleAssignment -Times 1 -ParameterFilter { $RecipientGroupScope -eq 'Um365Prod-Contoso' }
+    }
+
     It 'leaves a fully-configured app on its group untouched and reports IsValid' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send'
+        $r = Set-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send'
 
         $r.IsValid | Should -BeTrue
         $r.RoleAssignmentsUnchanged | Should -Contain 'AppMailSend-Contoso'
@@ -157,7 +203,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
     }
 
     It 're-points the management scope at a new group when -NewGroupPrefix is supplied (assignments untouched)' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -NewGroupPrefix 'Um365Prod' -Confirm:$false
+        $r = Set-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -NewGroupPrefix 'Um365Prod' -Confirm:$false
 
         $r.GroupChanged | Should -BeTrue
         $r.TargetGroupName | Should -Be 'Um365Prod-Contoso'
@@ -178,7 +224,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
             [pscustomobject]@{ Name = $Identity; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
         }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+        $r = Set-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.ManagementScopeCreated | Should -BeTrue
         $r.RoleAssignmentsRescoped | Should -Contain 'AppMailSend-Contoso'
@@ -198,7 +244,7 @@ Describe 'Set-RBAC4AppEntry reconcile' {
         }
         Mock -ModuleName EXORBACforAppManagement Set-ManagementRoleAssignment { throw 'not supported' }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+        $r = Set-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.Errors | Should -BeNullOrEmpty
         $r.RoleAssignmentsRescoped | Should -Contain 'AppMailSend-Contoso'

@@ -30,7 +30,17 @@ All notable changes to this project are documented here. The format is based on
   previous behaviour. Only `-ScopeKind Group` supports direct binding; the other kinds keep using a management
   scope. The config schema is now `4.1` with a new `RbacScope.AssignmentScope` key, which
   `Invoke-RBAC4AppConfig` honours; `4.0`/`3.0` configs (no key) are still read as `ManagementScope`.
-  `Convert-ApplicationAccessPolicyToRBAC` and `Get-RBAC4AppEntry` config exports write `ManagementScope`.
+  `Convert-ApplicationAccessPolicyToRBAC` writes `ManagementScope`; `Get-RBAC4AppEntry -ExportConfig`
+  writes `RecipientGroupScope` for assignments bound directly to a group and `ManagementScope` otherwise.
+- **Breaking:** `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Test-RBAC4AppEntry` take the same
+  `-AssignmentScope` parameter with the same `RecipientGroupScope` default (shared private
+  `Resolve-RBAC4AppAssignmentScope`). `New-` binds directly to the group and creates no management scope;
+  `Set-` now re-binds management-scoped assignments directly to the group (the old management scope is left
+  in place) unless `-AssignmentScope ManagementScope` is passed, and moves direct-bound assignments to the new
+  group on `-NewGroupName`/`-NewGroupPrefix`; `Test-` skips the management scope check and reports
+  management-scoped assignments in the new `RoleAssignmentsManagementScoped` as not valid. Pass
+  `-AssignmentScope ManagementScope` to keep the 0.7–0.8 management-scope behaviour. `Remove-RBAC4AppEntry`
+  already handled both bindings and is unchanged apart from its help text.
 - `Test-RBAC4AppEntry` and `Remove-RBAC4AppEntry` now throw for invalid parameter combinations
   (`-ManagementScopeName` with `-ManagementScopePrefix`, missing `-ScopeRecipients`/`-ScopeFilter`) like
   `New-`/`Set-RBAC4AppEntry`, instead of returning the message in `Errors`. The error-handling convention

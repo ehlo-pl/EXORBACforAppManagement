@@ -2,9 +2,9 @@
 
 A PowerShell module for governing **Exchange Online (EXO) Role-Based Access Control for Entra
 (Azure AD) applications**. It registers applications, assigns resource-scoped EXO *Application*
-role permissions (e.g. `Application Mail.Send`) bound to a named Exchange Online **management scope**
-(built from a scope group's members, an explicit mailbox list, a CustomAttribute tag, or a raw OPATH
-filter), and reads those
+role permissions (e.g. `Application Mail.Send`) bound either directly to a **scope group** (the
+default) or to a named Exchange Online **management scope** (built from a scope group's members, an
+explicit mailbox list, a CustomAttribute tag, or a raw OPATH filter), and reads those
 assignments back.
 
 The three functions form a **create → assign → read** flow and share the same
@@ -13,10 +13,10 @@ The three functions form a **create → assign → read** flow and share the sam
 | Function | Step | What it does |
 | --- | --- | --- |
 | [`New-RegisteredApp`](#new-registeredapp) | create | Creates an Entra app registration and (by default) its service principal. NOTE: requires high privileges; intended mainly for testing environments when production app registration is handled by a separate pipeline/team. |
-| [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Ensures the scope source (group, recipients, tag, or filter), the management scope, the EXO service principal, and assigns EXO Application roles bound to that management scope. |
+| [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Ensures the scope source (group, recipients, tag, or filter), the EXO service principal, and assigns EXO Application roles bound directly to the group (default) or to a management scope (`-AssignmentScope ManagementScope`, and every non-Group kind). |
 | `New-RBAC4AppManagementScope` | helper | Ensures an EXO management scope exists with a given `RecipientRestrictionFilter` (creates, updates on drift, or leaves an equivalent one alone; `-NoUpdate` only warns). |
 | [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read / inventory | Lists the EXO Application-role assignments, each resolved to its AppId/ServicePrincipalId and scope group name/type/members; `-ByApplication` groups them into one row per application. |
-| [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, scope source, management scope, EXO service principal, role assignments) and returns an `IsValid` summary. |
+| [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, scope source, management scope when `-AssignmentScope ManagementScope`, EXO service principal, role assignments) and returns an `IsValid` summary. |
 | [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate / plan | Writes YAML/JSON RBAC configs from legacy Application Access Policies for later provisioning with `Invoke-RBAC4AppConfig`. |
 | `Get-RBAC4AppRoleAssignment` | read / inventory | EXO-only listing of every `Application *` role assignment held by a service principal, with the app name and in-scope recipients resolved. |
 | `Resolve-ApplicationAccessPolicy` | export | Writes all Exchange Online Application Access Policies to YAML/JSON with an empty `Permissions` list. |
@@ -259,10 +259,11 @@ Resolves the application against the Exchange Online service principal pointer a
 for it (by `-RegisteredAppName`, `-AppId`, or `-SpObjectId` — no Microsoft Graph session needed),
 creates a scoped group named `"{GroupPrefix}-{DisplayName}"` (a distribution list by default; see
 [Choosing the scope group type](#choosing-the-scope-group-type--accessgrouptype-) below), adds
-members, ensures the EXO service principal, ensures a management scope (default name
-`"MSRAo1P-{DisplayName}"`) whose `RecipientRestrictionFilter` targets that group's members, and
-creates one role assignment per role — each bound to the management scope via
-`-CustomResourceScope`. See [Choosing the scope kind](#choosing-the-scope-kind--scopekind-) for
+members, ensures the EXO service principal, and creates one role assignment per role — each bound
+directly to that group via `-RecipientGroupScope` (the default `-AssignmentScope RecipientGroupScope`).
+With `-AssignmentScope ManagementScope` it instead ensures a management scope (default name
+`"MSRAo1P-{DisplayName}"`) whose `RecipientRestrictionFilter` targets that group's members and binds
+each assignment to it via `-CustomResourceScope`. See [Choosing the scope kind](#choosing-the-scope-kind--scopekind-) for
 scoping to specific mailboxes, a tag, or a raw filter instead of a group. Short role names such as `Mail.Send` are normalized to
 `Application Mail.Send`.
 
@@ -296,20 +297,23 @@ This works transparently when piped straight from `New-RegisteredApp` — its ou
 
 #### Choosing the scope kind (`-ScopeKind`)
 
-Role assignments are never bound to a group directly; they always point at a named management scope
-(`New-ManagementScope -RecipientRestrictionFilter`, then `New-ManagementRoleAssignment
--CustomResourceScope`). `-ScopeKind` decides how that scope's filter is built:
+With `-ScopeKind Group` (default) and `-AssignmentScope RecipientGroupScope` (default), role
+assignments are bound directly to the scope group (`New-ManagementRoleAssignment
+-RecipientGroupScope`) and no management scope is created. In every other case they point at a named
+management scope (`New-ManagementScope -RecipientRestrictionFilter`, then `New-ManagementRoleAssignment
+-CustomResourceScope`), and `-ScopeKind` decides how that scope's filter is built:
 
 | `-ScopeKind` | Filter | Group created? | Extra parameters |
 | --- | --- | --- | --- |
-| `Group` (default) | `MemberOfGroup -eq '<group DN>'` (direct members only) | yes, per `-AccessGroupType` | `-AccessGroupType`, `-AccessGroupName`, `-GroupPrefix`, `-Members`, `-ManagedBy`, `-BootstrapMember` |
+| `Group` (default) | none with `-AssignmentScope RecipientGroupScope` (default); `MemberOfGroup -eq '<group DN>'` (direct members only) with `-AssignmentScope ManagementScope` | yes, per `-AccessGroupType` | `-AccessGroupType`, `-AccessGroupName`, `-GroupPrefix`, `-Members`, `-ManagedBy`, `-BootstrapMember`, `-AssignmentScope` |
 | `Recipients` | `(PrimarySmtpAddress -eq 'a@x') -or ...` | no | `-ScopeRecipients` (required; each is resolved via `Get-Recipient`) |
 | `Tag` | `<CustomAttributeN> -eq '<value>'` | no | `-ScopeTagAttribute` (default `CustomAttribute1`), `-ScopeTagValue` (default: the scope name). The module does **not** stamp the attribute on mailboxes. |
 | `Filter` | the raw OPATH you pass | no | `-ScopeFilter` (required) |
 
 The scope name defaults to `"{ManagementScopePrefix}-{DisplayName}"` (prefix `MSRAo1P`); pass
-`-ManagementScopeName` (max 64 chars) to override it. Group-only parameters passed with a non-Group
-kind are ignored with a warning. An existing scope with an equivalent filter is left alone; a
+`-ManagementScopeName` (max 64 chars) to override it; both are ignored (with a warning) under
+`-AssignmentScope RecipientGroupScope`, and asking for `RecipientGroupScope` with a non-Group kind is
+an error. Group-only parameters passed with a non-Group kind are ignored with a warning. An existing scope with an equivalent filter is left alone; a
 drifted one is updated via `Set-ManagementScope`.
 
 ```powershell
@@ -326,11 +330,14 @@ New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -ScopeKind Filter `
     -ScopeFilter "Department -eq 'Finance'" -ManagementScopeName 'Finance-MailApp' -Role 'Mail.Send'
 ```
 
-**Migrating legacy assignments.** Assignments created by earlier versions (bound directly to the
-group via `-RecipientGroupScope`) are reported by `Get-RBAC4AppEntry` with `ScopeKind` `GroupDirect`.
-`New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn about them but leave them alone; run
-`Set-RBAC4AppEntry` to re-bind them to the management scope. `Test-RBAC4AppEntry` reports them as
-not valid, and `Remove-RBAC4AppEntry` also removes the management scope once nothing else uses it.
+**Switching between the two bindings.** Assignments bound directly to the group are reported by
+`Get-RBAC4AppEntry` with `ScopeKind` `GroupDirect` (and exported with `AssignmentScope:
+RecipientGroupScope`). `New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn about an assignment bound the
+other way than requested but leave it alone; `Set-RBAC4AppEntry` re-binds it in either direction
+(`-AssignmentScope ManagementScope` moves group-bound assignments onto the management scope; the
+default moves management-scoped ones directly onto the group, leaving the old management scope in
+place). `Test-RBAC4AppEntry` reports such assignments as not valid, and `Remove-RBAC4AppEntry` removes
+either kind, plus the management scope if one exists and nothing else uses it.
 
 #### Choosing the scope group type (`-AccessGroupType`)
 
@@ -418,9 +425,10 @@ Get-RBAC4AppEntry -ByApplication -Role 'Mail.Send'
 
 Read-only check that an application has every component `New-RBAC4AppEntry` provisions: the
 resolvable service principal, the scope source (a group for `-ScopeKind Group`), the management
-scope, the Exchange Online service principal pointer, and one role assignment per role (looked up
-by the deterministic assignment name). It
-mirrors `New-RBAC4AppEntry`'s `-Role` / `-GroupPrefix` defaults and optionally verifies `-Members`
+scope (only for `-AssignmentScope ManagementScope`), the Exchange Online service principal pointer,
+and one role assignment per role (looked up by the deterministic assignment name) bound the way
+`-AssignmentScope` expects. It
+mirrors `New-RBAC4AppEntry`'s `-Role` / `-GroupPrefix` / `-AssignmentScope` defaults and optionally verifies `-Members`
 against the group's membership. Returns a summary `[pscustomobject]` with per-component flags
 (`ServicePrincipalExists`, `ScopeGroupExists`, `ExoServicePrincipalExists`), the
 expected/found/missing role assignments, a `Missing` list, and an overall `IsValid`.

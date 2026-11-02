@@ -274,6 +274,7 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
             $config.Application.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
             @($config.Rbac.Roles) | Should -Be @('Application MailboxSettings.Read')
             $config.RbacScope.ScopeKind | Should -Be 'Group'
+            $config.RbacScope.AssignmentScope | Should -Be 'RecipientGroupScope'
             $config.RbacScope.AccessGroupName | Should -Be 'UDLRAo1P-Tailspin'
             @($config.RbacScope.Members) | Should -Contain 'shared@tailspin.com'
             $result.Name | Should -Be 'AppMailboxSettings-Tailspin'
