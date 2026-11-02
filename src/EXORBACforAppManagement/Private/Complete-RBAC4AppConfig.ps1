@@ -1,10 +1,11 @@
 function Complete-RBAC4AppConfig {
     # Counterpart of ConvertTo-RBAC4AppConfig's pruning: takes a parsed config (YAML or JSON, any
     # supported schema version) and returns a full config object with every key present, filling
-    # absent, null, or empty values from $script:RBAC4AppConfigDefaults. Invoke-RBAC4AppConfig and
+    # absent values from $script:RBAC4AppConfigDefaults. Invoke-RBAC4AppConfig and
     # ConvertFrom-RBAC4AppYaml both go through it, so a key left out of a file always means its
-    # default. An absent AssignmentScope means RecipientGroupScope for a ScopeKind Group config of
-    # schema 4.1 or later, and ManagementScope otherwise ('3.0'/'4.0' predate direct group binding).
+    # default while explicitly empty Members and BootstrapMember values remain overrides. An absent
+    # AssignmentScope means RecipientGroupScope for a ScopeKind Group config of schema 4.1 or later,
+    # and ManagementScope otherwise ('3.0'/'4.0' predate direct group binding).
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
@@ -24,6 +25,13 @@ function Complete-RBAC4AppConfig {
     $accessGroupType = & $text $scope.AccessGroupType $defaults.AccessGroupType
     $members = & $list $scope.Members
     $owners = & $list $scope.ManagedBy
+    $membersSpecified = $false
+    $bootstrapMemberSpecified = $false
+    if ($scope) {
+        $membersSpecified = $null -ne $scope.PSObject.Properties['Members']
+        $bootstrapMemberSpecified = $null -ne $scope.PSObject.Properties['BootstrapMember']
+    }
+    $bootstrapMember = if ($bootstrapMemberSpecified) { [string]$scope.BootstrapMember } else { $defaults.BootstrapMember }
     $defaultAssignmentScope = if ($scopeKind -eq 'Group' -and $schemaVersion -notin @('3.0', '4.0')) { 'RecipientGroupScope' } else { 'ManagementScope' }
 
     [pscustomobject]@{
@@ -43,9 +51,9 @@ function Complete-RBAC4AppConfig {
             AccessGroupType       = $accessGroupType
             GroupPrefix           = & $text $scope.GroupPrefix (Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $accessGroupType)
             AccessGroupName       = [string]$scope.AccessGroupName
-            Members               = if ($members.Count -gt 0) { $members } else { @($defaults.Members) }
+            Members               = if ($membersSpecified) { $members } else { @($defaults.Members) }
             ManagedBy             = if ($owners.Count -gt 0) { $owners } else { @($defaults.ManagedBy) }
-            BootstrapMember       = & $text $scope.BootstrapMember $defaults.BootstrapMember
+            BootstrapMember       = $bootstrapMember
             ScopeKind             = $scopeKind
             AssignmentScope       = & $text $scope.AssignmentScope $defaultAssignmentScope
             ManagementScopeName   = [string]$scope.ManagementScopeName

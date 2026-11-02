@@ -55,9 +55,7 @@ function ConvertFrom-RBAC4AppYaml {
             AccessGroupType = ''
             GroupPrefix     = ''
             AccessGroupName = ''
-            Members         = [System.Collections.Generic.List[string]]::new()
             ManagedBy       = [System.Collections.Generic.List[string]]::new()
-            BootstrapMember = ''
             ScopeKind             = ''
             AssignmentScope       = ''
             ManagementScopeName   = ''
@@ -98,7 +96,8 @@ function ConvertFrom-RBAC4AppYaml {
 
         if ($line -match '^\s*(\w+)\s*:\s*(.*)$') {
             $key   = $Matches[1]
-            $value = ConvertFrom-RBAC4AppYamlScalar $Matches[2]
+            $rawValue = $Matches[2]
+            $value = ConvertFrom-RBAC4AppYamlScalar $rawValue
 
             if ($null -eq $section) {
                 switch ($key) {
@@ -123,12 +122,19 @@ function ConvertFrom-RBAC4AppYaml {
             }
             elseif ($section -eq 'RbacScope') {
                 switch ($key) {
-                    'Members'         { $listKey = 'Members' }
+                    'Members' {
+                        $config.RbacScope | Add-Member -NotePropertyName Members -NotePropertyValue ([System.Collections.Generic.List[string]]::new()) -Force
+                        if ($rawValue.Trim() -eq '[]') {
+                            $listKey = $null
+                        } else {
+                            $listKey = 'Members'
+                        }
+                    }
                     'ManagedBy'       { $listKey = 'ManagedBy' }
                     'AccessGroupType' { $config.RbacScope.AccessGroupType = $value; $listKey = $null }
                     'GroupPrefix'     { $config.RbacScope.GroupPrefix     = $value; $listKey = $null }
                     'AccessGroupName' { $config.RbacScope.AccessGroupName = $value; $listKey = $null }
-                    'BootstrapMember' { $config.RbacScope.BootstrapMember = $value; $listKey = $null }
+                    'BootstrapMember' { $config.RbacScope | Add-Member -NotePropertyName BootstrapMember -NotePropertyValue $value -Force; $listKey = $null }
                     'ScopeRecipients'       { $listKey = 'ScopeRecipients' }
                     'ScopeKind'             { if ($value) { $config.RbacScope.ScopeKind = $value }; $listKey = $null }
                     'AssignmentScope'       { $config.RbacScope.AssignmentScope       = $value; $listKey = $null }

@@ -301,7 +301,9 @@ function New-RBAC4AppConfig {
             -Roles $normalizedRoles `
             -ChangeReference $(if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }) `
             -AccessGroupType $AccessGroupType -GroupPrefix $GroupPrefix -AccessGroupName $accessGroupNameValue `
-            -Members $Members -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember `
+            -Members $Members -MembersExplicit ([bool]$PSBoundParameters.ContainsKey('Members')) `
+            -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember `
+            -BootstrapMemberExplicit ([bool]$PSBoundParameters.ContainsKey('BootstrapMember')) `
             -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope `
             -ManagementScopeName $(if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }) `
             -ManagementScopePrefix $ManagementScopePrefix `

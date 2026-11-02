@@ -5,9 +5,9 @@ function ConvertTo-RBAC4AppConfig {
     # each other or from $script:RBAC4AppConfigSchemaVersion.
     #
     # Only entries that are actually used are written: keys the selected ScopeKind/AssignmentScope
-    # ignores, empty values, and values equal to $script:RBAC4AppConfigDefaults (restored on read by
-    # Complete-RBAC4AppConfig) are left out. SchemaVersion, GeneratedAt, Application, and Rbac.Roles
-    # are always written.
+    # ignores, empty values unless explicitly supplied as overrides, and values equal to
+    # $script:RBAC4AppConfigDefaults (restored on read by Complete-RBAC4AppConfig) are left out.
+    # SchemaVersion, GeneratedAt, Application, and Rbac.Roles are always written.
     [OutputType([pscustomobject])]
     param(
         [string] $TenantId = '',
@@ -34,8 +34,10 @@ function ConvertTo-RBAC4AppConfig {
 
         [string] $AccessGroupName = '',
         [string[]] $Members = @(),
+        [bool] $MembersExplicit = $false,
         [string[]] $ManagedBy = @(),
         [string] $BootstrapMember = 'GraphAPI-Dummy',
+        [bool] $BootstrapMemberExplicit = $false,
 
         [string] $ScopeKind = 'Group',
         [ValidateSet('ManagementScope', 'RecipientGroupScope')]
@@ -84,9 +86,11 @@ function ConvertTo-RBAC4AppConfig {
         elseif ($GroupPrefix -and $GroupPrefix -ne (Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType)) {
             $scope.GroupPrefix = $GroupPrefix
         }
-        if ($members.Count -gt 0 -and (($members -join "`n") -ne ($defaults.Members -join "`n"))) { $scope.Members = $members }
+        if (($members.Count -gt 0 -and (($members -join "`n") -ne ($defaults.Members -join "`n"))) -or
+            ($MembersExplicit -and $members.Count -eq 0)) { $scope.Members = $members }
         if ($owners.Count -gt 0 -and (($owners -join "`n") -ne ($defaults.ManagedBy -join "`n"))) { $scope.ManagedBy = $owners }
-        if ($BootstrapMember -and $BootstrapMember -ne $defaults.BootstrapMember) { $scope.BootstrapMember = $BootstrapMember }
+        if (($BootstrapMember -and $BootstrapMember -ne $defaults.BootstrapMember) -or
+            ($BootstrapMemberExplicit -and -not $BootstrapMember)) { $scope.BootstrapMember = $BootstrapMember }
         if ($SeparateScopePerRole) { $scope.SeparateScopePerRole = $true }
     }
 
