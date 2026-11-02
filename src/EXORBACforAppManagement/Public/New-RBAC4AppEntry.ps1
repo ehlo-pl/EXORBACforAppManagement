@@ -6,8 +6,8 @@ Creates or updates Exchange Online RBAC scoping for an Entra application service
 New-RBAC4AppEntry resolves an application against the Exchange Online service principal pointer
 already registered for it (by display name, AppId, or service principal object id), creates the
 scope group when needed, adds requested members, ensures the Exchange Online service principal
-exists, ensures the Exchange Online management scope, and creates Exchange Online RBAC role
-assignments for the application against that management scope.
+exists, and creates Exchange Online RBAC role assignments for the application - bound directly to
+the scope group by default, or to an Exchange Online management scope (see -AssignmentScope).
 
 Resolution is Exchange-Online-only: it looks up the pointer Register-EXOServicePrincipal creates
 (via Get-ServicePrincipal), not the Entra service principal itself, so no Microsoft Graph session
@@ -29,20 +29,29 @@ regardless.
 
 The function supports -WhatIf and -Confirm through SupportsShouldProcess.
 
-Role assignments are bound to a named Exchange Online management scope
-(New-ManagementRoleAssignment -CustomResourceScope), not directly to the group. The scope's
-recipient filter is selected by -ScopeKind:
-  - Group (default): MemberOfGroup -eq '<scope group DN>' - the group workflow above is unchanged;
-    the group just feeds the scope. Note MemberOfGroup matches direct members only.
+With -ScopeKind Group and -AssignmentScope RecipientGroupScope (both defaults), role assignments are
+bound directly to the scope group (New-ManagementRoleAssignment -RecipientGroupScope) and no
+management scope is created. Otherwise they are bound to a named Exchange Online management scope
+(New-ManagementRoleAssignment -CustomResourceScope) whose recipient filter is selected by -ScopeKind:
+  - Group with -AssignmentScope ManagementScope: MemberOfGroup -eq '<scope group DN>' - the group
+    workflow above is unchanged; the group just feeds the scope. Note MemberOfGroup matches direct
+    members only.
   - Recipients: specific mailboxes/UPNs from -ScopeRecipients (each resolved via Get-Recipient to
     its PrimarySmtpAddress). No group is created.
   - Tag: CustomAttributeN -eq '<value>' (-ScopeTagAttribute / -ScopeTagValue). No group is created
     and the attribute is NOT stamped by this function - stamp it on the target mailboxes yourself.
   - Filter: a raw OPATH -ScopeFilter. No group is created.
 The scope is created when missing; an existing scope with a different filter is left unchanged
-(warning) - use Set-RBAC4AppEntry to reconcile it. An existing role assignment still scoped
-directly to the group (the pre-0.7 -RecipientGroupScope model) is left as-is with a warning;
-Set-RBAC4AppEntry migrates it. Exchange Online caches permissions for 30 minutes to 2 hours.
+(warning) - use Set-RBAC4AppEntry to reconcile it. An existing role assignment bound the other way
+(directly to the group vs. to the management scope) is left as-is with a warning;
+Set-RBAC4AppEntry re-binds it. Exchange Online caches permissions for 30 minutes to 2 hours.
+
+.PARAMETER AssignmentScope
+How the role assignments are bound for -ScopeKind Group: RecipientGroupScope (default; directly to
+the scope group, no management scope) or ManagementScope (a management scope whose filter selects
+the group's members). Other scope kinds always use ManagementScope; requesting RecipientGroupScope
+with them is an error. -ManagementScopeName/-ManagementScopePrefix are ignored with
+RecipientGroupScope.
 
 .PARAMETER ScopeKind
 How the management scope selects recipients: Group (default), Recipients, Tag, or Filter. Group
@@ -239,6 +248,10 @@ function New-RBAC4AppEntry {
         [string] $ScopeKind = 'Group',
 
         [Parameter()]
+        [ValidateSet('RecipientGroupScope', 'ManagementScope')]
+        [string] $AssignmentScope = 'RecipientGroupScope',
+
+        [Parameter()]
         [ValidateLength(1, 64)]
         [string] $ManagementScopeName,
 
@@ -288,6 +301,10 @@ function New-RBAC4AppEntry {
             throw "-ScopeFilter is required when -ScopeKind is Filter."
         }
 
+        $assignmentScopeInfo = Resolve-RBAC4AppAssignmentScope -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope -BoundParameters $PSBoundParameters
+        $AssignmentScope = $assignmentScopeInfo.AssignmentScope
+        $isDirectGroup = $AssignmentScope -eq 'RecipientGroupScope'
+
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
             $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
@@ -306,6 +323,7 @@ function New-RBAC4AppEntry {
             SpObjectId        = $null
             TenantId          = $tenantid
             ScopeKind         = $ScopeKind
+            AssignmentScope   = $AssignmentScope
             ManagementScopeName   = $null
             ManagementScopeFilter = $null
             ManagementScopeCreated = $false
@@ -365,7 +383,7 @@ function New-RBAC4AppEntry {
             $result.AppId           = $sp.AppId
             $result.SpObjectId      = $sp.Id
 
-            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
+            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters) + @($assignmentScopeInfo.Warnings)) {
                 $result.Warnings += $ignoredMsg
                 Write-Warning -Message $ignoredMsg
             }
@@ -486,26 +504,30 @@ function New-RBAC4AppEntry {
 
             # --- Ensure the management scope the role assignments are bound to. An existing scope
             # whose filter differs is left unchanged (warned); Set-RBAC4AppEntry reconciles it.
+            # Direct group binding still derives the name (to recognise an assignment already bound
+            # to it) but creates no scope.
             $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $sp.DisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
-            $result.ManagementScopeName = $scopeName
-            $groupDn = if ($ugResult -and $ugResult.Group) { [string]$ugResult.Group.DistinguishedName } else { $null }
-            $filterArgs = @{
-                ScopeKind              = $ScopeKind
-                GroupIdentity          = $umGroupName
-                GroupDistinguishedName = $groupDn
-                Recipients             = $ScopeRecipients
-                TagAttribute           = $ScopeTagAttribute
-                TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
-                Filter                 = $ScopeFilter
-                AllowUnresolved        = ($ScopeKind -eq 'Group' -and [bool]$WhatIfPreference)
-            }
-            $scopeFilterText = ConvertTo-RBAC4AppRecipientFilter @filterArgs
-            $scopeResult = New-RBAC4AppManagementScope -Name $scopeName -RecipientRestrictionFilter $scopeFilterText -NoUpdate -WarningVariable msWarnings
-            foreach ($w in $msWarnings) { $result.Warnings += [string]$w.Message }
-            $result.ManagementScopeFilter  = $scopeResult.RecipientRestrictionFilter
-            $result.ManagementScopeCreated = [bool]$scopeResult.Created
-            if ($ScopeKind -eq 'Tag') {
-                Write-Verbose -Message ("Management scope '{0}' targets recipients with {1}; stamp that attribute on the mailboxes the app may access (not done by this module)." -f $scopeName, $scopeFilterText)
+            if (-not $isDirectGroup) {
+                $result.ManagementScopeName = $scopeName
+                $groupDn = if ($ugResult -and $ugResult.Group) { [string]$ugResult.Group.DistinguishedName } else { $null }
+                $filterArgs = @{
+                    ScopeKind              = $ScopeKind
+                    GroupIdentity          = $umGroupName
+                    GroupDistinguishedName = $groupDn
+                    Recipients             = $ScopeRecipients
+                    TagAttribute           = $ScopeTagAttribute
+                    TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
+                    Filter                 = $ScopeFilter
+                    AllowUnresolved        = ($ScopeKind -eq 'Group' -and [bool]$WhatIfPreference)
+                }
+                $scopeFilterText = ConvertTo-RBAC4AppRecipientFilter @filterArgs
+                $scopeResult = New-RBAC4AppManagementScope -Name $scopeName -RecipientRestrictionFilter $scopeFilterText -NoUpdate -WarningVariable msWarnings
+                foreach ($w in $msWarnings) { $result.Warnings += [string]$w.Message }
+                $result.ManagementScopeFilter  = $scopeResult.RecipientRestrictionFilter
+                $result.ManagementScopeCreated = [bool]$scopeResult.Created
+                if ($ScopeKind -eq 'Tag') {
+                    Write-Verbose -Message ("Management scope '{0}' targets recipients with {1}; stamp that attribute on the mailboxes the app may access (not done by this module)." -f $scopeName, $scopeFilterText)
+                }
             }
 
             # --- Role assignments
@@ -535,15 +557,25 @@ function New-RBAC4AppEntry {
                         continue
                     }
                     $scopeState = Get-RBAC4AppAssignmentScopeState -Assignment $existingAssignment -ManagementScopeName $scopeName -LegacyGroupName $umGroupName
-                    switch ($scopeState.State) {
-                        'Target' {
-                            $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to management scope '$scopeName'; skipping creation."
+                    if ($isDirectGroup) {
+                        $existsMsg = if ($scopeState.State -eq 'LegacyGroup') {
+                            "Role assignment '$rbacNameBase' already exists and is scoped directly to group '$umGroupName'; skipping creation."
                         }
-                        'LegacyGroup' {
-                            $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped directly to group '$umGroupName' (legacy -RecipientGroupScope); leaving it as-is. Run Set-RBAC4AppEntry to migrate it to management scope '$scopeName'."
+                        else {
+                            "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not directly to group '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
                         }
-                        default {
-                            $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not management scope '$scopeName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                    }
+                    else {
+                        switch ($scopeState.State) {
+                            'Target' {
+                                $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to management scope '$scopeName'; skipping creation."
+                            }
+                            'LegacyGroup' {
+                                $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped directly to group '$umGroupName'; leaving it as-is. Run Set-RBAC4AppEntry -AssignmentScope ManagementScope to move it to management scope '$scopeName'."
+                            }
+                            default {
+                                $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not management scope '$scopeName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                            }
                         }
                     }
                     $result.Warnings += $existsMsg
@@ -552,7 +584,18 @@ function New-RBAC4AppEntry {
                     continue
                 }
 
-                if ($PSCmdlet.ShouldProcess("RBAC role assignment", "Assign '$roleItem' to App '$($sp.DisplayName)' scoped to management scope '$scopeName'")) {
+                if ($isDirectGroup) {
+                    if ($PSCmdlet.ShouldProcess("RBAC role assignment", "Assign '$roleItem' to App '$($sp.DisplayName)' scoped directly to group '$umGroupName'")) {
+                        $assignment = New-ManagementRoleAssignment `
+                            -App $sp.Id `
+                            -Role $roleItem `
+                            -RecipientGroupScope $umGroupName `
+                            -Name $rbacNameBase `
+                            -ErrorAction Stop
+                        $result.RoleAssignments += $assignment
+                    }
+                }
+                elseif ($PSCmdlet.ShouldProcess("RBAC role assignment", "Assign '$roleItem' to App '$($sp.DisplayName)' scoped to management scope '$scopeName'")) {
                     $assignment = New-ManagementRoleAssignment `
                         -App $sp.Id `
                         -Role $roleItem `

@@ -468,6 +468,7 @@ function Get-RBAC4AppEntry {
                 -Members $(if ($scopeKind -eq 'Group') { @($Scope.Members) } else { @() }) `
                 -ManagedBy @('GraphAPI-Dummy-owner') `
                 -ScopeKind $scopeKind `
+                -AssignmentScope $(if ($Scope.ScopeKind -eq 'GroupDirect') { 'RecipientGroupScope' } else { 'ManagementScope' }) `
                 -ManagementScopeName $(if ($Scope.ManagementScope) { [string]$Scope.ManagementScope } else { '' }) `
                 -ManagementScopePrefix $script:RBAC4AppDefaultManagementScopePrefix `
                 -ScopeRecipients $scopeRecipients `

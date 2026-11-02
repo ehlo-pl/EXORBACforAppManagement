@@ -24,6 +24,13 @@ All notable changes to this project are documented here. The format is based on
   `rbac4app-<name>-<yyyyMMddHHmmss>-<8 hex>.<ext>`. Globs such as `rbac4app-<name>-*.yml` still match.
 
 ### Changed
+- **Breaking:** `New-RBAC4AppConfig` now defaults to binding role assignments directly to the scope group
+  (`-AssignmentScope RecipientGroupScope`, i.e. `New-ManagementRoleAssignment -RecipientGroupScope`) instead
+  of creating a management scope over the group's members; pass `-AssignmentScope ManagementScope` for the
+  previous behaviour. Only `-ScopeKind Group` supports direct binding; the other kinds keep using a management
+  scope. The config schema is now `4.1` with a new `RbacScope.AssignmentScope` key, which
+  `Invoke-RBAC4AppConfig` honours; `4.0`/`3.0` configs (no key) are still read as `ManagementScope`.
+  `Convert-ApplicationAccessPolicyToRBAC` and `Get-RBAC4AppEntry` config exports write `ManagementScope`.
 - `Test-RBAC4AppEntry` and `Remove-RBAC4AppEntry` now throw for invalid parameter combinations
   (`-ManagementScopeName` with `-ManagementScopePrefix`, missing `-ScopeRecipients`/`-ScopeFilter`) like
   `New-`/`Set-RBAC4AppEntry`, instead of returning the message in `Errors`. The error-handling convention

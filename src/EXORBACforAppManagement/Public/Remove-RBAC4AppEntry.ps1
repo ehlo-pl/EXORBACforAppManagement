@@ -11,9 +11,10 @@ sanitized via Format-RBAC4AppSafeName) and the management scope name ("{Manageme
 or -ManagementScopeName), and removes, in order:
 
   1. this application's Exchange Online management role assignments bound to that management scope
-     (-CustomResourceScope) or - for assignments created before 0.7.0 - directly to the scope group
-     (legacy -RecipientGroupScope),
-  2. the management scope itself (skipped while another identity's assignment still uses it), and
+     (-CustomResourceScope) or directly to the scope group (-RecipientGroupScope, the default
+     -AssignmentScope of New-/Set-RBAC4AppEntry and New-RBAC4AppConfig, and the pre-0.7.0 model),
+  2. the management scope itself, if one exists (skipped while another identity's assignment still
+     uses it), and
   3. for -ScopeKind Group, the scope group itself (never a MailEnabledSecurityGroup).
 
 Before removing anything the function runs two safety checks and ABORTS (removing nothing) if either

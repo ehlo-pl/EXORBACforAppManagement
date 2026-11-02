@@ -33,6 +33,8 @@ function ConvertTo-RBAC4AppConfig {
         [string] $BootstrapMember = 'GraphAPI-Dummy',
 
         [string] $ScopeKind = 'Group',
+        [ValidateSet('ManagementScope', 'RecipientGroupScope')]
+        [string] $AssignmentScope = 'ManagementScope',
         [string] $ManagementScopeName = '',
         [string] $ManagementScopePrefix = $script:RBAC4AppDefaultManagementScopePrefix,
         [string[]] $ScopeRecipients = @(),
@@ -63,6 +65,7 @@ function ConvertTo-RBAC4AppConfig {
             ManagedBy             = @($ManagedBy)
             BootstrapMember       = $BootstrapMember
             ScopeKind             = $ScopeKind
+            AssignmentScope       = $AssignmentScope
             ManagementScopeName   = $ManagementScopeName
             ManagementScopePrefix = $ManagementScopePrefix
             ScopeRecipients       = @($ScopeRecipients | Where-Object { $_ })

@@ -155,8 +155,9 @@ Describe 'New-RBAC4AppConfig' {
         (Test-Path $outFile) | Should -BeTrue
 
         $parsed = Get-Content $outFile -Raw | ConvertFrom-Json
-        $parsed.SchemaVersion              | Should -Be '4.0'
+        $parsed.SchemaVersion              | Should -Be '4.1'
         $parsed.RbacScope.ScopeKind        | Should -Be 'Group'
+        $parsed.RbacScope.AssignmentScope  | Should -Be 'RecipientGroupScope'
         $parsed.RbacScope.ManagementScopePrefix | Should -Be 'MSRAo1P'
         $parsed.TenantId                   | Should -Be 'tenant-id-123'
         $parsed.Application.AppId          | Should -Be 'app-client-id'
@@ -204,12 +205,50 @@ Describe 'New-RBAC4AppConfig' {
             -OutputPath $TestDrive -Confirm:$false
 
         $content = Get-Content $outFile -Raw
-        $content | Should -Match 'SchemaVersion: "4.0"'
+        $content | Should -Match 'SchemaVersion: "4.1"'
         $content | Should -Match 'ScopeKind: "Recipients"'
         $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
         $parsed.RbacScope.ScopeKind           | Should -Be 'Recipients'
+        $parsed.RbacScope.AssignmentScope     | Should -Be 'ManagementScope'
         $parsed.RbacScope.ManagementScopeName | Should -Be 'Contoso-Scope'
         @($parsed.RbacScope.ScopeRecipients)  | Should -Be @('alice@contoso.com', 'bob@contoso.com')
+    }
+
+    It 'defaults to RecipientGroupScope for -ScopeKind Group and round-trips it through YAML' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Confirm:$false
+
+        $content = Get-Content $outFile -Raw
+        $content | Should -Match 'AssignmentScope: "RecipientGroupScope"'
+        $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
+        $parsed.RbacScope.AssignmentScope | Should -Be 'RecipientGroupScope'
+    }
+
+    It 'writes ManagementScope when -AssignmentScope ManagementScope is requested' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AssignmentScope ManagementScope -Format Json `
+            -OutputPath $TestDrive -Confirm:$false
+
+        (Get-Content $outFile -Raw | ConvertFrom-Json).RbacScope.AssignmentScope | Should -Be 'ManagementScope'
+    }
+
+    It 'rejects -AssignmentScope RecipientGroupScope for a non-Group scope kind' {
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Recipients -ScopeRecipients 'alice@contoso.com' `
+                -AssignmentScope RecipientGroupScope -OutputPath $TestDrive -Confirm:$false } |
+            Should -Throw '*can only be used with -ScopeKind Group*'
+    }
+
+    It 'warns that management scope naming is ignored with RecipientGroupScope' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $null = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ManagementScopeName 'Contoso-Scope' `
+            -OutputPath $TestDrive -Confirm:$false -WarningVariable w -WarningAction SilentlyContinue
+        ($w -join ';') | Should -Match '-ManagementScopeName only applies to -AssignmentScope ManagementScope'
     }
 
     It 'requires -ScopeRecipients for -ScopeKind Recipients' {

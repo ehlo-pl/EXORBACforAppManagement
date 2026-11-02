@@ -52,6 +52,7 @@
     }
     $lines.Add("  BootstrapMember: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.BootstrapMember)")
     $lines.Add("  ScopeKind: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ScopeKind)")
+    $lines.Add("  AssignmentScope: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.AssignmentScope)")
     $lines.Add("  ManagementScopeName: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ManagementScopeName)")
     $lines.Add("  ManagementScopePrefix: $(ConvertTo-RBAC4AppYamlScalar $Config.RbacScope.ManagementScopePrefix)")
     $lines.Add('  ScopeRecipients:')

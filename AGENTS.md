@@ -73,7 +73,7 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
   `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
-  writes a config file (schema version `4.0` - `3.0` is still read as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections) in
+  writes a config file (schema version `4.1` - `4.0`/`3.0` are still read as `AssignmentScope: ManagementScope`, `3.0` as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections) in
   either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
   `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
   (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and

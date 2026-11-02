@@ -89,7 +89,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
             param($Path)
             ConvertFrom-RBAC4AppYaml -Content (Get-Content $Path -Raw)
         }
-        $config.SchemaVersion | Should -Be '4.0'
+        $config.SchemaVersion | Should -Be '4.1'
         $config.Application.SpObjectId | Should -Be '22222222-2222-2222-2222-222222222222'
         $config.Rbac.Roles | Should -Contain 'Application Mail.Read'
         $config.RbacScope.Members | Should -Be @('user1@contoso.com', 'user2@contoso.com')

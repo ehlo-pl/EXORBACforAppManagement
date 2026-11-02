@@ -387,6 +387,88 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
 
+    Context 'AssignmentScope RecipientGroupScope (schema 4.1)' {
+        BeforeAll {
+            $script:configPathDirect = Join-Path $TestDrive 'test-config-direct.yml'
+            $yaml = $script:testYaml -replace 'SchemaVersion: "3.0"', 'SchemaVersion: "4.1"'
+            $yaml = $yaml -replace '  BootstrapMember: GraphAPI-Dummy', "  BootstrapMember: GraphAPI-Dummy`n  ScopeKind: `"Group`"`n  AssignmentScope: `"RecipientGroupScope`""
+            Set-Content $script:configPathDirect -Value $yaml -Encoding UTF8
+        }
+
+        It 'binds the role assignment directly to the scope group and creates no management scope' {
+            $res = Invoke-RBAC4AppConfig -Path $script:configPathDirect -Confirm:$false
+
+            $res.Errors              | Should -BeNullOrEmpty
+            $res.AssignmentScope     | Should -Be 'RecipientGroupScope'
+            $res.ManagementScopeName | Should -BeNullOrEmpty
+            $res.ManagementScopeCreated | Should -BeFalse
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 0
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-ManagementScope -Times 0
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter {
+                $RecipientGroupScope -eq 'Um365RAo1-Contoso' -and -not $CustomResourceScope
+            }
+        }
+
+        It 'skips an assignment already bound directly to the group without a migration warning' {
+            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
+            }
+
+            $res = Invoke-RBAC4AppConfig -Path $script:configPathDirect -Confirm:$false
+
+            ($res.Warnings -join ';') | Should -Match "scoped directly to group 'Um365RAo1-Contoso'; skipping creation"
+            ($res.Warnings -join ';') | Should -Not -Match 'Set-RBAC4AppEntry'
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+        }
+
+        It 'leaves an assignment bound to a management scope as-is' {
+            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' }
+            }
+
+            $res = Invoke-RBAC4AppConfig -Path $script:configPathDirect -Confirm:$false
+
+            ($res.Warnings -join ';') | Should -Match "not directly to group 'Um365RAo1-Contoso'; leaving it as-is"
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+        }
+
+        It 'binds each role to its own scope group when SeparateScopePerRole is set' {
+            $separateDirect = Join-Path $TestDrive 'test-config-direct-separate.yml'
+            $yaml = (Get-Content $script:configPathDirect -Raw) -replace '    - Application Mail.Send', "    - Application Mail.Send`n    - Application Calendars.Read"
+            $yaml = $yaml + "`n  SeparateScopePerRole: `"true`""
+            Set-Content $separateDirect -Value $yaml -Encoding UTF8
+
+            $res = Invoke-RBAC4AppConfig -Path $separateDirect -Confirm:$false
+
+            $res.Errors | Should -BeNullOrEmpty
+            @($res.RoleScopes).Count | Should -Be 2
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 0
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter { $RecipientGroupScope -eq 'Um365RAo1-Contoso-AppMailSend' }
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter { $RecipientGroupScope -eq 'Um365RAo1-Contoso-AppCldR' }
+        }
+
+        It 'rejects RecipientGroupScope with a non-Group scope kind' {
+            $bad = Join-Path $TestDrive 'test-config-direct-recipients.yml'
+            $yaml = (Get-Content $script:configPathDirect -Raw) -replace 'ScopeKind: "Group"', "ScopeKind: `"Recipients`"`n  ScopeRecipients:`n    - alice@contoso.com"
+            Set-Content $bad -Value $yaml -Encoding UTF8
+
+            $null = Invoke-RBAC4AppConfig -Path $bad -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+            ($err -join ';') | Should -Match 'AssignmentScope RecipientGroupScope but ScopeKind is'
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+        }
+
+        It 'rejects an unknown AssignmentScope value' {
+            $bad = Join-Path $TestDrive 'test-config-direct-bad.yml'
+            $yaml = (Get-Content $script:configPathDirect -Raw) -replace 'AssignmentScope: "RecipientGroupScope"', 'AssignmentScope: "Bogus"'
+            Set-Content $bad -Value $yaml -Encoding UTF8
+
+            $null = Invoke-RBAC4AppConfig -Path $bad -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+            ($err -join ';') | Should -Match "unsupported RbacScope.AssignmentScope 'Bogus'"
+        }
+    }
+
     It 'adds members via Add-UnifiedGroupLinks for M365Group and tracks them in MembersAdded' {
         $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 1
@@ -584,6 +666,7 @@ Describe 'Invoke-RBAC4AppConfig' {
                     ManagedBy             = @('GraphAPI-Dummy-owner')
                     BootstrapMember       = 'GraphAPI-Dummy'
                     ScopeKind             = 'Filter'
+                    AssignmentScope       = 'ManagementScope'
                     ManagementScopeName   = 'Custom-Scope'
                     ManagementScopePrefix = 'MSRAo1P'
                     ScopeRecipients       = @('alice@contoso.com', 'bob@contoso.com')
@@ -595,6 +678,7 @@ Describe 'Invoke-RBAC4AppConfig' {
             $parsed = ConvertFrom-RBAC4AppYaml -Content (ConvertTo-RBAC4AppYaml -Config $config)
             $parsed.SchemaVersion                   | Should -Be '4.0'
             $parsed.RbacScope.ScopeKind             | Should -Be 'Filter'
+            $parsed.RbacScope.AssignmentScope       | Should -Be 'ManagementScope'
             $parsed.RbacScope.ManagementScopeName   | Should -Be 'Custom-Scope'
             $parsed.RbacScope.ManagementScopePrefix | Should -Be 'MSRAo1P'
             @($parsed.RbacScope.ScopeRecipients)    | Should -Be @('alice@contoso.com', 'bob@contoso.com')
