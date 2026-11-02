@@ -17,20 +17,29 @@ place:
   3. the Exchange Online service principal pointer named exactly "{DisplayName}_SP" - by that
      deterministic name, or by AppId - exists (ExoServicePrincipalExists; distinct from #1, which
      resolves the application by whichever identity the caller supplied), and
-  4. the management scope "{ManagementScopePrefix}-{DisplayName}" (or -ManagementScopeName) exists
-     and its RecipientRestrictionFilter matches the one New-RBAC4AppEntry would build for the
-     selected -ScopeKind, and
+  4. for -AssignmentScope ManagementScope, the management scope "{ManagementScopePrefix}-{DisplayName}"
+     (or -ManagementScopeName) exists and its RecipientRestrictionFilter matches the one
+     New-RBAC4AppEntry would build for the selected -ScopeKind (not checked for RecipientGroupScope,
+     which uses no management scope), and
   5. one Exchange Online management role assignment exists per requested role, named the same way
      New-RBAC4AppEntry names them ("{ShortRoleToken}-{DisplayName}"), bound to the expected role
-     and to that management scope (-CustomResourceScope). Assignments still scoped directly to the
-     group (legacy -RecipientGroupScope) are reported in RoleAssignmentsLegacyScoped and count as
-     missing; run Set-RBAC4AppEntry to migrate them.
+     and per -AssignmentScope: directly to the scope group (RecipientGroupScope, the default for
+     -ScopeKind Group) or to that management scope (ManagementScope, -CustomResourceScope).
+     Assignments bound the other way are reported in RoleAssignmentsLegacyScoped (direct-to-group
+     while ManagementScope is expected) or RoleAssignmentsManagementScoped (management scope while
+     RecipientGroupScope is expected) and count as missing; run Set-RBAC4AppEntry with the same
+     -AssignmentScope to re-bind them.
 
 When -Members is supplied (ScopeKind Group only), the requested recipients are also verified
 against the scope group's membership. The function is read-only: it makes no changes and does not support -WhatIf.
 
 The defaults for -Role and -GroupPrefix mirror New-RBAC4AppEntry, so a plain
 "Test-RBAC4AppEntry -RegisteredAppName <app>" validates the default creation.
+
+.PARAMETER AssignmentScope
+How the role assignments are expected to be bound for -ScopeKind Group: RecipientGroupScope
+(default; directly to the scope group, no management scope) or ManagementScope. Other scope kinds
+always use ManagementScope; requesting RecipientGroupScope with them is an error.
 
 .PARAMETER RegisteredAppName
 Display name of the registered application or service principal. Default parameter set; must resolve
@@ -161,6 +170,10 @@ function Test-RBAC4AppEntry {
         [string] $ScopeKind = 'Group',
 
         [Parameter()]
+        [ValidateSet('RecipientGroupScope', 'ManagementScope')]
+        [string] $AssignmentScope = 'RecipientGroupScope',
+
+        [Parameter()]
         [ValidateLength(1, 64)]
         [string] $ManagementScopeName,
 
@@ -204,6 +217,10 @@ function Test-RBAC4AppEntry {
             throw "-ScopeFilter is required when -ScopeKind is Filter."
         }
 
+        $assignmentScopeInfo = Resolve-RBAC4AppAssignmentScope -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope -BoundParameters $PSBoundParameters
+        $AssignmentScope = $assignmentScopeInfo.AssignmentScope
+        $isDirectGroup = $AssignmentScope -eq 'RecipientGroupScope'
+
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
             $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
@@ -216,6 +233,7 @@ function Test-RBAC4AppEntry {
             SpObjectId              = $null
             TenantId                = $tenantid
             ScopeKind               = $ScopeKind
+            AssignmentScope         = $AssignmentScope
             AccessGroupType         = if ($ScopeKind -eq 'Group') { $AccessGroupType } else { $null }
             ServicePrincipalExists  = $false
             ScopeGroupName          = $null
@@ -232,6 +250,7 @@ function Test-RBAC4AppEntry {
             RoleAssignmentsFound    = @()
             RoleAssignmentsMissing  = @()
             RoleAssignmentsLegacyScoped = @()
+            RoleAssignmentsManagementScoped = @()
             MembersExpected         = @()
             MembersPresent          = @()
             MembersMissing          = @()
@@ -242,7 +261,7 @@ function Test-RBAC4AppEntry {
         }
 
         try {
-            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
+            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters) + @($assignmentScopeInfo.Warnings)) {
                 $result.Warnings += $ignoredMsg
             }
 
@@ -314,44 +333,47 @@ function Test-RBAC4AppEntry {
             }
 
             # --- Management scope existence and filter (same name/filter rules as New-RBAC4AppEntry).
+            # Skipped for RecipientGroupScope, which binds the assignments without a management scope.
             $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $sp.DisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName
-            $result.ManagementScopeName = $scopeName
-            $scopeObj = $null
-            try { $scopeObj = Get-ManagementScope -Identity $scopeName -ErrorAction Stop | Select-Object -First 1 }
-            catch { Write-Verbose -Message "Management scope '$scopeName' not found: $($_.Exception.Message)" }
+            if (-not $isDirectGroup) {
+                $result.ManagementScopeName = $scopeName
+                $scopeObj = $null
+                try { $scopeObj = Get-ManagementScope -Identity $scopeName -ErrorAction Stop | Select-Object -First 1 }
+                catch { Write-Verbose -Message "Management scope '$scopeName' not found: $($_.Exception.Message)" }
 
-            $expectedFilter = $null
-            if ($ScopeKind -ne 'Group' -or $group) {
-                $filterArgs = @{
-                    ScopeKind              = $ScopeKind
-                    GroupIdentity          = $umGroupName
-                    GroupDistinguishedName = if ($group) { [string]$group.DistinguishedName } else { $null }
-                    Recipients             = $ScopeRecipients
-                    TagAttribute           = $ScopeTagAttribute
-                    TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
-                    Filter                 = $ScopeFilter
+                $expectedFilter = $null
+                if ($ScopeKind -ne 'Group' -or $group) {
+                    $filterArgs = @{
+                        ScopeKind              = $ScopeKind
+                        GroupIdentity          = $umGroupName
+                        GroupDistinguishedName = if ($group) { [string]$group.DistinguishedName } else { $null }
+                        Recipients             = $ScopeRecipients
+                        TagAttribute           = $ScopeTagAttribute
+                        TagValue               = if ($ScopeTagValue) { $ScopeTagValue } else { $scopeName }
+                        Filter                 = $ScopeFilter
+                    }
+                    $fWarnings = @()
+                    try { $expectedFilter = ConvertTo-RBAC4AppRecipientFilter @filterArgs -WarningVariable fWarnings -WarningAction SilentlyContinue }
+                    catch { $result.Warnings += "Could not build the expected management scope filter: $($_.Exception.Message)" }
+                    foreach ($w in @($fWarnings)) { if ($w) { $result.Warnings += [string]$w.Message } }
                 }
-                $fWarnings = @()
-                try { $expectedFilter = ConvertTo-RBAC4AppRecipientFilter @filterArgs -WarningVariable fWarnings -WarningAction SilentlyContinue }
-                catch { $result.Warnings += "Could not build the expected management scope filter: $($_.Exception.Message)" }
-                foreach ($w in @($fWarnings)) { if ($w) { $result.Warnings += [string]$w.Message } }
-            }
-            $result.ManagementScopeExpectedFilter = $expectedFilter
+                $result.ManagementScopeExpectedFilter = $expectedFilter
 
-            if ($scopeObj) {
-                $result.ManagementScopeExists = $true
-                $currentFilter = [string]$scopeObj.RecipientFilter
-                if (-not $currentFilter) { $currentFilter = [string]$scopeObj.RecipientRestrictionFilter }
-                $result.ManagementScopeFilter = $currentFilter
-                if ($expectedFilter -and (Test-RBAC4AppRecipientFilterEqual -Reference $currentFilter -Difference $expectedFilter)) {
-                    $result.ManagementScopeFilterMatches = $true
+                if ($scopeObj) {
+                    $result.ManagementScopeExists = $true
+                    $currentFilter = [string]$scopeObj.RecipientFilter
+                    if (-not $currentFilter) { $currentFilter = [string]$scopeObj.RecipientRestrictionFilter }
+                    $result.ManagementScopeFilter = $currentFilter
+                    if ($expectedFilter -and (Test-RBAC4AppRecipientFilterEqual -Reference $currentFilter -Difference $expectedFilter)) {
+                        $result.ManagementScopeFilterMatches = $true
+                    }
+                    else {
+                        $result.Missing += "Management scope '$scopeName' filter (expected: $expectedFilter; current: $currentFilter)"
+                    }
                 }
                 else {
-                    $result.Missing += "Management scope '$scopeName' filter (expected: $expectedFilter; current: $currentFilter)"
+                    $result.Missing += "Management scope '$scopeName'"
                 }
-            }
-            else {
-                $result.Missing += "Management scope '$scopeName'"
             }
 
             # --- Role assignment existence, by the deterministic name New-RBAC4AppEntry builds.
@@ -372,6 +394,8 @@ function Test-RBAC4AppEntry {
                 $assignment = Get-ManagementRoleAssignment -Identity $expectedName -ErrorAction SilentlyContinue
                 $assignmentMatches = $false
                 $assignmentLegacy = $false
+                $assignmentManagementScoped = $false
+                $targetState = if ($isDirectGroup) { 'LegacyGroup' } else { 'Target' }
                 foreach ($candidate in @($assignment | Where-Object { $_ })) {
                     $assignee = [string]$candidate.RoleAssigneeName
                     $assigneeMatches = $false
@@ -381,20 +405,30 @@ function Test-RBAC4AppEntry {
 
                     if (([string]$candidate.Role -ne $roleItem) -or -not $assigneeMatches) { continue }
                     $state = (Get-RBAC4AppAssignmentScopeState -Assignment $candidate -ManagementScopeName $scopeName -LegacyGroupName $umGroupName).State
-                    if ($state -eq 'Target') {
+                    if ($state -eq $targetState) {
                         $assignmentMatches = $true
                         break
                     }
                     if ($state -eq 'LegacyGroup') { $assignmentLegacy = $true }
+                    if ($state -eq 'Target') { $assignmentManagementScoped = $true }
                 }
 
                 if ($assignmentMatches) {
                     $result.RoleAssignmentsFound += $expectedName
                 }
-                elseif ($assignmentLegacy) {
+                elseif ($assignmentLegacy -and -not $isDirectGroup) {
                     $result.RoleAssignmentsMissing += $expectedName
                     $result.RoleAssignmentsLegacyScoped += $expectedName
-                    $result.Missing += "Role assignment '$expectedName' ($roleItem) is scoped directly to group '$umGroupName' (legacy -RecipientGroupScope); run Set-RBAC4AppEntry to migrate it onto management scope '$scopeName'"
+                    $result.Missing += "Role assignment '$expectedName' ($roleItem) is scoped directly to group '$umGroupName'; run Set-RBAC4AppEntry -AssignmentScope ManagementScope to move it onto management scope '$scopeName'"
+                }
+                elseif ($assignmentManagementScoped -and $isDirectGroup) {
+                    $result.RoleAssignmentsMissing += $expectedName
+                    $result.RoleAssignmentsManagementScoped += $expectedName
+                    $result.Missing += "Role assignment '$expectedName' ($roleItem) is scoped to management scope '$scopeName'; run Set-RBAC4AppEntry to bind it directly to group '$umGroupName'"
+                }
+                elseif ($isDirectGroup) {
+                    $result.RoleAssignmentsMissing += $expectedName
+                    $result.Missing += "Role assignment '$expectedName' ($roleItem) bound directly to group '$umGroupName'"
                 }
                 else {
                     $result.RoleAssignmentsMissing += $expectedName
@@ -438,8 +472,7 @@ function Test-RBAC4AppEntry {
 
             $result.IsValid = $result.ServicePrincipalExists -and
                               (($ScopeKind -ne 'Group') -or $result.ScopeGroupExists) -and
-                              $result.ManagementScopeExists -and
-                              $result.ManagementScopeFilterMatches -and
+                              ($isDirectGroup -or ($result.ManagementScopeExists -and $result.ManagementScopeFilterMatches)) -and
                               $result.ExoServicePrincipalExists -and
                               ($result.RoleAssignmentsMissing.Count -eq 0) -and
                               ($result.MembersMissing.Count -eq 0)

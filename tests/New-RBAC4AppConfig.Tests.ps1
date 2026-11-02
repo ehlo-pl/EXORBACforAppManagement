@@ -119,7 +119,8 @@ Describe 'New-RBAC4AppConfig' {
             -OutputPath $TestDrive -Confirm:$false
 
         $content = Get-Content $outFile -Raw
-        $content | Should -Match 'AccessGroupType: "DistributionList"'
+        # DistributionList is the default and is left out.
+        $content | Should -Not -Match 'AccessGroupType'
         $content | Should -Match 'box@contoso\.com'
     }
 
@@ -155,15 +156,20 @@ Describe 'New-RBAC4AppConfig' {
         (Test-Path $outFile) | Should -BeTrue
 
         $parsed = Get-Content $outFile -Raw | ConvertFrom-Json
-        $parsed.SchemaVersion              | Should -Be '4.0'
-        $parsed.RbacScope.ScopeKind        | Should -Be 'Group'
-        $parsed.RbacScope.ManagementScopePrefix | Should -Be 'MSRAo1P'
+        $parsed.SchemaVersion              | Should -Be '4.1'
+        # Defaults (ScopeKind Group, AssignmentScope RecipientGroupScope), unused management scope
+        # naming, and the empty ChangeReference are left out.
+        $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ScopeKind'
+        $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'AssignmentScope'
+        $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ManagementScopePrefix'
+        $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'GroupPrefix'
+        $parsed.Rbac.PSObject.Properties.Name      | Should -Not -Contain 'ChangeReference'
+        $parsed.RbacScope.AccessGroupName  | Should -Be 'UDLRAo1P-Contoso'
         $parsed.TenantId                   | Should -Be 'tenant-id-123'
         $parsed.Application.AppId          | Should -Be 'app-client-id'
         $parsed.Application.SpObjectId     | Should -Be 'sp-obj-id'
         $parsed.Application.DisplayName    | Should -Be 'Contoso'
         $parsed.Rbac.Roles                 | Should -Contain 'Application Mail.Send'
-        $parsed.Rbac.ChangeReference       | Should -Be ''
         $parsed.RbacScope.Members          | Should -Contain 'shared@contoso.com'
         $parsed.RbacScope.ManagedBy        | Should -Contain 'owner1@contoso.com'
         $parsed.RbacScope.ManagedBy        | Should -Contain 'owner2@contoso.com'
@@ -204,12 +210,88 @@ Describe 'New-RBAC4AppConfig' {
             -OutputPath $TestDrive -Confirm:$false
 
         $content = Get-Content $outFile -Raw
-        $content | Should -Match 'SchemaVersion: "4.0"'
+        $content | Should -Match 'SchemaVersion: "4.1"'
         $content | Should -Match 'ScopeKind: "Recipients"'
         $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
         $parsed.RbacScope.ScopeKind           | Should -Be 'Recipients'
+        $parsed.RbacScope.AssignmentScope     | Should -Be 'ManagementScope'
         $parsed.RbacScope.ManagementScopeName | Should -Be 'Contoso-Scope'
         @($parsed.RbacScope.ScopeRecipients)  | Should -Be @('alice@contoso.com', 'bob@contoso.com')
+    }
+
+    It 'defaults to RecipientGroupScope for -ScopeKind Group and round-trips it through YAML' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Confirm:$false
+
+        $content = Get-Content $outFile -Raw
+        $content | Should -Not -Match 'AssignmentScope'
+        $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
+        $parsed.RbacScope.AssignmentScope | Should -Be 'RecipientGroupScope'
+    }
+
+    It 'writes ManagementScope when -AssignmentScope ManagementScope is requested' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AssignmentScope ManagementScope -Format Json `
+            -OutputPath $TestDrive -Confirm:$false
+
+        (Get-Content $outFile -Raw | ConvertFrom-Json).RbacScope.AssignmentScope | Should -Be 'ManagementScope'
+    }
+
+    It 'rejects -AssignmentScope RecipientGroupScope for a non-Group scope kind' {
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Recipients -ScopeRecipients 'alice@contoso.com' `
+                -AssignmentScope RecipientGroupScope -OutputPath $TestDrive -Confirm:$false } |
+            Should -Throw '*can only be used with -ScopeKind Group*'
+    }
+
+    It 'warns that management scope naming is ignored with RecipientGroupScope' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $null = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ManagementScopeName 'Contoso-Scope' `
+            -OutputPath $TestDrive -Confirm:$false -WarningVariable w -WarningAction SilentlyContinue
+        ($w -join ';') | Should -Match '-ManagementScopeName only applies to -AssignmentScope ManagementScope'
+    }
+
+    It 'writes only the entries the scope kind uses, leaving out defaults and empty values' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $groupFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Confirm:$false
+        $recipientsFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Recipients -ScopeRecipients 'alice@contoso.com' `
+            -Members 'ignored@contoso.com' -OutputPath $TestDrive -Confirm:$false -WarningAction SilentlyContinue
+
+        $group = Get-Content $groupFile -Raw
+        $group | Should -Not -Match '""'
+        $group | Should -Not -Match ':\s*$'
+        foreach ($key in 'ScopeKind', 'AssignmentScope', 'AccessGroupType', 'GroupPrefix', 'Members', 'ManagedBy', 'BootstrapMember',
+                         'ManagementScope', 'ScopeRecipients', 'ScopeTag', 'ScopeFilter', 'SeparateScopePerRole', 'ChangeReference') {
+            $group | Should -Not -Match $key
+        }
+        $group | Should -Match 'AccessGroupName: "UDLRAo1P-Contoso"'
+
+        $recipients = Get-Content $recipientsFile -Raw
+        $recipients | Should -Match 'ScopeKind: "Recipients"'
+        $recipients | Should -Match 'alice@contoso\.com'
+        foreach ($key in 'AssignmentScope', 'AccessGroup', 'GroupPrefix', 'Members', 'ManagedBy', 'BootstrapMember', 'ManagementScope', 'ScopeTag', 'ScopeFilter') {
+            $recipients | Should -Not -Match $key
+        }
+
+        # Read back, every omitted key takes its default.
+        $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $group } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
+        $parsed.RbacScope.ScopeKind             | Should -Be 'Group'
+        $parsed.RbacScope.AssignmentScope       | Should -Be 'RecipientGroupScope'
+        $parsed.RbacScope.AccessGroupType       | Should -Be 'DistributionList'
+        $parsed.RbacScope.GroupPrefix           | Should -Be 'UDLRAo1P'
+        @($parsed.RbacScope.Members)            | Should -Be @('GraphAPI-Dummy')
+        @($parsed.RbacScope.ManagedBy)          | Should -Be @('GraphAPI-Dummy-owner')
+        $parsed.RbacScope.BootstrapMember       | Should -Be 'GraphAPI-Dummy'
+        $parsed.RbacScope.ManagementScopePrefix | Should -Be 'MSRAo1P'
+        $parsed.RbacScope.ScopeTagAttribute     | Should -Be 'CustomAttribute1'
+        $parsed.RbacScope.SeparateScopePerRole  | Should -BeFalse
     }
 
     It 'requires -ScopeRecipients for -ScopeKind Recipients' {
@@ -271,7 +353,9 @@ Describe 'New-RBAC4AppConfig' {
         $mesg = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -OutputPath $mesgDir.FullName -Format Json -Confirm:$false
 
         (Get-Content -LiteralPath $named -Raw | ConvertFrom-Json).RbacScope.AccessGroupName | Should -Be 'Custom-Group'
-        (Get-Content -LiteralPath $mesg -Raw | ConvertFrom-Json).RbacScope.AccessGroupName | Should -BeNullOrEmpty
+        $mesgConfig = Get-Content -LiteralPath $mesg -Raw | ConvertFrom-Json
+        $mesgConfig.RbacScope.AccessGroupType | Should -Be 'MailEnabledSecurityGroup'
+        $mesgConfig.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'AccessGroupName'
     }
 
     It 'writes into the current directory when -OutputPath is omitted' {
@@ -293,7 +377,7 @@ Describe 'New-RBAC4AppConfig' {
         }
         $out = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Format Json -Confirm:$false
 
-        (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).TenantId | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).PSObject.Properties.Name | Should -Not -Contain 'TenantId'
     }
 
     It 'errors when AppId matches no service principal' {

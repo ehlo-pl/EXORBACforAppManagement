@@ -21,8 +21,9 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 
 - **`New-RBAC4AppEntry`** — the core function. Resolves an Entra service principal (SP), creates
   a scope source when needed (distribution list by default, or M365/mail-enabled security group),
-  ensures the EXO service principal and management scope exist, and creates EXO management role
-  assignments scoped to that management scope.
+  ensures the EXO service principal (and, for `-AssignmentScope ManagementScope`, the management scope)
+  exists, and creates EXO management role assignments bound directly to the scope group (default) or
+  to that management scope.
 - **`New-RegisteredApp`** — creates an Entra application registration via `New-MgApplication` and
   (by default) its service principal via `New-MgServicePrincipal`. Its output exposes
   `AppId`/`ServicePrincipalId` so it can pipe into `New-RBAC4AppEntry`.
@@ -73,7 +74,7 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
   `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
-  writes a config file (schema version `4.0` - `3.0` is still read as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections) in
+  writes a config file (schema version `4.1` - `4.0`/`3.0` are still read as `AssignmentScope: ManagementScope`, `3.0` as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections) in
   either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
   `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
   (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and
@@ -114,7 +115,8 @@ src/EXORBACforAppManagement/
                                  # New-RBAC4AppScopeGroup, ConvertTo-RBAC4AppYaml,
                                  # ConvertFrom-RBAC4AppYaml, ConvertTo-/ConvertFrom-RBAC4AppRecipientFilter,
                                  # Get-RBAC4AppManagementScopeName, Test-RBAC4AppRecipientFilterEqual,
-                                 # Get-RBAC4AppAssignmentScopeState, Get-RBAC4AppScopeKindWarning
+                                 # Get-RBAC4AppAssignmentScopeState, Get-RBAC4AppScopeKindWarning,
+                                 # Resolve-RBAC4AppAssignmentScope, Complete-RBAC4AppConfig
 tests/                           # Pester v5 tests (one *.Tests.ps1 per area)
 build.ps1                        # Init / Clean / Analyze / Test / Build tasks
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)
@@ -217,9 +219,10 @@ intercept them. Add new stubs the same way when a function starts calling a new 
 
 - **`New-RBAC4AppEntry` workflow:** resolve SP → ensure scope group when `-ScopeKind Group`
   (delegated to `New-RBAC4AppScopeGroup`) → add members → ensure EXO service principal (delegated to
-  `Register-EXOServicePrincipal`) → ensure the management scope (delegated to
-  `New-RBAC4AppManagementScope`) → one `New-ManagementRoleAssignment` per role bound to that scope via
-  `-CustomResourceScope`. The group steps run only for `-ScopeKind Group`. The scope group name is
+  `Register-EXOServicePrincipal`) → for `-AssignmentScope ManagementScope`, ensure the management scope
+  (delegated to `New-RBAC4AppManagementScope`) → one `New-ManagementRoleAssignment` per role bound
+  directly to the group via `-RecipientGroupScope` (default) or to the scope via `-CustomResourceScope`.
+  The group steps run only for `-ScopeKind Group`. The scope group name is
   `"{GroupPrefix}-{SP.DisplayName}"` sanitized by the private `Get-RBAC4AppScopeGroupName` (via `Format-RBAC4AppSafeName`). Output is one `[pscustomobject]` summary, also exported to
   `$env:TEMP\<name>_<timestamp>.clixml`; per-item errors are surfaced in `Errors`, not thrown. The
   summary reports the owner as `OwnerRequested`/`OwnerAdded` (read from the
@@ -227,8 +230,23 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   captures the delegated functions' warnings via `-WarningVariable` to keep the summary `Warnings`
   (e.g. the group "already exists" note).
 
-- **Management scopes (`-ScopeKind`):** role assignments are never bound to a group directly
-  (`-RecipientGroupScope` is legacy). `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry` and both config
+- **Config files are sparse:** the private `ConvertTo-RBAC4AppConfig` (every config writer goes
+  through it) writes only used, non-empty, non-default entries; `Complete-RBAC4AppConfig` (called by
+  `ConvertFrom-RBAC4AppYaml` and `Invoke-RBAC4AppConfig`) restores the full shape. Both read the
+  `$script:RBAC4AppConfigDefaults` table in `RBAC4AppDefaults.ps1` - change a default there, never
+  in only one of them. Tests asserting an omitted key use `PSObject.Properties.Name | Should -Not
+  -Contain`.
+
+- **Assignment binding (`-AssignmentScope`):** `New-`/`Set-`/`Test-RBAC4AppEntry` and
+  `New-RBAC4AppConfig` (config key `RbacScope.AssignmentScope`, read by `Invoke-RBAC4AppConfig`) take
+  `-AssignmentScope RecipientGroupScope` (default; bound directly to the scope group, no management
+  scope; `-ScopeKind Group` only) or `ManagementScope`. The private `Resolve-RBAC4AppAssignmentScope`
+  resolves the effective value (non-Group kinds force `ManagementScope`; explicitly asking for
+  `RecipientGroupScope` with them throws) and warns when management scope naming is ignored. With
+  `RecipientGroupScope`, the `LegacyGroup` state of `Get-RBAC4AppAssignmentScopeState` is the desired
+  state and `Target` is the mismatch.
+
+- **Management scopes (`-ScopeKind`):** `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry` and both config
   functions take `-ScopeKind` - `Group` (default; filter `MemberOfGroup -eq '<group DN>'`, direct
   members only), `Recipients` (`-ScopeRecipients` → `PrimarySmtpAddress -eq ...` joined by `-or`),
   `Tag` (`-ScopeTagAttribute` default `CustomAttribute1`, `-ScopeTagValue` default the scope name;
@@ -239,9 +257,10 @@ intercept them. Add new stubs the same way when a function starts calling a new 
   parses it back into a kind (used by `Get-`), `Test-RBAC4AppRecipientFilterEqual` compares filters
   loosely (case/whitespace/parentheses), and `Get-RBAC4AppAssignmentScopeState` classifies an
   existing assignment as `Target`, `LegacyGroup` (bound to a group via `RecipientWriteScope=Group`),
-  or `Other`. `New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn on `LegacyGroup` and leave it;
-  `Set-RBAC4AppEntry` re-binds it (the migration path); `Test-` reports it invalid; `Remove-` also
-  removes the management scope when no other assignment references it.
+  or `Other`. Under `-AssignmentScope ManagementScope`, `New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn on
+  `LegacyGroup` and leave it; `Set-RBAC4AppEntry` re-binds it (in either direction, per
+  `-AssignmentScope`); `Test-` reports a mismatch invalid; `Remove-` removes both kinds and the
+  management scope (if any) when no other assignment references it.
 
 - **Scope group type (`-AccessGroupType`):** `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry`,
   `New-RBAC4AppConfig`, and `Convert-ApplicationAccessPolicyToRBAC` take `-AccessGroupType`

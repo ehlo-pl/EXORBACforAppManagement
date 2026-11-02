@@ -180,7 +180,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
             [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Contoso' }
         }
 
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+        $r = New-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.RoleAssignments | Should -HaveCount 1
         ($r.Warnings -join ';') | Should -Match "already exists and is scoped to management scope 'MSRAo1P-Contoso'"
@@ -192,10 +192,10 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
             [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' }
         }
 
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+        $r = New-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.Errors | Should -BeNullOrEmpty
-        ($r.Warnings -join ';') | Should -Match 'legacy -RecipientGroupScope'
+        ($r.Warnings -join ';') | Should -Match 'scoped directly to group.*Set-RBAC4AppEntry -AssignmentScope ManagementScope'
         ($r.Warnings -join ';') | Should -Match 'Set-RBAC4AppEntry'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
     }
@@ -205,7 +205,7 @@ Describe 'New-RBAC4AppEntry -WhatIf' {
             [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'SomeOtherGroup_20d5848c-4d61-4b82-a44f-205adc37321f' }
         }
 
-        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
+        $r = New-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Role 'Mail.Send' -Confirm:$false
 
         $r.Errors | Should -BeNullOrEmpty
         ($r.Warnings -join ';') | Should -Match "scoped to 'SomeOtherGroup', not management scope 'MSRAo1P-Contoso'"
@@ -316,8 +316,40 @@ Describe 'New-RBAC4AppEntry management scope' {
         Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
     }
 
-    It 'Group (default): creates a MemberOfGroup management scope and assigns with -CustomResourceScope' {
+    It 'Group (default): assigns directly to the scope group with -RecipientGroupScope and creates no management scope' {
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        $r.Errors | Should -BeNullOrEmpty
+        $r.AssignmentScope | Should -Be 'RecipientGroupScope'
+        $r.ManagementScopeName | Should -BeNullOrEmpty
+        $r.ManagementScopeCreated | Should -BeFalse
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementScope -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1 -ParameterFilter {
+            $RecipientGroupScope -eq 'UDLRAo1P-Contoso' -and -not $CustomResourceScope
+        }
+    }
+
+    It 'Group (default): skips an assignment already bound directly to the group' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' } }
+
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        ($r.Warnings -join ';') | Should -Match "scoped directly to group 'UDLRAo1P-Contoso'; skipping creation"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'rejects -AssignmentScope RecipientGroupScope for a non-Group scope kind' {
+        { New-RBAC4AppEntry -RegisteredAppName 'Contoso' -ScopeKind Recipients -ScopeRecipients 'a@contoso.com' -AssignmentScope RecipientGroupScope -Confirm:$false } |
+            Should -Throw '*can only be used with -ScopeKind Group*'
+    }
+
+    It 'warns that -ManagementScopeName is ignored with RecipientGroupScope' {
+        $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -ManagementScopeName 'Contoso-Scope' -Role 'Mail.Send' -Confirm:$false -WarningAction SilentlyContinue
+        ($r.Warnings -join ';') | Should -Match '-ManagementScopeName only applies to -AssignmentScope ManagementScope'
+    }
+
+    It 'Group with ManagementScope: creates a MemberOfGroup management scope and assigns with -CustomResourceScope' {
+        $r = New-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
 
         $r.Errors | Should -BeNullOrEmpty
         $r.ScopeKind | Should -Be 'Group'

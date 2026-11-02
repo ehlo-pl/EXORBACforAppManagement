@@ -30,6 +30,22 @@ function Get-RBAC4AppDefaultGroupPrefix {
 
 # Version of the RBAC4App config file schema. New-RBAC4AppConfig and
 # Convert-ApplicationAccessPolicyToRBAC write it (via ConvertTo-RBAC4AppConfig);
-# Invoke-RBAC4AppConfig accepts every version listed as supported ('3.0' is read as ScopeKind Group).
-$script:RBAC4AppConfigSchemaVersion = '4.0'
-$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0')
+# Invoke-RBAC4AppConfig accepts every version listed as supported ('3.0' is read as ScopeKind Group;
+# '3.0' and '4.0' have no RbacScope.AssignmentScope and are read as ManagementScope).
+$script:RBAC4AppConfigSchemaVersion = '4.1'
+$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1')
+
+# Values a config file falls back to when a key is absent. ConvertTo-RBAC4AppConfig omits any key
+# equal to its default (or empty, or unused by the selected ScopeKind/AssignmentScope), and
+# Complete-RBAC4AppConfig fills them back in on read, so both sides must use this one table.
+# GroupPrefix defaults per AccessGroupType (Get-RBAC4AppDefaultGroupPrefix), ManagementScopePrefix to
+# $script:RBAC4AppDefaultManagementScopePrefix, and AssignmentScope per schema version (see
+# Complete-RBAC4AppConfig).
+$script:RBAC4AppConfigDefaults = @{
+    AccessGroupType   = 'DistributionList'
+    Members           = @('GraphAPI-Dummy')
+    ManagedBy         = @('GraphAPI-Dummy-owner')
+    BootstrapMember   = 'GraphAPI-Dummy'
+    ScopeKind         = 'Group'
+    ScopeTagAttribute = 'CustomAttribute1'
+}

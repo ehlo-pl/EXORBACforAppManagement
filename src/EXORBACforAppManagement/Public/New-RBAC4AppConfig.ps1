@@ -13,10 +13,14 @@ working around the MSAL/WAM assembly conflict that prevents both modules from co
 single session. Invoke-RBAC4AppConfig auto-detects the format from the file extension
 (.json vs .yml/.yaml).
 
-The config uses schema version 4.0: on top of the 3.0 group settings, RbacScope carries the
-management scope settings (ScopeKind, ManagementScopeName/ManagementScopePrefix, ScopeRecipients,
-ScopeTagAttribute, ScopeTagValue, ScopeFilter) that Invoke-RBAC4AppConfig uses to bind the role
-assignments to an Exchange Online management scope, exactly like New-RBAC4AppEntry.
+The config uses schema version 4.1: on top of the 3.0 group settings, RbacScope carries the
+scope settings (ScopeKind, AssignmentScope, ManagementScopeName/ManagementScopePrefix,
+ScopeRecipients, ScopeTagAttribute, ScopeTagValue, ScopeFilter) that Invoke-RBAC4AppConfig uses to
+bind the role assignments. By default (-ScopeKind Group, -AssignmentScope RecipientGroupScope) the
+role assignments are bound directly to the scope group (New-ManagementRoleAssignment
+-RecipientGroupScope) and no management scope is created. Use -AssignmentScope ManagementScope to
+bind them to an Exchange Online management scope over the group's members instead, like
+New-RBAC4AppEntry; the Recipients, Tag, and Filter kinds always use a management scope.
 
 .PARAMETER RegisteredAppName
 Display name of the registered application / service principal (default parameter set).
@@ -57,15 +61,23 @@ How the management scope selects recipients: Group (default; members of the scop
 Recipients (-ScopeRecipients), Tag (-ScopeTagAttribute/-ScopeTagValue), or Filter (-ScopeFilter).
 Group settings (AccessGroupType, GroupPrefix, Members, ...) only apply to the Group kind.
 
+.PARAMETER AssignmentScope
+How the role assignments are bound for -ScopeKind Group: RecipientGroupScope (default; directly to
+the scope group, no management scope) or ManagementScope (a management scope whose filter selects
+the group's members). Other scope kinds always use ManagementScope; requesting RecipientGroupScope
+with them is an error.
+
 .PARAMETER SeparateScopePerRole
 Create a separate scope group and management scope for each configured role/permission. Applies
 only to -ScopeKind Group.
 
 .PARAMETER ManagementScopeName
-Explicit management scope name. Cannot be combined with -ManagementScopePrefix.
+Explicit management scope name. Cannot be combined with -ManagementScopePrefix. Ignored with
+-AssignmentScope RecipientGroupScope.
 
 .PARAMETER ManagementScopePrefix
 Prefix of the generated management scope name ("{Prefix}-{DisplayName}"). Default 'MSRAo1P'.
+Ignored with -AssignmentScope RecipientGroupScope.
 
 .PARAMETER ScopeRecipients
 Mailboxes/UPNs/SMTP addresses for -ScopeKind Recipients.
@@ -97,6 +109,12 @@ Invoke-RBAC4AppConfig -Path $yml
 .EXAMPLE
 $json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' -Format Json
 Invoke-RBAC4AppConfig -Path $json
+
+.EXAMPLE
+New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' -AssignmentScope ManagementScope
+
+Binds the role assignments to a management scope over the scope group's members instead of
+directly to the group.
 
 .EXAMPLE
 New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -ScopeKind Recipients -ScopeRecipients 'alice@contoso.com','bob@contoso.com'
@@ -153,6 +171,10 @@ function New-RBAC4AppConfig {
         [string] $ScopeKind = 'Group',
 
         [Parameter()]
+        [ValidateSet('RecipientGroupScope', 'ManagementScope')]
+        [string] $AssignmentScope = 'RecipientGroupScope',
+
+        [Parameter()]
         [ValidateLength(1, 64)]
         [string] $ManagementScopeName,
 
@@ -206,6 +228,11 @@ function New-RBAC4AppConfig {
         }
         if ($SeparateScopePerRole -and $ScopeKind -ne 'Group') {
             throw '-SeparateScopePerRole can only be used with -ScopeKind Group.'
+        }
+        $assignmentScopeInfo = Resolve-RBAC4AppAssignmentScope -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope -BoundParameters $PSBoundParameters
+        $AssignmentScope = $assignmentScopeInfo.AssignmentScope
+        foreach ($ignoredMsg in @($assignmentScopeInfo.Warnings)) {
+            Write-Warning -Message $ignoredMsg
         }
         foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
             Write-Warning -Message $ignoredMsg
@@ -275,7 +302,7 @@ function New-RBAC4AppConfig {
             -ChangeReference $(if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }) `
             -AccessGroupType $AccessGroupType -GroupPrefix $GroupPrefix -AccessGroupName $accessGroupNameValue `
             -Members $Members -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember `
-            -ScopeKind $ScopeKind `
+            -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope `
             -ManagementScopeName $(if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }) `
             -ManagementScopePrefix $ManagementScopePrefix `
             -ScopeRecipients $ScopeRecipients -ScopeTagAttribute $ScopeTagAttribute `

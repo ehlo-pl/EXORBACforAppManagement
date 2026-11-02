@@ -6,11 +6,14 @@ Provisions Exchange Online RBAC from a YAML or JSON config file written by New-R
 Invoke-RBAC4AppConfig is the ExchangeOnlineManagement half of the two-session workflow.
 It reads a config file produced by New-RBAC4AppConfig (which runs in a Microsoft Graph
 session) and provisions every Exchange Online resource - scope group creation and member addition
-(ScopeKind Group), EXO service principal registration, the management scope, and management role
-assignments bound to that scope (-CustomResourceScope) - without calling any Microsoft Graph
-cmdlets.
+(ScopeKind Group), EXO service principal registration, and management role assignments - without
+calling any Microsoft Graph cmdlets. RbacScope.AssignmentScope selects how the assignments are
+bound: RecipientGroupScope binds them directly to the scope group (-RecipientGroupScope, no
+management scope; ScopeKind Group only), ManagementScope creates the management scope and binds
+them to it (-CustomResourceScope).
 
-Schema versions 4.0 (current) and 3.0 are accepted. A 3.0 config has no management scope
+Schema versions 4.1 (current), 4.0, and 3.0 are accepted. 4.0 and 3.0 configs have no
+AssignmentScope and are treated as ManagementScope. A 3.0 config also has no management scope
 settings, so it is treated as ScopeKind Group with the default 'MSRAo1P' scope prefix: the role
 assignments are bound to a management scope over the scope group's members.
 
@@ -25,8 +28,9 @@ loaded in the same process.
 
 Every creation step is idempotent, matching New-RBAC4AppEntry: the scope group, the EXO service
 principal, the management scope, and each role assignment are only created if a matching one does
-not already exist - a role assignment that already exists and is bound to the management scope is
-left alone (a warning notes it was skipped), an existing management scope whose filter differs is
+not already exist - a role assignment that already exists and is bound to the configured scope
+(the management scope, or the scope group for RecipientGroupScope) is left alone (a warning notes
+it was skipped), an existing management scope whose filter differs is
 left unchanged (warned; use Set-RBAC4AppEntry to reconcile), and requested members are still added
 to the group regardless.
 
@@ -125,8 +129,12 @@ function Invoke-RBAC4AppConfig {
             return
         }
 
+        # Keys left out of the file (ConvertTo-RBAC4AppConfig omits unused/default entries) take
+        # their defaults; YAML input already went through this in ConvertFrom-RBAC4AppYaml.
+        $config = Complete-RBAC4AppConfig -Config $config
+
         if ([string]$config.SchemaVersion -notin $script:RBAC4AppConfigSupportedSchemaVersions) {
-            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)' (or '3.0', treated as ScopeKind Group). Re-generate the config with New-RBAC4AppConfig."
+            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)' (or '4.0'/'3.0', treated as AssignmentScope ManagementScope). Re-generate the config with New-RBAC4AppConfig."
             return
         }
         if (-not $config.Application.SpObjectId) {
@@ -157,15 +165,15 @@ function Invoke-RBAC4AppConfig {
         $separateScopePerRole = ([string]$config.RbacScope.SeparateScopePerRole -eq 'true')
 
         # --- Management scope settings (schema 4.0; absent from 3.0 -> Group kind, default prefix)
-        $ScopeKind = if ([string]$config.RbacScope.ScopeKind) { [string]$config.RbacScope.ScopeKind } else { 'Group' }
+        $ScopeKind = [string]$config.RbacScope.ScopeKind
         if ($ScopeKind -notin @('Group', 'Recipients', 'Tag', 'Filter')) {
             Write-Error "Config '$Path' has unsupported RbacScope.ScopeKind '$ScopeKind' (expected Group, Recipients, Tag, or Filter)."
             return
         }
         $ManagementScopeName   = [string]$config.RbacScope.ManagementScopeName
-        $ManagementScopePrefix = if ([string]$config.RbacScope.ManagementScopePrefix) { [string]$config.RbacScope.ManagementScopePrefix } else { $script:RBAC4AppDefaultManagementScopePrefix }
+        $ManagementScopePrefix = [string]$config.RbacScope.ManagementScopePrefix
         $ScopeRecipients       = @($config.RbacScope.ScopeRecipients | Where-Object { $_ })
-        $ScopeTagAttribute     = if ([string]$config.RbacScope.ScopeTagAttribute) { [string]$config.RbacScope.ScopeTagAttribute } else { 'CustomAttribute1' }
+        $ScopeTagAttribute     = [string]$config.RbacScope.ScopeTagAttribute
         $ScopeTagValue         = [string]$config.RbacScope.ScopeTagValue
         $ScopeFilter           = [string]$config.RbacScope.ScopeFilter
         if ($ScopeKind -eq 'Recipients' -and $ScopeRecipients.Count -eq 0) {
@@ -181,6 +189,18 @@ function Invoke-RBAC4AppConfig {
             Write-Error "Config '$Path' has SeparateScopePerRole enabled but ScopeKind is '$ScopeKind'; this option requires ScopeKind Group."
             return
         }
+        # --- Assignment binding (absent -> RecipientGroupScope for a 4.1 Group config, else
+        # ManagementScope; resolved by Complete-RBAC4AppConfig)
+        $AssignmentScope = [string]$config.RbacScope.AssignmentScope
+        if ($AssignmentScope -notin @('ManagementScope', 'RecipientGroupScope')) {
+            Write-Error "Config '$Path' has unsupported RbacScope.AssignmentScope '$AssignmentScope' (expected ManagementScope or RecipientGroupScope)."
+            return
+        }
+        if ($AssignmentScope -eq 'RecipientGroupScope' -and -not $isGroupKind) {
+            Write-Error "Config '$Path' has AssignmentScope RecipientGroupScope but ScopeKind is '$ScopeKind'; this option requires ScopeKind Group."
+            return
+        }
+        $isDirectGroup = $AssignmentScope -eq 'RecipientGroupScope'
         $rolesNormalized = @(foreach ($r in $roles) { ConvertTo-RBAC4AppRoleName -Role $r })
 
         $result = [ordered]@{
@@ -191,6 +211,7 @@ function Invoke-RBAC4AppConfig {
             SpObjectId          = $spId
             TenantId            = $config.TenantId
             ScopeKind           = $ScopeKind
+            AssignmentScope     = $AssignmentScope
             ManagementScopeName    = $null
             ManagementScopeFilter  = $null
             ManagementScopeCreated = $false
@@ -321,9 +342,26 @@ function Invoke-RBAC4AppConfig {
                     $result.MembersFinal = @($result.MembersFinal + $existingMemberIdentities + $result.MembersAdded | Select-Object -Unique)
                 }
 
-                # --- Ensure the management scope the role assignments are bound to.
+                # --- Ensure the management scope the role assignments are bound to. Direct group
+                # binding still derives the name (to recognise an assignment already bound to it)
+                # but creates no scope.
                 $scopeSuffix = if ($roleSuffix) { "-$roleSuffix" } else { '' }
                 $scopeName = Get-RBAC4AppManagementScopeName -DisplayName $spDisplayName -Prefix $ManagementScopePrefix -Name $ManagementScopeName -Suffix $scopeSuffix
+                $scopeContexts += [pscustomobject]@{
+                    Role      = $scopeRole
+                    GroupName = $umGroupName
+                    ScopeName = $scopeName
+                }
+                if ($isDirectGroup) {
+                    if ($separateScopePerRole) {
+                        $result.RoleScopes += [pscustomobject]@{
+                            Role                = $scopeRole
+                            ScopeGroupName      = $umGroupName
+                            ManagementScopeName = $null
+                        }
+                    }
+                    continue
+                }
                 $result.ManagementScopeNames += $scopeName
                 if (-not $result.ManagementScopeName) { $result.ManagementScopeName = $scopeName }
                 $groupDn = if ($ugResult -and $ugResult.Group) { [string]$ugResult.Group.DistinguishedName } else { $null }
@@ -342,11 +380,6 @@ function Invoke-RBAC4AppConfig {
                 foreach ($w in $msWarnings) { $result.Warnings += [string]$w.Message }
                 if (-not $result.ManagementScopeFilter) { $result.ManagementScopeFilter = $scopeResult.RecipientRestrictionFilter }
                 $result.ManagementScopeCreated = [bool]($result.ManagementScopeCreated -or $scopeResult.Created)
-                $scopeContexts += [pscustomobject]@{
-                    Role      = $scopeRole
-                    GroupName = $umGroupName
-                    ScopeName = $scopeName
-                }
                 if ($separateScopePerRole) {
                     $result.RoleScopes += [pscustomobject]@{
                         Role               = $scopeRole
@@ -388,15 +421,25 @@ function Invoke-RBAC4AppConfig {
                         continue
                     }
                     $scopeState = Get-RBAC4AppAssignmentScopeState -Assignment $existingAssignment -ManagementScopeName $scopeName -LegacyGroupName $umGroupName
-                    switch ($scopeState.State) {
-                        'Target' {
-                            $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to management scope '$scopeName'; skipping creation."
+                    if ($isDirectGroup) {
+                        $existsMsg = if ($scopeState.State -eq 'LegacyGroup') {
+                            "Role assignment '$rbacNameBase' already exists and is scoped directly to group '$umGroupName'; skipping creation."
                         }
-                        'LegacyGroup' {
-                            $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped directly to group '$umGroupName' (legacy -RecipientGroupScope); leaving it as-is. Run Set-RBAC4AppEntry to migrate it to management scope '$scopeName'."
+                        else {
+                            "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not directly to group '$umGroupName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
                         }
-                        default {
-                            $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not management scope '$scopeName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                    }
+                    else {
+                        switch ($scopeState.State) {
+                            'Target' {
+                                $existsMsg = "Role assignment '$rbacNameBase' already exists and is scoped to management scope '$scopeName'; skipping creation."
+                            }
+                            'LegacyGroup' {
+                                $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped directly to group '$umGroupName'; leaving it as-is. Run Set-RBAC4AppEntry -AssignmentScope ManagementScope to move it to management scope '$scopeName'."
+                            }
+                            default {
+                                $existsMsg = "Role assignment '$rbacNameBase' already exists but is scoped to '$($scopeState.CurrentScope)', not management scope '$scopeName'; leaving it as-is. Use Set-RBAC4AppEntry to re-scope it."
+                            }
                         }
                     }
                     $result.Warnings += $existsMsg
@@ -405,7 +448,18 @@ function Invoke-RBAC4AppConfig {
                     continue
                 }
 
-                if ($PSCmdlet.ShouldProcess('RBAC role assignment', "Assign '$roleItem' to App '$spDisplayName' scoped to management scope '$scopeName'")) {
+                if ($isDirectGroup) {
+                    if ($PSCmdlet.ShouldProcess('RBAC role assignment', "Assign '$roleItem' to App '$spDisplayName' scoped directly to group '$umGroupName'")) {
+                        $assignment = New-ManagementRoleAssignment `
+                            -App $spId `
+                            -Role $roleItem `
+                            -RecipientGroupScope $umGroupName `
+                            -Name $rbacNameBase `
+                            -ErrorAction Stop
+                        $result.RoleAssignments += $assignment
+                    }
+                }
+                elseif ($PSCmdlet.ShouldProcess('RBAC role assignment', "Assign '$roleItem' to App '$spDisplayName' scoped to management scope '$scopeName'")) {
                     $assignment = New-ManagementRoleAssignment `
                         -App $spId `
                         -Role $roleItem `

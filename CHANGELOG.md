@@ -24,6 +24,31 @@ All notable changes to this project are documented here. The format is based on
   `rbac4app-<name>-<yyyyMMddHHmmss>-<8 hex>.<ext>`. Globs such as `rbac4app-<name>-*.yml` still match.
 
 ### Changed
+- **Breaking:** `New-RBAC4AppConfig` now defaults to binding role assignments directly to the scope group
+  (`-AssignmentScope RecipientGroupScope`, i.e. `New-ManagementRoleAssignment -RecipientGroupScope`) instead
+  of creating a management scope over the group's members; pass `-AssignmentScope ManagementScope` for the
+  previous behaviour. Only `-ScopeKind Group` supports direct binding; the other kinds keep using a management
+  scope. The config schema is now `4.1` with a new `RbacScope.AssignmentScope` key, which
+  `Invoke-RBAC4AppConfig` honours; `4.0`/`3.0` configs (no key) are still read as `ManagementScope`.
+  `Convert-ApplicationAccessPolicyToRBAC` writes `ManagementScope`; `Get-RBAC4AppEntry -ExportConfig`
+  writes `RecipientGroupScope` for assignments bound directly to a group and `ManagementScope` otherwise.
+- Generated config files (`New-RBAC4AppConfig`, `Convert-ApplicationAccessPolicyToRBAC`,
+  `Get-RBAC4AppEntry -ExportConfig`, YAML and JSON) now contain only the entries that are actually used:
+  keys the selected `ScopeKind`/`AssignmentScope` ignores, empty values, and defaults are left out. A
+  missing key now always means its default (shared table in `Private/RBAC4AppDefaults.ps1`, filled in on
+  read by the new private `Complete-RBAC4AppConfig`), including for JSON, where missing keys used to read
+  as empty. In a schema `4.1` Group config a missing `AssignmentScope` means `RecipientGroupScope`. The
+  YAML reader's default `AccessGroupType` for a missing key changed from `M365Group` to `DistributionList`,
+  matching the writers.
+- **Breaking:** `New-RBAC4AppEntry`, `Set-RBAC4AppEntry`, and `Test-RBAC4AppEntry` take the same
+  `-AssignmentScope` parameter with the same `RecipientGroupScope` default (shared private
+  `Resolve-RBAC4AppAssignmentScope`). `New-` binds directly to the group and creates no management scope;
+  `Set-` now re-binds management-scoped assignments directly to the group (the old management scope is left
+  in place) unless `-AssignmentScope ManagementScope` is passed, and moves direct-bound assignments to the new
+  group on `-NewGroupName`/`-NewGroupPrefix`; `Test-` skips the management scope check and reports
+  management-scoped assignments in the new `RoleAssignmentsManagementScoped` as not valid. Pass
+  `-AssignmentScope ManagementScope` to keep the 0.7–0.8 management-scope behaviour. `Remove-RBAC4AppEntry`
+  already handled both bindings and is unchanged apart from its help text.
 - `Test-RBAC4AppEntry` and `Remove-RBAC4AppEntry` now throw for invalid parameter combinations
   (`-ManagementScopeName` with `-ManagementScopePrefix`, missing `-ScopeRecipients`/`-ScopeFilter`) like
   `New-`/`Set-RBAC4AppEntry`, instead of returning the message in `Errors`. The error-handling convention
