@@ -33,6 +33,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module ActiveDirectory -ErrorAction Stop
 
+Write-Verbose 'Starting initial data collection.'
+
 $destination = Get-ADGroup -Identity $DestinationGroup `
     -Properties GroupScope, GroupCategory, ObjectGUID, SID `
     -ErrorAction Stop
@@ -84,12 +86,17 @@ $toRemove = @(
         Sort-Object SamAccountName, DistinguishedName
 )
 
+Write-Verbose "Finished initial data collection. Planned additions: $($toAdd.Count); planned removals: $($toRemove.Count)."
+
 $added = @()
 $removed = @()
-foreach ($member in $toAdd) {
-    if ($PSCmdlet.ShouldProcess(
-        $destination.Name,
-        "Add user '$($member.SamAccountName)'"
+for ($index = 0; $index -lt $toAdd.Count; $index++) {
+        $member = $toAdd[$index]
+        Write-Verbose "Adding user $($index + 1) of $($toAdd.Count): '$($member.SamAccountName)'."
+
+        if ($PSCmdlet.ShouldProcess(
+            $destination.Name,
+            "Add user '$($member.SamAccountName)'"
     )) {
         Add-ADGroupMember -Identity $destination.DistinguishedName `
             -Members $member.DistinguishedName -Confirm:$false -ErrorAction Stop
@@ -97,7 +104,10 @@ foreach ($member in $toAdd) {
     }
 }
 
-foreach ($member in $toRemove) {
+for ($index = 0; $index -lt $toRemove.Count; $index++) {
+    $member = $toRemove[$index]
+    Write-Verbose "Removing user $($index + 1) of $($toRemove.Count): '$($member.SamAccountName)'."
+
     if ($PSCmdlet.ShouldProcess(
         $destination.Name,
         "Remove user '$($member.SamAccountName)'"
