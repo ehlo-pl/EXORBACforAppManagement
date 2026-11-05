@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format is based on
   now exports no aliases.
 
 ### Added
+- `New-RBAC4AppConfig -Repository <folder>` builds a new config on top of a manually created state file
+  named `{AppId}.yaml`, `.yml` or `.json`: settings not given on the command line come from that file,
+  then from the defaults. The state file is never modified.
 - `New-RBAC4AppConfig` can record descriptive application details in a new optional `Metadata` config
   section: `-OwnerUsername`/`-OwnerDisplayName`, `-TechnicalContactUsername`/`-TechnicalContactDisplayName`,
   `-PCode`, `-CmdbId`, `-Description`, `-NetworkAccessIPRange`, and `-NetworkAccessLocation` (validated

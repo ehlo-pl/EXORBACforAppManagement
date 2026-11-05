@@ -232,6 +232,25 @@ Metadata:
   NetworkAccessLocation: "HeadOffice"
 ```
 
+### State repository
+
+`New-RBAC4AppConfig -Repository <folder>` builds on a state file you created by hand in that folder,
+named `{AppId}.yaml`, `{AppId}.yml` or `{AppId}.json` and using the schema above. Any key can be left
+out. Each setting comes from the command line first, then the state file, then the module defaults, so
+this keeps the file's values and changes only the PCode:
+
+```powershell
+New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' -Repository 'C:\RBAC4AppState' -PCode 'P12345'
+```
+
+- The application's identity always comes from Graph. If the file has an `Application.AppId`, it must
+  match the application.
+- The state file is never modified. The new config is written to `-OutputPath` as usual.
+- With no matching file, a warning is written and the config is built from the command line and defaults.
+- Changing `-ScopeKind` ignores the file's `AssignmentScope` and `SeparateScopePerRole`. Changing
+  `-AccessGroupType` ignores its `AccessGroupName` and `GroupPrefix`, which belong to the old type.
+- Values from the file are validated like command-line values.
+
 `SchemaVersion` must be `"4.2"`, `"4.1"`, `"4.0"`, or `"3.0"`. `"4.1"` files have no `Metadata`
 section. `"4.0"` and `"3.0"` files have no
 `AssignmentScope` and are treated as `ManagementScope`. A `"3.0"` file (no scope keys) is treated as

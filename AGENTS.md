@@ -244,6 +244,12 @@ main `BeforeEach` fixture.
   in only one of them. Tests asserting an omitted key use `PSObject.Properties.Name | Should -Not
   -Contain`.
 
+- **State repository:** `New-RBAC4AppConfig -Repository <folder>` reads a manually created
+  `{AppId}.yaml`/`.yml`/`.json` via the private `Get-RBAC4AppRepositoryState` and fills every parameter
+  not bound on the command line from it (command line, then state file, then defaults). It runs after SP
+  resolution, so with `-Repository` the settings validation also runs after the Graph call. The file is
+  never written.
+
 - **Assignment binding (`-AssignmentScope`):** `New-`/`Set-`/`Test-RBAC4AppEntry` and
   `New-RBAC4AppConfig` (config key `RbacScope.AssignmentScope`, read by `Invoke-RBAC4AppConfig`) take
   `-AssignmentScope RecipientGroupScope` (default; bound directly to the scope group, no management

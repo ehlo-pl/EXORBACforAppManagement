@@ -126,6 +126,14 @@ Independent of -NetworkAccessLocation.
 Name of the location the application connects from; must be listed in the module's locations.txt
 (matched case-insensitively, stored with the file's casing). Independent of -NetworkAccessIPRange.
 
+.PARAMETER Repository
+Folder of manually created state files named {AppId}.yaml, {AppId}.yml or {AppId}.json. The file
+matching the resolved application supplies every setting not given on the command line (command line,
+then state file, then module defaults). The state file is never modified; the new config goes to
+-OutputPath. Without a matching file a warning is written and the config is built as usual. Changing
+-ScopeKind ignores the state file's AssignmentScope and SeparateScopePerRole; changing -AccessGroupType
+ignores its AccessGroupName and GroupPrefix.
+
 .PARAMETER OutputPath
 Directory to write the config file into. Defaults to the current working directory.
 
@@ -154,6 +162,12 @@ New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -ScopeKind Recipients -
 New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -OwnerUsername 'jdoe' -OwnerDisplayName 'Jan Doe' -PCode 'P12345' -CmdbId '11111111-2222-3333-4444-555555555555' -Description 'Runbook: https://wiki.contoso.com/mailapp' -NetworkAccessIPRange '10.0.0.0/24'
 
 Records descriptive application metadata in the config's Metadata section.
+
+.EXAMPLE
+New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' -Repository 'C:\RBAC4AppState' -PCode 'P12345'
+
+Builds a new config from C:\RBAC4AppState\11111111-2222-3333-4444-555555555555.yaml, overriding only
+the PCode.
 
 .OUTPUTS
 System.String — the full path of the written config file (.yml or .json, depending on -Format).
@@ -280,6 +294,10 @@ function New-RBAC4AppConfig {
         [string] $NetworkAccessLocation,
 
         [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $Repository,
+
+        [Parameter()]
         [string] $OutputPath,
 
         [Parameter()]
@@ -294,36 +312,46 @@ function New-RBAC4AppConfig {
         if ($PSBoundParameters.ContainsKey('ManagementScopeName') -and $PSBoundParameters.ContainsKey('ManagementScopePrefix')) {
             throw 'Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together.'
         }
-        if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
-            throw '-ScopeRecipients is required when -ScopeKind is Recipients.'
-        }
-        if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
-            throw '-ScopeFilter is required when -ScopeKind is Filter.'
-        }
-        if ($SeparateScopePerRole -and $ScopeKind -ne 'Group') {
-            throw '-SeparateScopePerRole can only be used with -ScopeKind Group.'
-        }
-        if ($PCode) { $PCode = $PCode.ToUpperInvariant() }
-        if ($NetworkAccessLocation) {
-            $validLocations = Get-RBAC4AppLocationList
-            $matchedLocation = $validLocations | Where-Object { $_ -ieq $NetworkAccessLocation } | Select-Object -First 1
-            if (-not $matchedLocation) {
-                throw "Invalid -NetworkAccessLocation '$NetworkAccessLocation'. Valid locations: $($validLocations -join ', ')"
-            }
-            $NetworkAccessLocation = $matchedLocation
-        }
-        $assignmentScopeInfo = Resolve-RBAC4AppAssignmentScope -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope -BoundParameters $PSBoundParameters
-        $AssignmentScope = $assignmentScopeInfo.AssignmentScope
-        foreach ($ignoredMsg in @($assignmentScopeInfo.Warnings)) {
-            Write-Warning -Message $ignoredMsg
-        }
-        foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $PSBoundParameters)) {
-            Write-Warning -Message $ignoredMsg
+        if ($Repository -and -not (Test-Path -LiteralPath $Repository -PathType Container)) {
+            throw "-Repository folder '$Repository' does not exist."
         }
 
-        if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
-            $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
+        # Dot-sourced so its normalized values stay in this scope. With -Repository it has to wait for
+        # the state file, whose name depends on the resolved application.
+        $boundParameters = $PSBoundParameters
+        $validateSettings = {
+            if ($ScopeKind -eq 'Recipients' -and -not $ScopeRecipients) {
+                throw '-ScopeRecipients is required when -ScopeKind is Recipients.'
+            }
+            if ($ScopeKind -eq 'Filter' -and -not $ScopeFilter) {
+                throw '-ScopeFilter is required when -ScopeKind is Filter.'
+            }
+            if ($SeparateScopePerRole -and $ScopeKind -ne 'Group') {
+                throw '-SeparateScopePerRole can only be used with -ScopeKind Group.'
+            }
+            if ($PCode) { $PCode = $PCode.ToUpperInvariant() }
+            if ($NetworkAccessLocation) {
+                $validLocations = Get-RBAC4AppLocationList
+                $matchedLocation = $validLocations | Where-Object { $_ -ieq $NetworkAccessLocation } | Select-Object -First 1
+                if (-not $matchedLocation) {
+                    throw "Invalid -NetworkAccessLocation '$NetworkAccessLocation'. Valid locations: $($validLocations -join ', ')"
+                }
+                $NetworkAccessLocation = $matchedLocation
+            }
+            $assignmentScopeInfo = Resolve-RBAC4AppAssignmentScope -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope -BoundParameters $boundParameters
+            $AssignmentScope = $assignmentScopeInfo.AssignmentScope
+            foreach ($ignoredMsg in @($assignmentScopeInfo.Warnings)) {
+                Write-Warning -Message $ignoredMsg
+            }
+            foreach ($ignoredMsg in @(Get-RBAC4AppScopeKindWarning -ScopeKind $ScopeKind -BoundParameters $boundParameters)) {
+                Write-Warning -Message $ignoredMsg
+            }
+
+            if (-not $boundParameters.ContainsKey('GroupPrefix') -and -not $GroupPrefix) {
+                $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
+            }
         }
+        if (-not $Repository) { . $validateSettings }
 
         if (-not $OutputPath) { $OutputPath = (Get-Location).Path }
 
@@ -360,6 +388,70 @@ function New-RBAC4AppConfig {
             return
         }
 
+        # --- Fill settings not given on the command line from the application's state file
+        $state = $null
+        if ($Repository) {
+            try {
+                $state = Get-RBAC4AppRepositoryState -Repository $Repository -AppId ([string]$sp.AppId)
+                if ($state) {
+                    $scopeKindChanged = $PSBoundParameters.ContainsKey('ScopeKind') -and $ScopeKind -ne $state.RbacScope.ScopeKind
+                    $groupTypeChanged = $PSBoundParameters.ContainsKey('AccessGroupType') -and $AccessGroupType -ne $state.RbacScope.AccessGroupType
+                    $stateScope = $state.RbacScope
+                    $stateMetadata = $state.Metadata
+
+                    $stateValues = @{
+                        Role                        = @($state.Rbac.Roles)
+                        ChangeReference             = $state.Rbac.ChangeReference
+                        AccessGroupType             = $stateScope.AccessGroupType
+                        ManagedBy                   = @($stateScope.ManagedBy)
+                        ScopeKind                   = $stateScope.ScopeKind
+                        ScopeRecipients             = @($stateScope.ScopeRecipients)
+                        ScopeTagAttribute           = $stateScope.ScopeTagAttribute
+                        ScopeTagValue               = $stateScope.ScopeTagValue
+                        ScopeFilter                 = $stateScope.ScopeFilter
+                        OwnerUsername               = $stateMetadata.OwnerUsername
+                        OwnerDisplayName            = $stateMetadata.OwnerDisplayName
+                        TechnicalContactUsername    = $stateMetadata.TechnicalContactUsername
+                        TechnicalContactDisplayName = $stateMetadata.TechnicalContactDisplayName
+                        PCode                       = $stateMetadata.PCode
+                        CmdbId                      = $stateMetadata.CmdbId
+                        Description                 = $stateMetadata.Description
+                        NetworkAccessIPRange        = $stateMetadata.NetworkAccessIPRange
+                        NetworkAccessLocation       = $stateMetadata.NetworkAccessLocation
+                    }
+                    if (-not $scopeKindChanged) { $stateValues.AssignmentScope = $stateScope.AssignmentScope }
+                    if (-not $groupTypeChanged) {
+                        if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) { $stateValues.AccessGroupName = $stateScope.AccessGroupName }
+                        if (-not $PSBoundParameters.ContainsKey('AccessGroupName')) { $stateValues.GroupPrefix = $stateScope.GroupPrefix }
+                    }
+                    if (-not $PSBoundParameters.ContainsKey('ManagementScopePrefix')) { $stateValues.ManagementScopeName = $stateScope.ManagementScopeName }
+                    if (-not $PSBoundParameters.ContainsKey('ManagementScopeName')) { $stateValues.ManagementScopePrefix = $stateScope.ManagementScopePrefix }
+
+                    # Assigning re-runs each parameter's validation attributes, so a hand-edited bad
+                    # value fails here. Empty values are skipped: they mean "not in the state file".
+                    foreach ($name in $stateValues.Keys) {
+                        if (-not $PSBoundParameters.ContainsKey($name) -and $stateValues[$name]) {
+                            Set-Variable -Name $name -Value $stateValues[$name]
+                        }
+                    }
+                    # An empty Members list or BootstrapMember in a state file is an explicit override.
+                    if (-not $PSBoundParameters.ContainsKey('Members')) { $Members = @($stateScope.Members) }
+                    if (-not $PSBoundParameters.ContainsKey('BootstrapMember')) { $BootstrapMember = $stateScope.BootstrapMember }
+                    if (-not $PSBoundParameters.ContainsKey('SeparateScopePerRole') -and -not $scopeKindChanged -and $stateScope.SeparateScopePerRole) {
+                        $SeparateScopePerRole = [switch]$true
+                    }
+                }
+                else {
+                    Write-Warning -Message "No state file for AppId '$($sp.AppId)' in repository '$Repository'; using command line values and defaults."
+                }
+            }
+            catch {
+                Write-Error "Could not use the state file for AppId '$($sp.AppId)' in repository '$Repository': $($_.Exception.Message)"
+                return
+            }
+            . $validateSettings
+        }
+
         # --- Tenant context (informational; graceful if Graph connection lacks permissions)
         $tenantId = ''
         try { $tenantId = (Get-MgContext -ErrorAction Stop).TenantId } catch { Write-Verbose "TenantId unavailable: $($_.Exception.Message)" }
@@ -368,7 +460,7 @@ function New-RBAC4AppConfig {
         $normalizedRoles = @(foreach ($r in @($Role)) { ConvertTo-RBAC4AppRoleName -Role $r })
 
         # --- Build config object
-        $accessGroupNameValue = if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
+        $accessGroupNameValue = if ($AccessGroupName) {
             $AccessGroupName
         }
         elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
@@ -382,13 +474,13 @@ function New-RBAC4AppConfig {
             -TenantId $tenantId `
             -AppId ([string]$sp.AppId) -SpObjectId ([string]$sp.Id) -DisplayName ([string]$sp.DisplayName) `
             -Roles $normalizedRoles `
-            -ChangeReference $(if ($PSBoundParameters.ContainsKey('ChangeReference')) { $ChangeReference } else { '' }) `
+            -ChangeReference $ChangeReference `
             -AccessGroupType $AccessGroupType -GroupPrefix $GroupPrefix -AccessGroupName $accessGroupNameValue `
-            -Members $Members -MembersExplicit ([bool]$PSBoundParameters.ContainsKey('Members')) `
+            -Members $Members -MembersExplicit ($PSBoundParameters.ContainsKey('Members') -or [bool]$state) `
             -ManagedBy $ManagedBy -BootstrapMember $BootstrapMember `
-            -BootstrapMemberExplicit ([bool]$PSBoundParameters.ContainsKey('BootstrapMember')) `
+            -BootstrapMemberExplicit ($PSBoundParameters.ContainsKey('BootstrapMember') -or [bool]$state) `
             -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope `
-            -ManagementScopeName $(if ($PSBoundParameters.ContainsKey('ManagementScopeName')) { $ManagementScopeName } else { '' }) `
+            -ManagementScopeName $ManagementScopeName `
             -ManagementScopePrefix $ManagementScopePrefix `
             -ScopeRecipients $ScopeRecipients -ScopeTagAttribute $ScopeTagAttribute `
             -ScopeTagValue $(if ($ScopeTagValue) { $ScopeTagValue } else { '' }) `

@@ -537,4 +537,229 @@ Describe 'New-RBAC4AppConfig' {
             Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 0
         }
     }
+
+    Context '-Repository state files' {
+        BeforeAll {
+            $script:stateAppId = '11111111-2222-3333-4444-555555555555'
+            $script:newRepository = {
+                param([string] $FileName, [string] $Content)
+                $folder = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+                New-Item -ItemType Directory -Path $folder | Out-Null
+                if ($FileName) { Set-Content -LiteralPath (Join-Path $folder $FileName) -Value $Content -Encoding UTF8 }
+                $folder
+            }
+            $script:stateYaml = @'
+Rbac:
+  Roles:
+    - "Application Calendars.Read"
+  ChangeReference: "CHG-1"
+
+RbacScope:
+  AccessGroupType: "M365Group"
+  AccessGroupName: "Manual-Group"
+  Members:
+    - "state-member@contoso.com"
+  ManagedBy:
+    - "state-owner@contoso.com"
+
+Metadata:
+  OwnerUsername: "state-owner"
+  PCode: "P11111"
+  NetworkAccessLocation: "HeadOffice"
+'@
+        }
+
+        BeforeEach {
+            Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+                [pscustomobject]@{ Id = 'sp-id'; AppId = $script:stateAppId; DisplayName = 'Contoso' }
+            }
+            Mock -ModuleName EXORBACforAppManagement Get-RBAC4AppLocationList { @('HeadOffice', 'DataCenter') }
+            InModuleScope EXORBACforAppManagement -Parameters @{ AppId = $script:stateAppId } {
+                param($AppId)
+                $script:stateAppId = $AppId
+            }
+        }
+
+        It 'fills settings missing from the command line from {AppId}<Extension>' -TestCases @(
+            @{ Extension = '.yaml' }
+            @{ Extension = '.yml' }
+        ) {
+            param($Extension)
+            $repository = & $script:newRepository "$($script:stateAppId)$Extension" $script:stateYaml
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            $config = Get-Content $file -Raw | ConvertFrom-Json
+            @($config.Rbac.Roles) | Should -Be @('Application Calendars.Read')
+            $config.Rbac.ChangeReference | Should -Be 'CHG-1'
+            $config.RbacScope.AccessGroupType | Should -Be 'M365Group'
+            $config.RbacScope.AccessGroupName | Should -Be 'Manual-Group'
+            @($config.RbacScope.Members) | Should -Be @('state-member@contoso.com')
+            @($config.RbacScope.ManagedBy) | Should -Be @('state-owner@contoso.com')
+            $config.Metadata.OwnerUsername | Should -Be 'state-owner'
+            $config.Metadata.PCode | Should -Be 'P11111'
+            $config.Metadata.NetworkAccessLocation | Should -Be 'HeadOffice'
+        }
+
+        It 'reads a JSON state file' {
+            $json = [pscustomobject]@{ Metadata = [pscustomobject]@{ CmdbId = $script:stateAppId } } | ConvertTo-Json -Depth 4
+            $repository = & $script:newRepository "$($script:stateAppId).json" $json
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            (Get-Content $file -Raw | ConvertFrom-Json).Metadata.CmdbId | Should -Be $script:stateAppId
+        }
+
+        It 'lets the command line win and takes the rest from the state file' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $script:stateYaml
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -PCode 'P22222' -Members 'cli@contoso.com' `
+                -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            $config = Get-Content $file -Raw | ConvertFrom-Json
+            $config.Metadata.PCode | Should -Be 'P22222'
+            @($config.RbacScope.Members) | Should -Be @('cli@contoso.com')
+            $config.Metadata.OwnerUsername | Should -Be 'state-owner'
+        }
+
+        It 'always takes the application identity from Graph, not the state file' {
+            $yaml = "Application:`n  DisplayName: `"Stale name`"`n"
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $yaml
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            (Get-Content $file -Raw | ConvertFrom-Json).Application.DisplayName | Should -Be 'Contoso'
+        }
+
+        It 'does not modify the state file and writes the new config to -OutputPath' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $script:stateYaml
+            $statePath = Join-Path $repository "$($script:stateAppId).yaml"
+            $before = Get-Content $statePath -Raw
+            $output = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $output | Out-Null
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -OutputPath $output -Confirm:$false
+
+            Split-Path $file -Parent | Should -Be $output
+            Get-Content $statePath -Raw | Should -Be $before
+            @(Get-ChildItem -LiteralPath $repository).Count | Should -Be 1
+        }
+
+        It 'does not inherit the group name or prefix when -AccessGroupType changes' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $script:stateYaml
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -AccessGroupType DistributionList `
+                -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            (Get-Content $file -Raw | ConvertFrom-Json).RbacScope.AccessGroupName | Should -Be 'UDLRAo1P-Contoso'
+        }
+
+        It 'prefers -GroupPrefix over the AccessGroupName in the state file' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $script:stateYaml
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -GroupPrefix 'Custom' `
+                -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            (Get-Content $file -Raw | ConvertFrom-Json).RbacScope.AccessGroupName | Should -Be 'Custom-Contoso'
+        }
+
+        It 'does not inherit AssignmentScope or SeparateScopePerRole when -ScopeKind changes' {
+            $yaml = "RbacScope:`n  AssignmentScope: `"ManagementScope`"`n  SeparateScopePerRole: `"true`"`n"
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $yaml
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -ScopeKind Tag -ScopeTagValue 'x' `
+                -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            (Get-Content $file -Raw | ConvertFrom-Json).RbacScope.ScopeKind | Should -Be 'Tag'
+        }
+
+        It 'inherits SeparateScopePerRole unless -SeparateScopePerRole:$false is passed' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" "RbacScope:`n  SeparateScopePerRole: `"true`"`n"
+
+            $inherited = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -Format Json -OutputPath $TestDrive -Confirm:$false
+            $overridden = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -SeparateScopePerRole:$false -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            (Get-Content $inherited -Raw | ConvertFrom-Json).RbacScope.SeparateScopePerRole | Should -BeTrue
+            (Get-Content $overridden -Raw | ConvertFrom-Json).RbacScope.PSObject.Properties.Name | Should -Not -Contain 'SeparateScopePerRole'
+        }
+
+        It 'keeps an explicit empty Members list from the state file' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" "RbacScope:`n  Members: []`n"
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            $scope = (Get-Content $file -Raw | ConvertFrom-Json).RbacScope
+            $scope.PSObject.Properties.Name | Should -Contain 'Members'
+            @($scope.Members).Count | Should -Be 0
+        }
+
+        It 'takes the required values of a ScopeKind from the state file' {
+            $yaml = "RbacScope:`n  ScopeKind: `"Recipients`"`n  ScopeRecipients:`n    - `"a@contoso.com`"`n"
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $yaml
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            @((Get-Content $file -Raw | ConvertFrom-Json).RbacScope.ScopeRecipients) | Should -Be @('a@contoso.com')
+        }
+
+        It 'warns and uses command line values and defaults when the app has no state file' {
+            $repository = & $script:newRepository
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -PCode 'P33333' -Format Json `
+                -OutputPath $TestDrive -Confirm:$false -WarningVariable warned -WarningAction SilentlyContinue
+
+            ($warned -join ';') | Should -Match 'No state file for AppId'
+            (Get-Content $file -Raw | ConvertFrom-Json).Metadata.PCode | Should -Be 'P33333'
+        }
+
+        It 'throws before any Graph call when the repository folder does not exist' {
+            { New-RBAC4AppConfig -AppId $script:stateAppId -Repository (Join-Path $TestDrive 'missing') -OutputPath $TestDrive -Confirm:$false } |
+                Should -Throw '*does not exist*'
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 0
+        }
+
+        It 'throws when the merged settings miss a value the ScopeKind requires' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" "RbacScope:`n  ScopeKind: `"Recipients`"`n"
+
+            { New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -OutputPath $TestDrive -Confirm:$false } |
+                Should -Throw '*-ScopeRecipients is required*'
+        }
+
+        It 'throws when the state file names a location that is not in the list' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" "Metadata:`n  NetworkAccessLocation: `"Mars`"`n"
+
+            { New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -OutputPath $TestDrive -Confirm:$false } |
+                Should -Throw "*Invalid -NetworkAccessLocation 'Mars'*"
+        }
+
+        It 'writes an error and no config for <Name>' -TestCases @(
+            @{ Name = 'a bad PCode'; FileName = '.yaml'; Content = "Metadata:`n  PCode: `"bad`"`n"; Message = 'Could not use the state file' }
+            @{ Name = 'a bad ScopeKind'; FileName = '.yaml'; Content = "RbacScope:`n  ScopeKind: `"Everyone`"`n"; Message = 'Could not use the state file' }
+            @{ Name = 'an unsupported schema'; FileName = '.yaml'; Content = "SchemaVersion: `"1.0`"`n"; Message = "unsupported SchemaVersion '1.0'" }
+            @{ Name = 'invalid JSON'; FileName = '.json'; Content = '{ not json'; Message = 'could not be parsed' }
+            @{ Name = 'a JSON list'; FileName = '.json'; Content = '[{},{}]'; Message = 'contains a list' }
+            @{ Name = 'a different AppId in the file'; FileName = '.yaml'; Content = "Application:`n  AppId: `"99999999-2222-3333-4444-555555555555`"`n"; Message = "is for AppId '99999999" }
+        ) {
+            param($Name, $FileName, $Content, $Message)
+            $repository = & $script:newRepository "$($script:stateAppId)$FileName" $Content
+            $output = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $output | Out-Null
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -OutputPath $output -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+            $file | Should -BeNullOrEmpty
+            ($err -join ';') | Should -Match ([regex]::Escape($Message))
+            @(Get-ChildItem -LiteralPath $output).Count | Should -Be 0
+        }
+
+        It 'writes an error when an app has more than one state file' {
+            $repository = & $script:newRepository "$($script:stateAppId).yaml" $script:stateYaml
+            Set-Content -LiteralPath (Join-Path $repository "$($script:stateAppId).json") -Value '{}' -Encoding UTF8
+
+            $file = New-RBAC4AppConfig -AppId $script:stateAppId -Repository $repository -OutputPath $TestDrive -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+            $file | Should -BeNullOrEmpty
+            ($err -join ';') | Should -Match 'more than one state file'
+        }
+    }
 }
