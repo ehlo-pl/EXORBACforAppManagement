@@ -13,7 +13,9 @@ working around the MSAL/WAM assembly conflict that prevents both modules from co
 single session. Invoke-RBAC4AppConfig auto-detects the format from the file extension
 (.json vs .yml/.yaml).
 
-The config uses schema version 4.1: on top of the 3.0 group settings, RbacScope carries the
+The config uses schema version 4.2: an optional Metadata section carries descriptive application
+details (contacts, PCode, CMDB ID, description, network access) that never affect provisioning. On
+top of the 3.0 group settings, RbacScope carries the
 scope settings (ScopeKind, AssignmentScope, ManagementScopeName/ManagementScopePrefix,
 ScopeRecipients, ScopeTagAttribute, ScopeTagValue, ScopeFilter) that Invoke-RBAC4AppConfig uses to
 bind the role assignments. By default (-ScopeKind Group, -AssignmentScope RecipientGroupScope) the
@@ -95,6 +97,35 @@ Raw OPATH recipient restriction filter for -ScopeKind Filter.
 Optional change or incident reference to carry into the config file so Invoke-RBAC4AppConfig can
 persist it in the local metadata store when provisioning the scope group.
 
+.PARAMETER OwnerUsername
+Username of the application owner contact. Stored as supplied; not resolved against any directory.
+
+.PARAMETER OwnerDisplayName
+Display name of the application owner contact. Stored as supplied.
+
+.PARAMETER TechnicalContactUsername
+Username of the technical contact. Stored as supplied; not resolved against any directory.
+
+.PARAMETER TechnicalContactDisplayName
+Display name of the technical contact. Stored as supplied.
+
+.PARAMETER PCode
+Application PCode: 'P' followed by 5 digits, e.g. P12345. Stored in uppercase.
+
+.PARAMETER CmdbId
+CMDB identifier of the application (a GUID).
+
+.PARAMETER Description
+Single-line application description; may contain links. Line breaks are rejected.
+
+.PARAMETER NetworkAccessIPRange
+Network the application connects from: an IPv4 address or IPv4 CIDR range, e.g. 10.0.0.0/24.
+Independent of -NetworkAccessLocation.
+
+.PARAMETER NetworkAccessLocation
+Name of the location the application connects from; must be listed in the module's locations.txt
+(matched case-insensitively, stored with the file's casing). Independent of -NetworkAccessIPRange.
+
 .PARAMETER OutputPath
 Directory to write the config file into. Defaults to the current working directory.
 
@@ -118,6 +149,11 @@ directly to the group.
 
 .EXAMPLE
 New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -ScopeKind Recipients -ScopeRecipients 'alice@contoso.com','bob@contoso.com'
+
+.EXAMPLE
+New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -OwnerUsername 'jdoe' -OwnerDisplayName 'Jan Doe' -PCode 'P12345' -CmdbId '11111111-2222-3333-4444-555555555555' -Description 'Runbook: https://wiki.contoso.com/mailapp' -NetworkAccessIPRange '10.0.0.0/24'
+
+Records descriptive application metadata in the config's Metadata section.
 
 .OUTPUTS
 System.String — the full path of the written config file (.yml or .json, depending on -Format).
@@ -206,6 +242,44 @@ function New-RBAC4AppConfig {
         [string] $ChangeReference,
 
         [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $OwnerUsername,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $OwnerDisplayName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $TechnicalContactUsername,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $TechnicalContactDisplayName,
+
+        [Parameter()]
+        [ValidatePattern('^P[0-9]{5}$')]
+        [string] $PCode,
+
+        [Parameter()]
+        [ValidatePattern('^[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$')]
+        [string] $CmdbId,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        # Not an anchored ValidatePattern: '$' also matches before a trailing newline.
+        [ValidateScript({ $_ -notmatch '[\r\n]' })]
+        [string] $Description,
+
+        [Parameter()]
+        [ValidatePattern('^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\/(3[0-2]|[12]?\d))?$')]
+        [string] $NetworkAccessIPRange,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $NetworkAccessLocation,
+
+        [Parameter()]
         [string] $OutputPath,
 
         [Parameter()]
@@ -228,6 +302,15 @@ function New-RBAC4AppConfig {
         }
         if ($SeparateScopePerRole -and $ScopeKind -ne 'Group') {
             throw '-SeparateScopePerRole can only be used with -ScopeKind Group.'
+        }
+        if ($PCode) { $PCode = $PCode.ToUpperInvariant() }
+        if ($NetworkAccessLocation) {
+            $validLocations = Get-RBAC4AppLocationList
+            $matchedLocation = $validLocations | Where-Object { $_ -ieq $NetworkAccessLocation } | Select-Object -First 1
+            if (-not $matchedLocation) {
+                throw "Invalid -NetworkAccessLocation '$NetworkAccessLocation'. Valid locations: $($validLocations -join ', ')"
+            }
+            $NetworkAccessLocation = $matchedLocation
         }
         $assignmentScopeInfo = Resolve-RBAC4AppAssignmentScope -ScopeKind $ScopeKind -AssignmentScope $AssignmentScope -BoundParameters $PSBoundParameters
         $AssignmentScope = $assignmentScopeInfo.AssignmentScope
@@ -310,7 +393,11 @@ function New-RBAC4AppConfig {
             -ScopeRecipients $ScopeRecipients -ScopeTagAttribute $ScopeTagAttribute `
             -ScopeTagValue $(if ($ScopeTagValue) { $ScopeTagValue } else { '' }) `
             -ScopeFilter $(if ($ScopeFilter) { $ScopeFilter } else { '' }) `
-            -SeparateScopePerRole ([bool]$SeparateScopePerRole)
+            -SeparateScopePerRole ([bool]$SeparateScopePerRole) `
+            -OwnerUsername $OwnerUsername -OwnerDisplayName $OwnerDisplayName `
+            -TechnicalContactUsername $TechnicalContactUsername -TechnicalContactDisplayName $TechnicalContactDisplayName `
+            -PCode $PCode -CmdbId $CmdbId -Description $Description `
+            -NetworkAccessIPRange $NetworkAccessIPRange -NetworkAccessLocation $NetworkAccessLocation
 
         # --- Write config file (YAML or JSON, per -Format)
         $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }

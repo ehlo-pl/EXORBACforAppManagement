@@ -74,7 +74,7 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
   `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
-  writes a config file (schema version `4.1` - `4.0`/`3.0` are still read as `AssignmentScope: ManagementScope`, `3.0` as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections) in
+  writes a config file (schema version `4.2` - `4.1` is still read, `4.0`/`3.0` as `AssignmentScope: ManagementScope`, `3.0` as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections and an optional descriptive `Metadata:` section that never affects provisioning) in
   either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
   `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
   (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and
@@ -100,6 +100,7 @@ Together the first three form a create → assign → read flow:
 src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 16 public)
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
+  locations.txt                  # valid Metadata.NetworkAccessLocation names (read by Get-RBAC4AppLocationList)
   Public/                        # New-RBAC4AppEntry, New-RegisteredApp, Get-RBAC4AppEntry,
                                  # New-RBAC4AppUnifiedGroup,
                                  # New-RBAC4AppDistributionGroup, Register-EXOServicePrincipal,

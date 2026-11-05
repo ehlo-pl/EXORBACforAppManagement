@@ -48,7 +48,17 @@ function ConvertTo-RBAC4AppConfig {
         [string] $ScopeTagAttribute = 'CustomAttribute1',
         [string] $ScopeTagValue = '',
         [string] $ScopeFilter = '',
-        [bool] $SeparateScopePerRole = $false
+        [bool] $SeparateScopePerRole = $false,
+
+        [string] $OwnerUsername = '',
+        [string] $OwnerDisplayName = '',
+        [string] $TechnicalContactUsername = '',
+        [string] $TechnicalContactDisplayName = '',
+        [string] $PCode = '',
+        [string] $CmdbId = '',
+        [string] $Description = '',
+        [string] $NetworkAccessIPRange = '',
+        [string] $NetworkAccessLocation = ''
     )
 
     $defaults = $script:RBAC4AppConfigDefaults
@@ -118,6 +128,18 @@ function ConvertTo-RBAC4AppConfig {
     }
 
     if ($scope.Count -gt 0) { $config.RbacScope = [pscustomobject]$scope }
+
+    $metadata = [ordered]@{}
+    if ($OwnerUsername) { $metadata.OwnerUsername = $OwnerUsername }
+    if ($OwnerDisplayName) { $metadata.OwnerDisplayName = $OwnerDisplayName }
+    if ($TechnicalContactUsername) { $metadata.TechnicalContactUsername = $TechnicalContactUsername }
+    if ($TechnicalContactDisplayName) { $metadata.TechnicalContactDisplayName = $TechnicalContactDisplayName }
+    if ($PCode) { $metadata.PCode = $PCode }
+    if ($CmdbId) { $metadata.CmdbId = $CmdbId }
+    if ($Description) { $metadata.Description = $Description }
+    if ($NetworkAccessIPRange) { $metadata.NetworkAccessIPRange = $NetworkAccessIPRange }
+    if ($NetworkAccessLocation) { $metadata.NetworkAccessLocation = $NetworkAccessLocation }
+    if ($metadata.Count -gt 0) { $config.Metadata = [pscustomobject]$metadata }
 
     [pscustomobject]$config
 }

@@ -68,7 +68,7 @@
     foreach ($key in @('SchemaVersion', 'GeneratedAt', 'TenantId')) {
         if ($Config.PSObject.Properties[$key]) { Add-RBAC4AppYamlProperty -Indent '' -Name $key -Value $Config.$key }
     }
-    foreach ($section in @('Application', 'Rbac', 'RbacScope')) {
+    foreach ($section in @('Application', 'Rbac', 'RbacScope', 'Metadata')) {
         $sectionValue = if ($Config.PSObject.Properties[$section]) { $Config.$section } else { $null }
         if ($null -eq $sectionValue) { continue }
         $sectionStart = $lines.Count

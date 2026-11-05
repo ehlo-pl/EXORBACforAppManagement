@@ -12,7 +12,10 @@ bound: RecipientGroupScope binds them directly to the scope group (-RecipientGro
 management scope; ScopeKind Group only), ManagementScope creates the management scope and binds
 them to it (-CustomResourceScope).
 
-Schema versions 4.1 (current), 4.0, and 3.0 are accepted. 4.0 and 3.0 configs have no
+The optional Metadata section (contacts, PCode, CMDB ID, description, network access) is validated
+and returned in the result's Metadata property; it never affects provisioning.
+
+Schema versions 4.2 (current), 4.1, 4.0, and 3.0 are accepted. 4.0 and 3.0 configs have no
 AssignmentScope and are treated as ManagementScope. A 3.0 config also has no management scope
 settings, so it is treated as ScopeKind Group with the default 'MSRAo1P' scope prefix: the role
 assignments are bound to a management scope over the scope group's members.
@@ -134,7 +137,7 @@ function Invoke-RBAC4AppConfig {
         $config = Complete-RBAC4AppConfig -Config $config
 
         if ([string]$config.SchemaVersion -notin $script:RBAC4AppConfigSupportedSchemaVersions) {
-            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)' (or '4.0'/'3.0', treated as AssignmentScope ManagementScope). Re-generate the config with New-RBAC4AppConfig."
+            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)' (or '4.1', or '4.0'/'3.0', treated as AssignmentScope ManagementScope). Re-generate the config with New-RBAC4AppConfig."
             return
         }
         if (-not $config.Application.SpObjectId) {
@@ -203,6 +206,41 @@ function Invoke-RBAC4AppConfig {
         $isDirectGroup = $AssignmentScope -eq 'RecipientGroupScope'
         $rolesNormalized = @(foreach ($r in $roles) { ConvertTo-RBAC4AppRoleName -Role $r })
 
+        # --- Descriptive metadata: re-checked because the file may have been edited by hand
+        $appMetadata = $config.Metadata
+        if ($appMetadata.Description -match '[\r\n]') {
+            Write-Error "Config '$Path' has a Metadata.Description containing a line break; descriptions must be single-line."
+            return
+        }
+        if ($appMetadata.PCode -and $appMetadata.PCode -notmatch '^P[0-9]{5}$') {
+            Write-Error "Config '$Path' has an invalid Metadata.PCode '$($appMetadata.PCode)' (expected 'P' followed by 5 digits)."
+            return
+        }
+        $appMetadata.PCode = $appMetadata.PCode.ToUpperInvariant()
+        if ($appMetadata.CmdbId -and $appMetadata.CmdbId -notmatch '^[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$') {
+            Write-Error "Config '$Path' has an invalid Metadata.CmdbId '$($appMetadata.CmdbId)' (expected a GUID)."
+            return
+        }
+        if ($appMetadata.NetworkAccessIPRange -and $appMetadata.NetworkAccessIPRange -notmatch '^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\/(3[0-2]|[12]?\d))?$') {
+            Write-Error "Config '$Path' has an invalid Metadata.NetworkAccessIPRange '$($appMetadata.NetworkAccessIPRange)' (expected an IPv4 address or CIDR range)."
+            return
+        }
+        if ($appMetadata.NetworkAccessLocation) {
+            try {
+                $validLocations = Get-RBAC4AppLocationList
+            }
+            catch {
+                Write-Error "Could not load the location list to validate Metadata.NetworkAccessLocation: $($_.Exception.Message)"
+                return
+            }
+            $matchedLocation = $validLocations | Where-Object { $_ -ieq $appMetadata.NetworkAccessLocation } | Select-Object -First 1
+            if (-not $matchedLocation) {
+                Write-Error "Config '$Path' has an unrecognised Metadata.NetworkAccessLocation '$($appMetadata.NetworkAccessLocation)'. Valid locations: $($validLocations -join ', ')"
+                return
+            }
+            $appMetadata.NetworkAccessLocation = $matchedLocation
+        }
+
         $result = [ordered]@{
             ParameterSet        = 'ByConfig'
             IdentityInput       = $Path
@@ -226,6 +264,7 @@ function Invoke-RBAC4AppConfig {
             FilteredMembers     = @()
             ChangeReference     = $ChangeReference
             ChangeReferencePath = $null
+            Metadata            = $appMetadata
             RolesNormalized     = @()
             ManagementScopeNames = @()
             RoleScopes          = @()

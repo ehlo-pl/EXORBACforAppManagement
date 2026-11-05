@@ -137,4 +137,118 @@ Describe 'ConvertTo-RBAC4AppConfig' {
             @($parsed.RbacScope.ScopeRecipients) | Should -Be @('recipient@contoso.com')
         }
     }
+
+    Context 'Metadata section' {
+        BeforeAll {
+            $script:metadataFields = @{
+                OwnerUsername               = 'jdoe'
+                OwnerDisplayName            = 'Jan "JD" Doe'
+                TechnicalContactUsername    = 'asmith'
+                TechnicalContactDisplayName = 'Anna Smith'
+                PCode                       = 'P12345'
+                CmdbId                      = '11111111-2222-3333-4444-555555555555'
+                Description                 = 'Runbook: https://wiki.contoso.com/app#ops, see C:\docs'
+                NetworkAccessIPRange        = '10.0.0.0/24'
+                NetworkAccessLocation       = 'HeadOffice'
+            }
+        }
+
+        It 'omits the section when no metadata is supplied' {
+            InModuleScope EXORBACforAppManagement {
+                $cfg = ConvertTo-RBAC4AppConfig -AppId 'a' -SpObjectId 's' -DisplayName 'C' -Roles 'Application Mail.Send' `
+                    -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P'
+
+                $cfg.PSObject.Properties.Name | Should -Not -Contain 'Metadata'
+                ConvertTo-RBAC4AppYaml -Config $cfg | Should -Not -Match 'Metadata'
+            }
+        }
+
+        It 'writes only the supplied fields' {
+            InModuleScope EXORBACforAppManagement {
+                $cfg = ConvertTo-RBAC4AppConfig -AppId 'a' -SpObjectId 's' -DisplayName 'C' -Roles 'Application Mail.Send' `
+                    -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P' -PCode 'P12345'
+
+                @($cfg.Metadata.PSObject.Properties.Name) | Should -Be @('PCode')
+            }
+        }
+
+        It 'survives a <Format> round trip' -TestCases @(@{ Format = 'YAML' }, @{ Format = 'JSON' }) {
+            param($Format)
+            InModuleScope EXORBACforAppManagement -Parameters @{ Format = $Format; Fields = $script:metadataFields } {
+                param($Format, $Fields)
+                $cfg = ConvertTo-RBAC4AppConfig -AppId 'a' -SpObjectId 's' -DisplayName 'C' -Roles 'Application Mail.Send' `
+                    -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P' @Fields
+
+                $parsed = if ($Format -eq 'YAML') {
+                    ConvertFrom-RBAC4AppYaml -Content (ConvertTo-RBAC4AppYaml -Config $cfg)
+                }
+                else {
+                    Complete-RBAC4AppConfig -Config ($cfg | ConvertTo-Json -Depth 6 | ConvertFrom-Json)
+                }
+
+                foreach ($name in $Fields.Keys) {
+                    $parsed.Metadata.$name | Should -Be $Fields[$name]
+                }
+            }
+        }
+
+        It 'restores every field as empty for a config without the section' {
+            InModuleScope EXORBACforAppManagement {
+                $completed = Complete-RBAC4AppConfig -Config ([pscustomobject]@{
+                        SchemaVersion = '4.1'
+                        Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }
+                        Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
+                    })
+
+                @($completed.Metadata.PSObject.Properties).Count | Should -Be 9
+                foreach ($property in $completed.Metadata.PSObject.Properties) {
+                    $property.Value | Should -BeExactly ''
+                }
+            }
+        }
+    }
+}
+
+Describe 'Get-RBAC4AppLocationList' {
+    It 'loads a non-empty list from the locations.txt shipped with the module' {
+        InModuleScope EXORBACforAppManagement {
+            @(Get-RBAC4AppLocationList).Count | Should -BeGreaterThan 0
+        }
+    }
+
+    Context 'with a substitute module root' {
+        BeforeAll {
+            $script:originalRoot = InModuleScope EXORBACforAppManagement { $script:RBAC4AppModuleRoot }
+        }
+
+        AfterEach {
+            InModuleScope EXORBACforAppManagement -Parameters @{ Root = $script:originalRoot } {
+                param($Root)
+                $script:RBAC4AppModuleRoot = $Root
+            }
+        }
+
+        It 'returns trimmed entries, skipping blank and comment lines' {
+            $root = Join-Path $TestDrive 'with-list'
+            New-Item -ItemType Directory -Path $root | Out-Null
+            Set-Content -LiteralPath (Join-Path $root 'locations.txt') -Encoding UTF8 -Value @('# header', '', '  Warszawa  ', '   # indented comment', 'Kraków')
+
+            InModuleScope EXORBACforAppManagement -Parameters @{ Root = $root } {
+                param($Root)
+                $script:RBAC4AppModuleRoot = $Root
+                @(Get-RBAC4AppLocationList) | Should -Be @('Warszawa', 'Kraków')
+            }
+        }
+
+        It 'throws when the file is missing' {
+            $root = Join-Path $TestDrive 'without-list'
+            New-Item -ItemType Directory -Path $root | Out-Null
+
+            InModuleScope EXORBACforAppManagement -Parameters @{ Root = $root } {
+                param($Root)
+                $script:RBAC4AppModuleRoot = $Root
+                { Get-RBAC4AppLocationList } | Should -Throw '*Location list file not found*'
+            }
+        }
+    }
 }

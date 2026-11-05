@@ -269,7 +269,7 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
             $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $path } {
                 ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
             }
-            $config.SchemaVersion | Should -Be '4.1'
+            $config.SchemaVersion | Should -Be '4.2'
             $config.Application.DisplayName | Should -Be 'Tailspin'
             $config.Application.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
             @($config.Rbac.Roles) | Should -Be @('Application MailboxSettings.Read')
@@ -331,7 +331,7 @@ Describe 'Get-RBAC4AppEntry -ByApplication' {
             $configs = @(Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
             $configs.Count | Should -Be 3
             ($configs | Where-Object { $_.Application.DisplayName -eq 'Contoso' }).Rbac.Roles | Should -Be 'Application Mail.Send'
-            $configs.SchemaVersion | Should -Be @('4.1', '4.1', '4.1')
+            $configs.SchemaVersion | Should -Be @('4.2', '4.2', '4.2')
         }
 
         It 'exports each ByApplication result to a specifically named JSON config' {

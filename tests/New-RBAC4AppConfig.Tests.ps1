@@ -156,7 +156,7 @@ Describe 'New-RBAC4AppConfig' {
         (Test-Path $outFile) | Should -BeTrue
 
         $parsed = Get-Content $outFile -Raw | ConvertFrom-Json
-        $parsed.SchemaVersion              | Should -Be '4.1'
+        $parsed.SchemaVersion              | Should -Be '4.2'
         # Defaults (ScopeKind Group, AssignmentScope RecipientGroupScope), unused management scope
         # naming, and the empty ChangeReference are left out.
         $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ScopeKind'
@@ -210,7 +210,7 @@ Describe 'New-RBAC4AppConfig' {
             -OutputPath $TestDrive -Confirm:$false
 
         $content = Get-Content $outFile -Raw
-        $content | Should -Match 'SchemaVersion: "4.1"'
+        $content | Should -Match 'SchemaVersion: "4.2"'
         $content | Should -Match 'ScopeKind: "Recipients"'
         $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
         $parsed.RbacScope.ScopeKind           | Should -Be 'Recipients'
@@ -453,5 +453,88 @@ Describe 'New-RBAC4AppConfig' {
         $second | Should -Not -Be $first
         @(Get-ChildItem -LiteralPath $dir.FullName -Filter 'rbac4app-Contoso-*.yml').Count | Should -Be 2
         (Split-Path $first -Leaf) | Should -Match '^rbac4app-Contoso-\d{14}-[0-9a-f]{8}\.yml$'
+    }
+
+    Context 'Metadata parameters' {
+        BeforeEach {
+            Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+                [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+            }
+            Mock -ModuleName EXORBACforAppManagement Get-RBAC4AppLocationList { @('HeadOffice', 'DataCenter') }
+        }
+
+        It 'omits the Metadata section when no metadata parameter is supplied' {
+            $file = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Format Json -OutputPath $TestDrive -Confirm:$false
+
+            (Get-Content $file -Raw | ConvertFrom-Json).PSObject.Properties.Name | Should -Not -Contain 'Metadata'
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-RBAC4AppLocationList -Times 0
+        }
+
+        It 'writes every supplied field as <Format>, normalizing PCode and location casing' -TestCases @(
+            @{ Format = 'Yaml' }
+            @{ Format = 'Json' }
+        ) {
+            param($Format)
+            $file = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Format $Format -OutputPath $TestDrive -Confirm:$false `
+                -OwnerUsername 'jdoe' -OwnerDisplayName 'Jan Doe' `
+                -TechnicalContactUsername 'asmith' -TechnicalContactDisplayName 'Anna Smith' `
+                -PCode 'p12345' -CmdbId '11111111-2222-3333-4444-555555555555' `
+                -Description 'Runbook: https://wiki.contoso.com/app' `
+                -NetworkAccessIPRange '10.0.0.0/24' -NetworkAccessLocation 'headoffice'
+
+            $content = Get-Content $file -Raw
+            $parsed = if ($Format -eq 'Json') {
+                $content | ConvertFrom-Json
+            }
+            else {
+                InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } {
+                    param($Content)
+                    ConvertFrom-RBAC4AppYaml -Content $Content
+                }
+            }
+
+            $parsed.Metadata.OwnerUsername | Should -Be 'jdoe'
+            $parsed.Metadata.OwnerDisplayName | Should -Be 'Jan Doe'
+            $parsed.Metadata.TechnicalContactUsername | Should -Be 'asmith'
+            $parsed.Metadata.TechnicalContactDisplayName | Should -Be 'Anna Smith'
+            $parsed.Metadata.PCode | Should -BeExactly 'P12345'
+            $parsed.Metadata.CmdbId | Should -Be '11111111-2222-3333-4444-555555555555'
+            $parsed.Metadata.Description | Should -Be 'Runbook: https://wiki.contoso.com/app'
+            $parsed.Metadata.NetworkAccessIPRange | Should -Be '10.0.0.0/24'
+            $parsed.Metadata.NetworkAccessLocation | Should -BeExactly 'HeadOffice'
+        }
+
+        It 'accepts <Name> on its own' -TestCases @(
+            @{ Name = 'an IP range'; Parameters = @{ NetworkAccessIPRange = '10.0.0.5' }; Key = 'NetworkAccessIPRange'; Value = '10.0.0.5' }
+            @{ Name = 'a location';  Parameters = @{ NetworkAccessLocation = 'DataCenter' }; Key = 'NetworkAccessLocation'; Value = 'DataCenter' }
+        ) {
+            param($Name, $Parameters, $Key, $Value)
+            $file = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Format Json -OutputPath $TestDrive -Confirm:$false @Parameters
+
+            $metadata = (Get-Content $file -Raw | ConvertFrom-Json).Metadata
+            @($metadata.PSObject.Properties.Name) | Should -Be @($Key)
+            $metadata.$Key | Should -Be $Value
+        }
+
+        It 'rejects <Name>' -TestCases @(
+            @{ Name = 'a PCode with too few digits'; Parameters = @{ PCode = 'P1234' } }
+            @{ Name = 'a PCode without the P';       Parameters = @{ PCode = '123456' } }
+            @{ Name = 'a CmdbId that is not a GUID'; Parameters = @{ CmdbId = 'not-a-guid' } }
+            @{ Name = 'a multi-line Description';    Parameters = @{ Description = "one`ntwo" } }
+            @{ Name = 'a Description ending in a newline'; Parameters = @{ Description = "one`n" } }
+            @{ Name = 'an out-of-range IP octet';    Parameters = @{ NetworkAccessIPRange = '999.1.1.1' } }
+            @{ Name = 'an out-of-range CIDR prefix'; Parameters = @{ NetworkAccessIPRange = '1.2.3.4/33' } }
+            @{ Name = 'an IPv6 address';             Parameters = @{ NetworkAccessIPRange = '2001:db8::1' } }
+        ) {
+            param($Name, $Parameters)
+            { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Confirm:$false @Parameters } | Should -Throw
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 0
+        }
+
+        It 'rejects a location that is not in the list, naming the valid ones' {
+            { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -NetworkAccessLocation 'Mars' -OutputPath $TestDrive -Confirm:$false } |
+                Should -Throw "*Invalid -NetworkAccessLocation 'Mars'. Valid locations: HeadOffice, DataCenter*"
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-MgServicePrincipal -Times 0
+        }
     }
 }

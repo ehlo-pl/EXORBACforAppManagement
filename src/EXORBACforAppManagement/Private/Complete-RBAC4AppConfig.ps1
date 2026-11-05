@@ -16,6 +16,7 @@ function Complete-RBAC4AppConfig {
     $app = $Config.Application
     $rbac = $Config.Rbac
     $scope = $Config.RbacScope
+    $metadata = $Config.Metadata
 
     $list = { param($Value) @($Value | Where-Object { $null -ne $_ -and [string]$_ -ne '' } | ForEach-Object { [string]$_ }) }
     $text = { param($Value, $Default) if ([string]$Value) { [string]$Value } else { $Default } }
@@ -63,6 +64,17 @@ function Complete-RBAC4AppConfig {
             ScopeTagValue         = [string]$scope.ScopeTagValue
             ScopeFilter           = [string]$scope.ScopeFilter
             SeparateScopePerRole  = ([string]$scope.SeparateScopePerRole -eq 'true')
+        }
+        Metadata      = [pscustomobject]@{
+            OwnerUsername               = [string]$metadata.OwnerUsername
+            OwnerDisplayName            = [string]$metadata.OwnerDisplayName
+            TechnicalContactUsername    = [string]$metadata.TechnicalContactUsername
+            TechnicalContactDisplayName = [string]$metadata.TechnicalContactDisplayName
+            PCode                       = [string]$metadata.PCode
+            CmdbId                      = [string]$metadata.CmdbId
+            Description                 = [string]$metadata.Description
+            NetworkAccessIPRange        = [string]$metadata.NetworkAccessIPRange
+            NetworkAccessLocation       = [string]$metadata.NetworkAccessLocation
         }
     }
 }

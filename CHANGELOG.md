@@ -14,6 +14,14 @@ All notable changes to this project are documented here. The format is based on
   now exports no aliases.
 
 ### Added
+- `New-RBAC4AppConfig` can record descriptive application details in a new optional `Metadata` config
+  section: `-OwnerUsername`/`-OwnerDisplayName`, `-TechnicalContactUsername`/`-TechnicalContactDisplayName`,
+  `-PCode`, `-CmdbId`, `-Description`, `-NetworkAccessIPRange`, and `-NetworkAccessLocation` (validated
+  against the new `locations.txt` shipped at the module root, which holds placeholder names to edit for
+  your organization). `Invoke-RBAC4AppConfig` re-validates the section and returns it as `Metadata` in its
+  result; it never affects provisioning. The config schema is now `4.2`; `4.1`, `4.0`, and `3.0` files are
+  still read. An older copy of `Invoke-RBAC4AppConfig` refuses `4.2` files, so upgrade the module in both
+  sessions.
 - `build.ps1 -Task Test` now collects Pester code coverage (`coverage.xml`, JaCoCo) and fails below
   `-CoverageThreshold` (default 90%); CI uploads the file with the test results. `scripts/Show-CoverageGaps.ps1` lists the uncovered lines per file.
 - `build.ps1 -Task Test` never stops for a ShouldProcess confirmation prompt (`$ConfirmPreference` is

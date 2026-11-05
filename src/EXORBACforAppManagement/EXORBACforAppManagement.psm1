@@ -3,6 +3,8 @@
 # Module loader: dot-source every Private helper, then every Public function, and
 # export only the Public functions. File names are expected to match function names.
 
+$script:RBAC4AppModuleRoot = $PSScriptRoot
+
 $private = @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'Private') -Filter '*.ps1' -ErrorAction SilentlyContinue)
 $public  = @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'Public')  -Filter '*.ps1' -ErrorAction SilentlyContinue)
 
