@@ -509,11 +509,17 @@ function Invoke-RBAC4AppConfig {
                 }
             }
 
-            [pscustomobject]$result
             if ($rbacNameBase) {
-                $exportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("{0}_{1}.clixml" -f $rbacNameBase, (Get-Date -Format s).Replace(':', ''))
-                [pscustomobject]$result | Export-Clixml $exportPath -Verbose
+                # The random id keeps runs in the same second from colliding on one file.
+                $exportPath = Join-Path ([System.IO.Path]::GetTempPath()) ("{0}_{1}_{2}.clixml" -f $rbacNameBase, (Get-Date -Format s).Replace(':', ''), [guid]::NewGuid().ToString('N').Substring(0, 8))
+                try {
+                    [pscustomobject]$result | Export-Clixml $exportPath -Verbose -ErrorAction Stop
+                }
+                catch {
+                    $result.Warnings += "Could not export the summary to '$exportPath': $($_.Exception.Message)"
+                }
             }
+            [pscustomobject]$result
         }
         catch {
             $result.Errors += $_.Exception.Message

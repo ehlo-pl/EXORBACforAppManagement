@@ -585,6 +585,31 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
     }
 
+    It 'emits one result with a warning when the summary export fails after provisioning' {
+        Mock -ModuleName EXORBACforAppManagement Export-Clixml { throw 'file in use' }
+
+        $res = @(Invoke-RBAC4AppConfig -Path $script:configPathJson -Confirm:$false)
+
+        $res.Count | Should -Be 1
+        $res[0].Errors | Should -BeNullOrEmpty
+        ($res[0].Warnings -join ';') | Should -Match 'file in use'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
+    }
+
+    It 'uses a different summary export file for each run' {
+        Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
+
+        $null = Invoke-RBAC4AppConfig -Path $script:configPathJson -Confirm:$false
+        $null = Invoke-RBAC4AppConfig -Path $script:configPathJson -Confirm:$false
+
+        $script:exportPaths = [System.Collections.Generic.List[string]]::new()
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Export-Clixml -Times 2 -Exactly -ParameterFilter {
+            $script:exportPaths.Add($Path)
+            $true
+        }
+        @($script:exportPaths | Select-Object -Unique).Count | Should -Be 2
+    }
+
     It '-Format Json forces JSON parsing even with a non-.json extension' {
         $res = Invoke-RBAC4AppConfig -Path $script:configPathJsonBadExtension -Format Json -Confirm:$false
 

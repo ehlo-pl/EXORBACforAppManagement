@@ -441,7 +441,7 @@ New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType MailEna
 `DistributionList`.
 
 Returns a summary `[pscustomobject]` (resolved identity, group name, normalized roles, assignment
-names, `Warnings`, `Errors`) and also exports it to `$env:TEMP\<name>_<timestamp>.clixml`.
+names, `Warnings`, `Errors`) and also exports it to `$env:TEMP\<name>_<timestamp>_<8 hex>.clixml`. If that export fails, the summary carries a warning.
 
 ### Get-RBAC4AppEntry
 

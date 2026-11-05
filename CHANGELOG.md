@@ -37,6 +37,10 @@ All notable changes to this project are documented here. The format is based on
   `New-RBAC4AppDistributionGroup`, `New-RBAC4AppUnifiedGroup` and `Save-RBAC4AppChangeReferenceRecord`.
 
 ### Fixed
+- `New-RBAC4AppEntry` and `Invoke-RBAC4AppConfig` no longer emit a second result, with the export failure
+  listed in `Errors`, when writing the summary `.clixml` fails after provisioning succeeded. The failure is
+  now a warning in the single result, and file names are `<name>_<timestamp>_<8 hex>.clixml`, so runs in the
+  same second no longer share a file.
 - `New-RBAC4AppConfig` no longer overwrites a config written earlier in the same minute: file names are now
   `rbac4app-<name>-<yyyyMMddHHmmss>-<8 hex>.<ext>`. Globs such as `rbac4app-<name>-*.yml` still match.
 

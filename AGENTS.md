@@ -231,7 +231,7 @@ main `BeforeEach` fixture.
   directly to the group via `-RecipientGroupScope` (default) or to the scope via `-CustomResourceScope`.
   The group steps run only for `-ScopeKind Group`. The scope group name is
   `"{GroupPrefix}-{SP.DisplayName}"` sanitized by the private `Get-RBAC4AppScopeGroupName` (via `Format-RBAC4AppSafeName`). Output is one `[pscustomobject]` summary, also exported to
-  `$env:TEMP\<name>_<timestamp>.clixml`; per-item errors are surfaced in `Errors`, not thrown. The
+  `$env:TEMP\<name>_<timestamp>_<8 hex>.clixml` (an export failure is a summary warning); per-item errors are surfaced in `Errors`, not thrown. The
   summary reports the owner as `OwnerRequested`/`OwnerAdded` (read from the
   scope group result) alongside `MembersRequested`/`MembersAdded`. The orchestrator
   captures the delegated functions' warnings via `-WarningVariable` to keep the summary `Warnings`

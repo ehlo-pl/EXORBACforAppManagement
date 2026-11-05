@@ -317,6 +317,16 @@ Describe 'New-RBAC4AppEntry management scope' {
         Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
     }
 
+    It 'emits one result with a warning when the summary export fails after provisioning' {
+        Mock -ModuleName EXORBACforAppManagement Export-Clixml { throw 'file in use' }
+
+        $r = @(New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false)
+
+        $r.Count | Should -Be 1
+        $r[0].Errors | Should -BeNullOrEmpty
+        ($r[0].Warnings -join ';') | Should -Match 'file in use'
+    }
+
     It 'Group (default): assigns directly to the scope group with -RecipientGroupScope and creates no management scope' {
         $r = New-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
 
