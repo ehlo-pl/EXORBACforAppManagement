@@ -14,6 +14,17 @@ All notable changes to this project are documented here. The format is based on
   now exports no aliases.
 
 ### Added
+- `New-RBAC4AppConfig -Repository <folder>` builds a new config on top of a manually created state file
+  named `{AppId}.yaml`, `.yml` or `.json`: settings not given on the command line come from that file,
+  then from the defaults. The state file is never modified.
+- `New-RBAC4AppConfig` can record descriptive application details in a new optional `Metadata` config
+  section: `-OwnerUsername`/`-OwnerDisplayName`, `-TechnicalContactUsername`/`-TechnicalContactDisplayName`,
+  `-PCode`, `-CmdbId`, `-Description`, `-NetworkAccessIPRange`, and `-NetworkAccessLocation` (validated
+  against the new `locations.txt` shipped at the module root, which holds placeholder names to edit for
+  your organization). `Invoke-RBAC4AppConfig` re-validates the section and returns it as `Metadata` in its
+  result; it never affects provisioning. The config schema is now `4.2`; `4.1`, `4.0`, and `3.0` files are
+  still read. An older copy of `Invoke-RBAC4AppConfig` refuses `4.2` files, so upgrade the module in both
+  sessions.
 - `build.ps1 -Task Test` now collects Pester code coverage (`coverage.xml`, JaCoCo) and fails below
   `-CoverageThreshold` (default 90%); CI uploads the file with the test results. `scripts/Show-CoverageGaps.ps1` lists the uncovered lines per file.
 - `build.ps1 -Task Test` never stops for a ShouldProcess confirmation prompt (`$ConfirmPreference` is
@@ -26,6 +37,10 @@ All notable changes to this project are documented here. The format is based on
   `New-RBAC4AppDistributionGroup`, `New-RBAC4AppUnifiedGroup` and `Save-RBAC4AppChangeReferenceRecord`.
 
 ### Fixed
+- `New-RBAC4AppEntry` and `Invoke-RBAC4AppConfig` no longer emit a second result, with the export failure
+  listed in `Errors`, when writing the summary `.clixml` fails after provisioning succeeded. The failure is
+  now a warning in the single result, and file names are `<name>_<timestamp>_<8 hex>.clixml`, so runs in the
+  same second no longer share a file.
 - `New-RBAC4AppConfig` no longer overwrites a config written earlier in the same minute: file names are now
   `rbac4app-<name>-<yyyyMMddHHmmss>-<8 hex>.<ext>`. Globs such as `rbac4app-<name>-*.yml` still match.
 

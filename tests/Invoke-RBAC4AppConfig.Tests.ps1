@@ -585,6 +585,31 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
     }
 
+    It 'emits one result with a warning when the summary export fails after provisioning' {
+        Mock -ModuleName EXORBACforAppManagement Export-Clixml { throw 'file in use' }
+
+        $res = @(Invoke-RBAC4AppConfig -Path $script:configPathJson -Confirm:$false)
+
+        $res.Count | Should -Be 1
+        $res[0].Errors | Should -BeNullOrEmpty
+        ($res[0].Warnings -join ';') | Should -Match 'file in use'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 1
+    }
+
+    It 'uses a different summary export file for each run' {
+        Mock -ModuleName EXORBACforAppManagement Export-Clixml { }
+
+        $null = Invoke-RBAC4AppConfig -Path $script:configPathJson -Confirm:$false
+        $null = Invoke-RBAC4AppConfig -Path $script:configPathJson -Confirm:$false
+
+        $script:exportPaths = [System.Collections.Generic.List[string]]::new()
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Export-Clixml -Times 2 -Exactly -ParameterFilter {
+            $script:exportPaths.Add($Path)
+            $true
+        }
+        @($script:exportPaths | Select-Object -Unique).Count | Should -Be 2
+    }
+
     It '-Format Json forces JSON parsing even with a non-.json extension' {
         $res = Invoke-RBAC4AppConfig -Path $script:configPathJsonBadExtension -Format Json -Confirm:$false
 
@@ -846,5 +871,124 @@ Describe 'Invoke-RBAC4AppConfig config validation and failure paths' {
         Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { throw 'quota exceeded' }
         $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
         ($res.Errors -join ';') | Should -Match 'quota exceeded'
+    }
+
+    Context 'Metadata section' {
+        BeforeEach {
+            Mock -ModuleName EXORBACforAppManagement Get-RBAC4AppLocationList { @('HeadOffice', 'DataCenter') }
+        }
+
+        It 'returns empty metadata for a config without the section' {
+            $res = Invoke-RBAC4AppConfig -Path $script:configPath -Confirm:$false
+
+            foreach ($property in $res.Metadata.PSObject.Properties) {
+                $property.Value | Should -BeExactly ''
+            }
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-RBAC4AppLocationList -Times 0
+        }
+
+        It 'carries YAML metadata into the result, normalizing PCode and location casing' {
+            $path = Join-Path $TestDrive 'metadata.yml'
+            $metadataYaml = @'
+
+Metadata:
+  OwnerUsername: "jdoe"
+  OwnerDisplayName: "Jan Doe"
+  TechnicalContactUsername: "asmith"
+  TechnicalContactDisplayName: "Anna Smith"
+  PCode: "p12345"
+  CmdbId: "11111111-2222-3333-4444-555555555555"
+  Description: "Runbook: https://wiki.contoso.com/app"
+  NetworkAccessIPRange: "10.0.0.0/24"
+  NetworkAccessLocation: "headoffice"
+'@
+            Set-Content $path -Value (($script:testYaml -replace 'SchemaVersion: "3.0"', 'SchemaVersion: "4.2"') + $metadataYaml) -Encoding UTF8
+
+            $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false
+
+            $res.Errors | Should -BeNullOrEmpty
+            $res.Metadata.OwnerUsername | Should -Be 'jdoe'
+            $res.Metadata.OwnerDisplayName | Should -Be 'Jan Doe'
+            $res.Metadata.TechnicalContactUsername | Should -Be 'asmith'
+            $res.Metadata.TechnicalContactDisplayName | Should -Be 'Anna Smith'
+            $res.Metadata.PCode | Should -BeExactly 'P12345'
+            $res.Metadata.CmdbId | Should -Be '11111111-2222-3333-4444-555555555555'
+            $res.Metadata.Description | Should -Be 'Runbook: https://wiki.contoso.com/app'
+            $res.Metadata.NetworkAccessIPRange | Should -Be '10.0.0.0/24'
+            $res.Metadata.NetworkAccessLocation | Should -BeExactly 'HeadOffice'
+        }
+
+        It 'accepts an IP range without a location, and a location without an IP range' -TestCases @(
+            @{ Metadata = @{ NetworkAccessIPRange = '10.0.0.5' } }
+            @{ Metadata = @{ NetworkAccessLocation = 'DataCenter' } }
+        ) {
+            param($Metadata)
+            $path = Join-Path $TestDrive ("metadata-{0}.json" -f [guid]::NewGuid().ToString('N'))
+            [pscustomobject]@{
+                SchemaVersion = '4.2'
+                Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }
+                Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
+                Metadata      = [pscustomobject]$Metadata
+            } | ConvertTo-Json -Depth 6 | Set-Content $path -Encoding UTF8
+
+            $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false
+
+            foreach ($key in $Metadata.Keys) { $res.Metadata.$key | Should -Be $Metadata[$key] }
+        }
+
+        It 'rejects a config with <Name>' -TestCases @(
+            @{ Name = 'a bad PCode';          Metadata = @{ PCode = 'P1234' };                     Message = "invalid Metadata.PCode 'P1234'" }
+            @{ Name = 'a bad CmdbId';         Metadata = @{ CmdbId = 'not-a-guid' };               Message = "invalid Metadata.CmdbId 'not-a-guid'" }
+            @{ Name = 'a bad IP range';       Metadata = @{ NetworkAccessIPRange = '1.2.3.4/33' }; Message = "invalid Metadata.NetworkAccessIPRange '1.2.3.4/33'" }
+            @{ Name = 'an unknown location';  Metadata = @{ NetworkAccessLocation = 'Mars' };      Message = "unrecognised Metadata.NetworkAccessLocation 'Mars'" }
+            @{ Name = 'a multi-line description'; Metadata = @{ Description = "one`ntwo" };        Message = 'containing a line break' }
+        ) {
+            param($Name, $Metadata, $Message)
+            $path = Join-Path $TestDrive ("invalid-metadata-{0}.json" -f [guid]::NewGuid().ToString('N'))
+            [pscustomobject]@{
+                SchemaVersion = '4.2'
+                Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }
+                Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
+                Metadata      = [pscustomobject]$Metadata
+            } | ConvertTo-Json -Depth 6 | Set-Content $path -Encoding UTF8
+
+            $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+            $res | Should -BeNullOrEmpty
+            ($err -join ';') | Should -Match ([regex]::Escape($Message))
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+        }
+
+        It 'rejects a YAML description whose escape sequence decodes to a line break' {
+            $path = Join-Path $TestDrive 'metadata-newline.yml'
+            $metadataYaml = @'
+
+Metadata:
+  Description: "one\ntwo"
+'@
+            Set-Content $path -Value ($script:testYaml + $metadataYaml) -Encoding UTF8
+
+            $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+            $res | Should -BeNullOrEmpty
+            ($err -join ';') | Should -Match 'containing a line break'
+        }
+
+        It 'writes an error instead of throwing when the location list cannot be read' {
+            Mock -ModuleName EXORBACforAppManagement Get-RBAC4AppLocationList { throw 'Location list file not found' }
+            $path = Join-Path $TestDrive 'metadata-no-list.yml'
+            $metadataYaml = @'
+
+Metadata:
+  NetworkAccessLocation: "HeadOffice"
+'@
+            Set-Content $path -Value ($script:testYaml + $metadataYaml) -Encoding UTF8
+
+            $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue
+
+            $res | Should -BeNullOrEmpty
+            ($err -join ';') | Should -Match 'Could not load the location list'
+            Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+        }
     }
 }

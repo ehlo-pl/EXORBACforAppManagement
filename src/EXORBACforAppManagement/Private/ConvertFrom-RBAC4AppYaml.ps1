@@ -66,6 +66,17 @@ function ConvertFrom-RBAC4AppYaml {
             ScopeFilter           = ''
             SeparateScopePerRole  = $false
         }
+        Metadata      = [pscustomobject]@{
+            OwnerUsername               = ''
+            OwnerDisplayName            = ''
+            TechnicalContactUsername    = ''
+            TechnicalContactDisplayName = ''
+            PCode                       = ''
+            CmdbId                      = ''
+            Description                 = ''
+            NetworkAccessIPRange        = ''
+            NetworkAccessLocation       = ''
+        }
     }
 
     $section = $null
@@ -74,7 +85,7 @@ function ConvertFrom-RBAC4AppYaml {
     foreach ($line in ($Content -split '\r?\n')) {
         if ($line -match '^\s*#' -or $line -match '^\s*$') { continue }
 
-        if ($line -match '^(Application|Rbac|RbacScope)\s*:') {
+        if ($line -match '^(Application|Rbac|RbacScope|Metadata)\s*:') {
             $section = $Matches[1]
             $listKey = $null
             continue
@@ -144,6 +155,20 @@ function ConvertFrom-RBAC4AppYaml {
                     'ScopeTagValue'         { $config.RbacScope.ScopeTagValue         = $value; $listKey = $null }
                     'ScopeFilter'           { $config.RbacScope.ScopeFilter           = $value; $listKey = $null }
                     'SeparateScopePerRole'  { $config.RbacScope.SeparateScopePerRole  = $value; $listKey = $null }
+                }
+            }
+            elseif ($section -eq 'Metadata') {
+                $listKey = $null
+                switch ($key) {
+                    'OwnerUsername'               { $config.Metadata.OwnerUsername               = $value }
+                    'OwnerDisplayName'            { $config.Metadata.OwnerDisplayName            = $value }
+                    'TechnicalContactUsername'    { $config.Metadata.TechnicalContactUsername    = $value }
+                    'TechnicalContactDisplayName' { $config.Metadata.TechnicalContactDisplayName = $value }
+                    'PCode'                       { $config.Metadata.PCode                       = $value }
+                    'CmdbId'                      { $config.Metadata.CmdbId                      = $value }
+                    'Description'                 { $config.Metadata.Description                 = $value }
+                    'NetworkAccessIPRange'        { $config.Metadata.NetworkAccessIPRange        = $value }
+                    'NetworkAccessLocation'       { $config.Metadata.NetworkAccessLocation       = $value }
                 }
             }
         }

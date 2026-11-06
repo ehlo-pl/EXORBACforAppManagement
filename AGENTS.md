@@ -74,7 +74,7 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
   `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
-  writes a config file (schema version `4.1` - `4.0`/`3.0` are still read as `AssignmentScope: ManagementScope`, `3.0` as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections) in
+  writes a config file (schema version `4.2` - `4.1` is still read, `4.0`/`3.0` as `AssignmentScope: ManagementScope`, `3.0` as `ScopeKind: Group`, with top-level `Rbac:`/`RbacScope:` sections and an optional descriptive `Metadata:` section that never affects provisioning) in
   either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
   `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
   (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and
@@ -100,6 +100,7 @@ Together the first three form a create → assign → read flow:
 src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 16 public)
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
+  locations.txt                  # valid Metadata.NetworkAccessLocation names (read by Get-RBAC4AppLocationList)
   Public/                        # New-RBAC4AppEntry, New-RegisteredApp, Get-RBAC4AppEntry,
                                  # New-RBAC4AppUnifiedGroup,
                                  # New-RBAC4AppDistributionGroup, Register-EXOServicePrincipal,
@@ -230,7 +231,7 @@ main `BeforeEach` fixture.
   directly to the group via `-RecipientGroupScope` (default) or to the scope via `-CustomResourceScope`.
   The group steps run only for `-ScopeKind Group`. The scope group name is
   `"{GroupPrefix}-{SP.DisplayName}"` sanitized by the private `Get-RBAC4AppScopeGroupName` (via `Format-RBAC4AppSafeName`). Output is one `[pscustomobject]` summary, also exported to
-  `$env:TEMP\<name>_<timestamp>.clixml`; per-item errors are surfaced in `Errors`, not thrown. The
+  `$env:TEMP\<name>_<timestamp>_<8 hex>.clixml` (an export failure is a summary warning); per-item errors are surfaced in `Errors`, not thrown. The
   summary reports the owner as `OwnerRequested`/`OwnerAdded` (read from the
   scope group result) alongside `MembersRequested`/`MembersAdded`. The orchestrator
   captures the delegated functions' warnings via `-WarningVariable` to keep the summary `Warnings`
@@ -242,6 +243,12 @@ main `BeforeEach` fixture.
   `$script:RBAC4AppConfigDefaults` table in `RBAC4AppDefaults.ps1` - change a default there, never
   in only one of them. Tests asserting an omitted key use `PSObject.Properties.Name | Should -Not
   -Contain`.
+
+- **State repository:** `New-RBAC4AppConfig -Repository <folder>` reads a manually created
+  `{AppId}.yaml`/`.yml`/`.json` via the private `Get-RBAC4AppRepositoryState` and fills every parameter
+  not bound on the command line from it (command line, then state file, then defaults). It runs after SP
+  resolution, so with `-Repository` the settings validation also runs after the Graph call. The file is
+  never written.
 
 - **Assignment binding (`-AssignmentScope`):** `New-`/`Set-`/`Test-RBAC4AppEntry` and
   `New-RBAC4AppConfig` (config key `RbacScope.AssignmentScope`, read by `Invoke-RBAC4AppConfig`) take

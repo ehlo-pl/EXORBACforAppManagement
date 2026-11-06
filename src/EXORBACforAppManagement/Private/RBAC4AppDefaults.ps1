@@ -32,8 +32,8 @@ function Get-RBAC4AppDefaultGroupPrefix {
 # Convert-ApplicationAccessPolicyToRBAC write it (via ConvertTo-RBAC4AppConfig);
 # Invoke-RBAC4AppConfig accepts every version listed as supported ('3.0' is read as ScopeKind Group;
 # '3.0' and '4.0' have no RbacScope.AssignmentScope and are read as ManagementScope).
-$script:RBAC4AppConfigSchemaVersion = '4.1'
-$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1')
+$script:RBAC4AppConfigSchemaVersion = '4.2'
+$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1', '4.2')
 
 # Values a config file falls back to when a key is absent. ConvertTo-RBAC4AppConfig omits any key
 # equal to its default (or empty unless explicitly overridden, or unused by the selected
