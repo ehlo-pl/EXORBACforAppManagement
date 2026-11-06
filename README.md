@@ -185,7 +185,7 @@ Every key and the value it takes when absent:
 | Key | Used when | Default when absent |
 | --- | --- | --- |
 | `TenantId` | always (informational) | `""` |
-| `Rbac.ChangeReference` | always | `""` (no change record) |
+| `Metadata.ChangeReference` | always | `""` (no change record) |
 | `RbacScope.ScopeKind` | always | `Group` (`Recipients` / `Tag` / `Filter`) |
 | `RbacScope.AssignmentScope` | `ScopeKind: Group` | `RecipientGroupScope` for schema `4.1` or later; `ManagementScope` for `4.0`/`3.0` and every non-Group kind |
 | `RbacScope.AccessGroupType` | `ScopeKind: Group` | `DistributionList` (`M365Group` / `MailEnabledSecurityGroup`) |
@@ -213,8 +213,10 @@ Every key and the value it takes when absent:
 
 Files with every key written out (as produced by earlier versions) are still read unchanged.
 
-The optional `Metadata` section describes the application and never affects provisioning. Set it with
-the matching `New-RBAC4AppConfig` parameters (`-OwnerUsername`, `-PCode`, `-NetworkAccessLocation`, ...).
+The optional `Metadata` section describes the application and carries the optional change reference.
+Set descriptive fields with the matching `New-RBAC4AppConfig` parameters (`-OwnerUsername`, `-PCode`,
+`-NetworkAccessLocation`, ...), and set `ChangeReference` with `-ChangeReference`. It does not affect
+Exchange provisioning.
 Contacts are stored as supplied, without any directory lookup; the two network access fields are
 independent of each other. `Invoke-RBAC4AppConfig` re-validates the section, since the file may have
 been edited by hand, and returns it as the `Metadata` property of its result. Valid location names are
@@ -223,6 +225,7 @@ for your organization.
 
 ```yaml
 Metadata:
+  ChangeReference: "CHG123456"
   OwnerUsername: "jdoe"
   OwnerDisplayName: "Jan Doe"
   PCode: "P12345"

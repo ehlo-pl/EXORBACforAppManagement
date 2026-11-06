@@ -501,9 +501,9 @@ Describe 'Invoke-RBAC4AppConfig' {
         $res.RolesNormalized | Should -Contain 'Application Mail.Send'
     }
 
-    It 'applies ChangeReference from the config to a local metadata file' {
+    It 'applies ChangeReference from Metadata to a local metadata file' {
         $configWithChangeReference = Join-Path $TestDrive 'test-config-change-reference.yml'
-        ($script:testYaml -replace "Rbac:\r?\n", "Rbac:`n  ChangeReference: `"CHG123456`"`n") |
+        ($script:testYaml + "`nMetadata:`n  ChangeReference: `"CHG123456`"`n") |
             Set-Content $configWithChangeReference -Encoding UTF8
 
         $res = Invoke-RBAC4AppConfig -Path $configWithChangeReference -Confirm:$false
@@ -513,6 +513,17 @@ Describe 'Invoke-RBAC4AppConfig' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1 -ParameterFilter {
             $ChangeReference -eq 'CHG123456' -and $AccessGroupType -eq 'M365Group' -and $ScopeGroupName -eq 'Um365RAo1-Contoso'
         }
+    }
+
+    It 'continues to read ChangeReference from Rbac in existing configs' {
+        $configWithLegacyChangeReference = Join-Path $TestDrive 'test-config-legacy-change-reference.yml'
+        ($script:testYaml -replace "Rbac:\r?\n", "Rbac:`n  ChangeReference: `"CHG123456`"`n") |
+            Set-Content $configWithLegacyChangeReference -Encoding UTF8
+
+        $res = Invoke-RBAC4AppConfig -Path $configWithLegacyChangeReference -Confirm:$false
+
+        $res.ChangeReference | Should -Be 'CHG123456'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Save-RBAC4AppChangeReferenceRecord -Times 1
     }
 
     It 'reports the pre-existing and newly-added members in MembersFinal' {

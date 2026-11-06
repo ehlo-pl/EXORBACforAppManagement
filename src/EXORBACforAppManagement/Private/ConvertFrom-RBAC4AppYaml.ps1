@@ -67,6 +67,7 @@ function ConvertFrom-RBAC4AppYaml {
             SeparateScopePerRole  = $false
         }
         Metadata      = [pscustomobject]@{
+            ChangeReference             = ''
             OwnerUsername               = ''
             OwnerDisplayName            = ''
             TechnicalContactUsername    = ''
@@ -160,6 +161,7 @@ function ConvertFrom-RBAC4AppYaml {
             elseif ($section -eq 'Metadata') {
                 $listKey = $null
                 switch ($key) {
+                    'ChangeReference'             { $config.Metadata.ChangeReference             = $value }
                     'OwnerUsername'               { $config.Metadata.OwnerUsername               = $value }
                     'OwnerDisplayName'            { $config.Metadata.OwnerDisplayName            = $value }
                     'TechnicalContactUsername'    { $config.Metadata.TechnicalContactUsername    = $value }
