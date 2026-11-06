@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- `ChangeReference` is now written under `Metadata` instead of `Rbac`, without changing schema version
+  `4.2`. Readers continue to accept existing configs with `Rbac.ChangeReference`.
+
 ### Removed
 - **Breaking:** `Get-RegisteredAppWithPermission` (deprecated wrapper) - use
   `Get-RBAC4AppEntry -ByApplication` (add `-ScopeType All` for its old no-scope-filter behavior).

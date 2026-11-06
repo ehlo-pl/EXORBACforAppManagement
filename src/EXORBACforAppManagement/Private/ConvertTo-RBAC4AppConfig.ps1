@@ -78,9 +78,7 @@ function ConvertTo-RBAC4AppConfig {
         DisplayName = $DisplayName
     }
 
-    $rbac = [ordered]@{ Roles = @($Roles) }
-    if ($ChangeReference) { $rbac.ChangeReference = $ChangeReference }
-    $config.Rbac = [pscustomobject]$rbac
+    $config.Rbac = [pscustomobject]@{ Roles = @($Roles) }
 
     $scope = [ordered]@{}
     if ($ScopeKind -ne $defaults.ScopeKind) { $scope.ScopeKind = $ScopeKind }
@@ -130,6 +128,7 @@ function ConvertTo-RBAC4AppConfig {
     if ($scope.Count -gt 0) { $config.RbacScope = [pscustomobject]$scope }
 
     $metadata = [ordered]@{}
+    if ($ChangeReference) { $metadata.ChangeReference = $ChangeReference }
     if ($OwnerUsername) { $metadata.OwnerUsername = $OwnerUsername }
     if ($OwnerDisplayName) { $metadata.OwnerDisplayName = $OwnerDisplayName }
     if ($TechnicalContactUsername) { $metadata.TechnicalContactUsername = $TechnicalContactUsername }

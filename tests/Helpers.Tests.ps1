@@ -200,7 +200,7 @@ Describe 'ConvertTo-RBAC4AppConfig' {
                         Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
                     })
 
-                @($completed.Metadata.PSObject.Properties).Count | Should -Be 9
+                @($completed.Metadata.PSObject.Properties).Count | Should -Be 10
                 foreach ($property in $completed.Metadata.PSObject.Properties) {
                     $property.Value | Should -BeExactly ''
                 }

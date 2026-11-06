@@ -401,7 +401,7 @@ function New-RBAC4AppConfig {
 
                     $stateValues = @{
                         Role                        = @($state.Rbac.Roles)
-                        ChangeReference             = $state.Rbac.ChangeReference
+                        ChangeReference             = $state.Metadata.ChangeReference
                         AccessGroupType             = $stateScope.AccessGroupType
                         ManagedBy                   = @($stateScope.ManagedBy)
                         ScopeKind                   = $stateScope.ScopeKind

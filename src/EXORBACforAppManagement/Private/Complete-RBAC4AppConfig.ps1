@@ -45,8 +45,7 @@ function Complete-RBAC4AppConfig {
             DisplayName = [string]$app.DisplayName
         }
         Rbac          = [pscustomobject]@{
-            Roles           = & $list $rbac.Roles
-            ChangeReference = [string]$rbac.ChangeReference
+            Roles = & $list $rbac.Roles
         }
         RbacScope     = [pscustomobject]@{
             AccessGroupType       = $accessGroupType
@@ -66,6 +65,7 @@ function Complete-RBAC4AppConfig {
             SeparateScopePerRole  = ([string]$scope.SeparateScopePerRole -eq 'true')
         }
         Metadata      = [pscustomobject]@{
+            ChangeReference             = if ([string]$metadata.ChangeReference) { [string]$metadata.ChangeReference } else { [string]$rbac.ChangeReference }
             OwnerUsername               = [string]$metadata.OwnerUsername
             OwnerDisplayName            = [string]$metadata.OwnerDisplayName
             TechnicalContactUsername    = [string]$metadata.TechnicalContactUsername

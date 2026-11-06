@@ -60,7 +60,7 @@ Describe 'New-RBAC4AppConfig' {
         (Get-Content $outFile -Raw) | Should -Match 'Application Mail\.Send'
     }
 
-    It 'writes ChangeReference into the YAML config' {
+    It 'writes ChangeReference under Metadata in the YAML config' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
         }
@@ -68,7 +68,9 @@ Describe 'New-RBAC4AppConfig' {
         $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' `
             -Role 'Mail.Send' -ChangeReference 'CHG123456' -OutputPath $TestDrive -Confirm:$false
 
-        (Get-Content $outFile -Raw) | Should -Match 'ChangeReference: "CHG123456"'
+        $content = Get-Content $outFile -Raw
+        $content | Should -Match '(?ms)^Metadata:\r?\n.*?^  ChangeReference: "CHG123456"'
+        $content | Should -Not -Match '(?m)^Rbac:\r?\n  ChangeReference:'
     }
 
     It 'resolves SP by AppId' {
@@ -150,6 +152,7 @@ Describe 'New-RBAC4AppConfig' {
         }
         $outFile = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Role 'Mail.Send' `
             -Members 'shared@contoso.com' -ManagedBy 'owner1@contoso.com', 'owner2@contoso.com' `
+            -ChangeReference 'CHG-JSON' `
             -Format Json -OutputPath $TestDrive -Confirm:$false
 
         $outFile | Should -BeLike '*.json'
@@ -157,13 +160,14 @@ Describe 'New-RBAC4AppConfig' {
 
         $parsed = Get-Content $outFile -Raw | ConvertFrom-Json
         $parsed.SchemaVersion              | Should -Be '4.2'
-        # Defaults (ScopeKind Group, AssignmentScope RecipientGroupScope), unused management scope
-        # naming, and the empty ChangeReference are left out.
+        # Defaults (ScopeKind Group, AssignmentScope RecipientGroupScope) and unused management scope
+        # naming are left out.
         $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ScopeKind'
         $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'AssignmentScope'
         $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ManagementScopePrefix'
         $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'GroupPrefix'
         $parsed.Rbac.PSObject.Properties.Name      | Should -Not -Contain 'ChangeReference'
+        $parsed.Metadata.ChangeReference           | Should -Be 'CHG-JSON'
         $parsed.RbacScope.AccessGroupName  | Should -Be 'UDLRAo1P-Contoso'
         $parsed.TenantId                   | Should -Be 'tenant-id-123'
         $parsed.Application.AppId          | Should -Be 'app-client-id'
@@ -552,7 +556,6 @@ Describe 'New-RBAC4AppConfig' {
 Rbac:
   Roles:
     - "Application Calendars.Read"
-  ChangeReference: "CHG-1"
 
 RbacScope:
   AccessGroupType: "M365Group"
@@ -563,6 +566,7 @@ RbacScope:
     - "state-owner@contoso.com"
 
 Metadata:
+  ChangeReference: "CHG-1"
   OwnerUsername: "state-owner"
   PCode: "P11111"
   NetworkAccessLocation: "HeadOffice"
@@ -591,7 +595,7 @@ Metadata:
 
             $config = Get-Content $file -Raw | ConvertFrom-Json
             @($config.Rbac.Roles) | Should -Be @('Application Calendars.Read')
-            $config.Rbac.ChangeReference | Should -Be 'CHG-1'
+            $config.Metadata.ChangeReference | Should -Be 'CHG-1'
             $config.RbacScope.AccessGroupType | Should -Be 'M365Group'
             $config.RbacScope.AccessGroupName | Should -Be 'Manual-Group'
             @($config.RbacScope.Members) | Should -Be @('state-member@contoso.com')

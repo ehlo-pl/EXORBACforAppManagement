@@ -164,7 +164,7 @@ function Invoke-RBAC4AppConfig {
         $ManagedBy       = @($config.RbacScope.ManagedBy)
         $BootstrapMember = $config.RbacScope.BootstrapMember
         $roles           = @($config.Rbac.Roles)
-        $ChangeReference = [string]$config.Rbac.ChangeReference
+        $ChangeReference = [string]$config.Metadata.ChangeReference
         $separateScopePerRole = ([string]$config.RbacScope.SeparateScopePerRole -eq 'true')
 
         # --- Management scope settings (schema 4.0; absent from 3.0 -> Group kind, default prefix)
