@@ -94,6 +94,14 @@ Describe 'New-SampleRegisteredApps.ps1' {
         $global:SampleCreatedAssignments.Count | Should -Be 0
     }
 
+    It 'starts each application name with a unique random token and includes the requested prefix' {
+        $results = @(& $script:sampleScript -NamePrefix 'TenantSample' -Count 4 -Confirm:$false)
+
+        $namePrefixes = @($results.DisplayName | ForEach-Object { ($_ -split '-', 2)[0] })
+        ($namePrefixes | Sort-Object -Unique).Count | Should -Be 4
+        $results.DisplayName | Should -Match '^[0-9a-f]{8}-TenantSample-'
+    }
+
     It 'rejects a count that cannot be split evenly across the profiles' {
         { & $script:sampleScript -Count 5 -Confirm:$false } | Should -Throw '*divisible by four*'
         Should -Invoke Get-MgContext -Times 0

@@ -12,7 +12,8 @@ New-MgServicePrincipalAppRoleAssignment. Requires a connected Graph session with
 Application.ReadWrite.All and AppRoleAssignment.ReadWrite.All.
 
 .PARAMETER NamePrefix
-Prefix for generated application display names. A timestamp, unique run token, and sequence number are appended.
+Text included in generated application display names. Each name starts with a unique random token,
+followed by this prefix, a timestamp, a run token, and a sequence number.
 
 .PARAMETER Count
 Number of applications to create. Must be divisible by four. Defaults to 140.
@@ -71,6 +72,7 @@ foreach ($permission in @('Mail.Send', 'Mail.ReadWrite', 'Calendars.ReadWrite'))
 
 $runId = '{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $perProfile = $Count / 4
+$usedNamePrefixes = @{}
 if (-not $PSCmdlet.ShouldProcess(
     "tenant '$($context.TenantId)'",
     "Create $Count sample app registrations, service principals, and their configured application permission grants"
@@ -80,7 +82,11 @@ if (-not $PSCmdlet.ShouldProcess(
 
 for ($index = 1; $index -le $Count; $index++) {
     $permissionProfile = $permissionProfiles[[math]::Floor(($index - 1) / $perProfile)]
-    $displayName = '{0}-{1}-{2:D3}' -f $NamePrefix, $runId, $index
+    do {
+        $namePrefixToken = [guid]::NewGuid().ToString('N').Substring(0, 8)
+    } while ($usedNamePrefixes.ContainsKey($namePrefixToken))
+    $usedNamePrefixes[$namePrefixToken] = $true
+    $displayName = '{0}-{1}-{2}-{3:D3}' -f $namePrefixToken, $NamePrefix, $runId, $index
 
     $requiredResourceAccess = @()
     if ($permissionProfile.Permissions.Count -gt 0) {
