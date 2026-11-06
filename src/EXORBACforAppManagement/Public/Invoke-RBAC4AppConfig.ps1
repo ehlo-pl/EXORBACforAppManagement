@@ -217,7 +217,7 @@ function Invoke-RBAC4AppConfig {
             return
         }
         $appMetadata.PCode = $appMetadata.PCode.ToUpperInvariant()
-        if ($appMetadata.CmdbId -and $appMetadata.CmdbId -notmatch '^[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$') {
+        if ($appMetadata.CmdbId -and $appMetadata.CmdbId -notmatch '^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12})$') {
             Write-Error "Config '$Path' has an invalid Metadata.CmdbId '$($appMetadata.CmdbId)' (expected a GUID)."
             return
         }

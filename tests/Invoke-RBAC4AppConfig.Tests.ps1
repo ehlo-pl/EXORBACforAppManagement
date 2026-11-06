@@ -921,18 +921,29 @@ Metadata:
         It 'accepts an IP range without a location, and a location without an IP range' -TestCases @(
             @{ Metadata = @{ NetworkAccessIPRange = '10.0.0.5' } }
             @{ Metadata = @{ NetworkAccessLocation = 'DataCenter' } }
+            @{ Metadata = @{ CmdbId = '11112222333344445555666677778888' } }
         ) {
             param($Metadata)
             $path = Join-Path $TestDrive ("metadata-{0}.json" -f [guid]::NewGuid().ToString('N'))
             [pscustomobject]@{
                 SchemaVersion = '4.2'
-                Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }
+                Application   = [pscustomobject]@{
+                    AppId = '11111111-2222-3333-4444-555555555555'
+                    SpObjectId = '22222222-3333-4444-5555-666666666666'
+                    DisplayName = 'C'
+                }
                 Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
+                RbacScope     = [pscustomobject]@{
+                    ScopeKind = 'Recipients'
+                    ScopeRecipients = @('alice@contoso.com')
+                    ManagementScopeName = 'Metadata-Test'
+                }
                 Metadata      = [pscustomobject]$Metadata
             } | ConvertTo-Json -Depth 6 | Set-Content $path -Encoding UTF8
 
             $res = Invoke-RBAC4AppConfig -Path $path -Confirm:$false
 
+            $res.Errors | Should -BeNullOrEmpty
             foreach ($key in $Metadata.Keys) { $res.Metadata.$key | Should -Be $Metadata[$key] }
         }
 
