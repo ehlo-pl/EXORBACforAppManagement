@@ -34,7 +34,8 @@ Describe 'New-RBAC4AppConfig' {
         $content | Should -Match 'AppId:.*app-client-id'
         $content | Should -Match 'SpObjectId:.*sp-obj-id'
         $content | Should -Match 'DisplayName:.*Contoso'
-        $content | Should -Match 'TenantId:.*tenant-id-123'
+        $content | Should -Match '(?m)^  TenantId: \"tenant-id-123\"'
+        $content | Should -Not -Match '(?m)^TenantId:'
     }
 
     It 'escapes single quotes in display-name OData filters' {
@@ -169,7 +170,8 @@ Describe 'New-RBAC4AppConfig' {
         $parsed.Rbac.PSObject.Properties.Name      | Should -Not -Contain 'ChangeReference'
         $parsed.Metadata.ChangeReference           | Should -Be 'CHG-JSON'
         $parsed.RbacScope.AccessGroupName  | Should -Be 'UDLRAo1P-Contoso'
-        $parsed.TenantId                   | Should -Be 'tenant-id-123'
+        $parsed.Application.TenantId                   | Should -Be 'tenant-id-123'
+        $parsed.PSObject.Properties.Name   | Should -Not -Contain 'TenantId'
         $parsed.Application.AppId          | Should -Be 'app-client-id'
         $parsed.Application.SpObjectId     | Should -Be 'sp-obj-id'
         $parsed.Application.DisplayName    | Should -Be 'Contoso'
@@ -415,6 +417,7 @@ Describe 'New-RBAC4AppConfig' {
         $out = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $TestDrive -Format Json -Confirm:$false
 
         (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).PSObject.Properties.Name | Should -Not -Contain 'TenantId'
+        (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).Application.PSObject.Properties.Name | Should -Not -Contain 'TenantId'
     }
 
     It 'errors when AppId matches no service principal' {

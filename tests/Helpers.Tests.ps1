@@ -126,6 +126,42 @@ Describe 'ConvertTo-RBAC4AppConfig' {
         }
     }
 
+    It 'writes TenantId inside Application, and only when supplied' {
+        InModuleScope EXORBACforAppManagement {
+            $with = ConvertTo-RBAC4AppConfig -TenantId 't-1' -AppId 'a' -SpObjectId 's' -DisplayName 'Contoso' `
+                -Roles 'Application Mail.Send' -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P'
+            $with.Application.TenantId | Should -Be 't-1'
+            $with.PSObject.Properties.Name | Should -Not -Contain 'TenantId'
+            @($with.Application.PSObject.Properties.Name) | Should -Be @('AppId', 'SpObjectId', 'DisplayName', 'TenantId')
+
+            $yaml = ConvertTo-RBAC4AppYaml -Config $with
+            $yaml | Should -Match '(?m)^  TenantId: "t-1"'
+            $yaml | Should -Not -Match '(?m)^TenantId:'
+
+            $without = ConvertTo-RBAC4AppConfig -AppId 'a' -SpObjectId 's' -DisplayName 'Contoso' `
+                -Roles 'Application Mail.Send' -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P'
+            $without.Application.PSObject.Properties.Name | Should -Not -Contain 'TenantId'
+        }
+    }
+
+    It 'reads a legacy top-level TenantId into Application.TenantId (YAML and JSON)' {
+        InModuleScope EXORBACforAppManagement {
+            $yaml = "SchemaVersion: `"4.3`"`nTenantId: `"legacy-t`"`nApplication:`n  AppId: `"a`"`n  SpObjectId: `"s`"`n  DisplayName: `"App`""
+            $parsed = ConvertFrom-RBAC4AppYaml -Content $yaml
+            $parsed.Application.TenantId | Should -Be 'legacy-t'
+            $parsed.PSObject.Properties.Name | Should -Not -Contain 'TenantId'
+
+            $raw = ConvertFrom-RBAC4AppYaml -Content $yaml -Raw
+            $raw.Application.TenantId | Should -Be 'legacy-t'
+
+            $json = '{"SchemaVersion":"4.3","TenantId":"legacy-t","Application":{"AppId":"a","SpObjectId":"s","DisplayName":"App"}}' | ConvertFrom-Json
+            (Complete-RBAC4AppConfig -Config $json).Application.TenantId | Should -Be 'legacy-t'
+
+            $both = '{"SchemaVersion":"4.3","TenantId":"old","Application":{"AppId":"a","SpObjectId":"s","DisplayName":"App","TenantId":"new"}}' | ConvertFrom-Json
+            (Complete-RBAC4AppConfig -Config $both).Application.TenantId | Should -Be 'new'
+        }
+    }
+
     It 'produces a config that survives a YAML round trip through the reader' {
         InModuleScope EXORBACforAppManagement {
             $cfg = ConvertTo-RBAC4AppConfig -TenantId 't' -AppId 'a' -SpObjectId 's' -DisplayName 'Contoso' `

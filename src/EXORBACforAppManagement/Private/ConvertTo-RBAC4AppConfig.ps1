@@ -83,12 +83,14 @@ function ConvertTo-RBAC4AppConfig {
     $config = [ordered]@{
         SchemaVersion = $script:RBAC4AppConfigSchemaVersion
     }
-    if ($TenantId) { $config.TenantId = $TenantId }
-    $config.Application = [pscustomobject]@{
+    $application = [ordered]@{
         AppId       = $AppId
         SpObjectId  = $SpObjectId
         DisplayName = $DisplayName
     }
+    # Informational only; written (as Application.TenantId) only when known.
+    if ($TenantId) { $application.TenantId = $TenantId }
+    $config.Application = [pscustomobject]$application
 
     $config.Rbac = [pscustomobject]@{ Roles = @($Roles) }
 

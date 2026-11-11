@@ -8,7 +8,6 @@ BeforeAll {
     # code passes (e.g. -Role) must be declared so the mock can bind and filter on them.
     function global:Get-ServicePrincipal { [CmdletBinding()] param([string]$Identity) }
     function global:Get-ManagementRoleAssignment { [CmdletBinding()] param([string]$Role, [string]$Identity) }
-    function global:Get-ApplicationAccessPolicy { [CmdletBinding()] param([string]$AppId) }
     function global:Get-UnifiedGroup { [CmdletBinding()] param([string]$Identity) }
     function global:Get-UnifiedGroupLinks { [CmdletBinding()] param([string]$Identity, [string]$LinkType) }
     function global:Get-DistributionGroup { [CmdletBinding()] param([string]$Identity) }
@@ -38,7 +37,7 @@ BeforeAll {
 
 AfterAll {
     Remove-Module EXORBACforAppManagement -Force -ErrorAction SilentlyContinue
-    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-ApplicationAccessPolicy','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember','Get-ManagementScope','Get-Recipient') {
+    foreach ($n in 'Get-ServicePrincipal','Get-ManagementRoleAssignment','Get-UnifiedGroup','Get-UnifiedGroupLinks','Get-DistributionGroup','Get-DistributionGroupMember','Get-ManagementScope','Get-Recipient') {
         Remove-Item "Function:\global:$n" -ErrorAction SilentlyContinue
     }
 }
@@ -72,8 +71,31 @@ Describe 'Get-RBAC4AppEntry (no filter)' {
 
     It 'projects the expected shape' {
         $r = Get-RBAC4AppEntry | Select-Object -First 1
-        $r.PSObject.Properties.Name | Should -Be @('Name','RoleAssignmentName','Role','RoleAssigneeName','RoleAssigneeType','EffectiveUserName','App','DisplayName','AppId','ServicePrincipalId','Scope','ManagementScope','ScopeKind','ScopeFilter','ScopeGroupType','ScopeMembers','RecipientScope','Enabled','Guid','Identity')
+        $r.PSObject.Properties.Name | Should -Be @('Name','RoleAssignmentName','Role','RoleAssigneeName','RoleAssigneeType','EffectiveUserName','App','DisplayName','AppId','ServicePrincipalId','ServicePrincipalIdSource','Scope','ScopeSource','ManagementScope','ScopeKind','ScopeFilter','ScopeGroupName','ScopeGroupType','ScopeGroupResolved','ScopeMembers','RecipientScope','Enabled','Guid','Identity','Warnings','Errors')
+        $r.PSObject.TypeNames | Should -Contain 'RBAC4App.Entry'
         $r.RoleAssignmentName | Should -Be $r.Name
+    }
+
+    It 'reports where ServicePrincipalId and the scope came from' {
+        $tailspin = Get-RBAC4AppEntry -WarningAction SilentlyContinue | Where-Object Name -eq 'AppMailboxSettings-Tailspin'
+        $tailspin.ServicePrincipalIdSource | Should -Be 'ExoPointer'
+        $tailspin.ScopeSource | Should -Be 'Legacy'
+        $tailspin.ScopeGroupName | Should -Be 'UDLRAo1P-Tailspin'
+        $tailspin.ScopeGroupResolved | Should -BeTrue
+        $tailspin.Warnings | Should -BeNullOrEmpty
+        $tailspin.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'reports an unreadable custom recipient scope on the row without probing it as a group' {
+        $warnings = @()
+        $contoso = Get-RBAC4AppEntry -WarningVariable warnings -WarningAction SilentlyContinue | Where-Object Name -eq 'AppMailSend-Contoso'
+        $contoso.ScopeSource | Should -Be 'ManagementScope'
+        $contoso.ManagementScope | Should -Be 'scope'
+        $contoso.ScopeKind | Should -BeNullOrEmpty
+        $contoso.ScopeGroupResolved | Should -BeFalse
+        ($contoso.Warnings -join ';') | Should -Match "Could not read management scope 'scope'"
+        @($warnings | Where-Object { "$_" -match "Could not read management scope 'scope'" }).Count | Should -Be 1
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-DistributionGroup -Times 0 -ParameterFilter { $Identity -eq 'scope' }
     }
 
     It 'passes EffectiveUserName/App through from the raw assignment as-is' {
@@ -125,6 +147,28 @@ Describe 'Get-RBAC4AppEntry (no filter)' {
         $r.AppId | Should -Be '33333333-3333-3333-3333-333333333333'
         $r.ServicePrincipalId | Should -Be '44444444-4444-4444-4444-444444444444'
         ($warnings -join ';') | Should -Not -Match 'Could not resolve EXO assignee'
+    }
+
+    It 'resolves a scope group via Get-Recipient -Anr when Get-UnifiedGroup and Get-DistributionGroup miss it' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailR-Renamed'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'Um365RAo1-Renamed_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient {
+            @(
+                [pscustomobject]@{ Name = 'someone'; DisplayName = 'Um365RAo1-Renamed owner'; RecipientTypeDetails = 'UserMailbox'; Guid = 'u1' }
+                [pscustomobject]@{ Name = 'Um365RAo1-Renamed_abc'; DisplayName = 'Um365RAo1-Renamed'; Alias = 'renamed'; RecipientTypeDetails = 'GroupMailbox'; Guid = 'g1' }
+            )
+        } -ParameterFilter { $Anr -eq 'Um365RAo1-Renamed' }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks {
+            @([pscustomobject]@{ PrimarySmtpAddress = 'alice@tailspin.com' })
+        } -ParameterFilter { $Identity -eq 'g1' }
+
+        $warn = @()
+        $row = Get-RBAC4AppEntry -WarningVariable warn -WarningAction SilentlyContinue
+
+        $row.ScopeGroupType | Should -Be 'M365Group'
+        @($row.ScopeMembers) | Should -Be @('alice@tailspin.com')
+        (@($warn | ForEach-Object { "$_" }) -join ';') | Should -Not -Match 'Could not resolve scope group'
     }
 }
 
@@ -198,542 +242,6 @@ Describe 'Get-RBAC4AppEntry application filter' {
     }
 }
 
-Describe 'Get-RBAC4AppEntry -ApplicationAccessPolicy' {
-    BeforeEach {
-        $script:Policies = @(
-            [pscustomobject]@{ AppId = '11111111-1111-1111-1111-111111111111'; AccessRight = 'RestrictAccess'; ScopeName = 'ContosoGroup'; Description = 'Contoso policy' }
-            [pscustomobject]@{ AppId = '33333333-3333-3333-3333-333333333333'; AccessRight = 'RestrictAccess'; ScopeName = 'FabrikamGroup'; Description = 'Fabrikam policy' }
-        )
-        $script:PolicyAppIdWasBound = $null
-        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy {
-            param([string]$AppId)
-            $script:PolicyAppIdWasBound = $PSBoundParameters.ContainsKey('AppId')
-            if ($AppId) { $script:Policies | Where-Object AppId -eq $AppId }
-            else { $script:Policies }
-        }
-        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { }
-    }
-
-    It 'returns all policies without an application identity filter' {
-        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy
-
-        $r.Count | Should -Be 2
-        ($r.AppId | Sort-Object) | Should -Be @('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333')
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1
-        $script:PolicyAppIdWasBound | Should -BeFalse
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
-    }
-
-    It 'passes AppId to Get-ApplicationAccessPolicy and returns only that app policy' {
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
-            $script:ExoServicePrincipals
-        }
-
-        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy -AppId '11111111-1111-1111-1111-111111111111'
-
-        $r.Count | Should -Be 1
-        $r.AppId | Should -Be '11111111-1111-1111-1111-111111111111'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1 -ParameterFilter { $AppId -eq '11111111-1111-1111-1111-111111111111' }
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
-    }
-}
-
-Describe 'Get-RBAC4AppEntry -ByApplication' {
-    BeforeEach {
-        $script:AppAssignments = @(
-            [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = 'NT AUTHORITY\SYSTEM (Contoso_SP)'; App = 'Contoso_SP' }
-            [pscustomobject]@{ Name = 'AppCldR-Contoso'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = 'NT AUTHORITY\SYSTEM (Contoso_SP)'; App = 'Contoso_SP' }
-            [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam'; EffectiveUserName = $null; App = $null }
-            [pscustomobject]@{ Name = 'AppMailSend-Helpdesk'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Helpdesk'; RoleAssigneeType = 'RoleGroup'; Enabled = $true; EffectiveUserName = $null; App = $null }
-        )
-
-        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            param($Role)
-            $script:AppAssignments | Where-Object { -not $Role -or $_.Role -eq $Role }
-        }
-
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { $script:ExoServicePrincipals }
-
-        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup {
-            if ($Identity -eq 'Um365RAo1-Contoso') { [pscustomobject]@{ DisplayName = 'Um365RAo1-Contoso'; Identity = $Identity } }
-        }
-        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks {
-            @([pscustomobject]@{ PrimarySmtpAddress = 'shared@contoso.com'; Name = 'shared' })
-        }
-        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
-            if ($Identity -eq 'UDLRAo1-Fabrikam') { [pscustomobject]@{ DisplayName = 'UDLRAo1-Fabrikam'; Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' } }
-        }
-        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember {
-            @([pscustomobject]@{ PrimarySmtpAddress = 'dl-member@fabrikam.com'; Name = 'dl-member' })
-        }
-    }
-
-    Describe 'Get-RBAC4AppEntry -ExportConfig' {
-        BeforeEach {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                $script:Assignments | Where-Object Role -eq 'Application MailboxSettings.Read'
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { $script:ExoServicePrincipals }
-            Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
-            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
-                if ($Identity -eq 'UDLRAo1P-Tailspin') {
-                    [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' }
-                }
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember {
-                @([pscustomobject]@{ PrimarySmtpAddress = 'shared@tailspin.com'; Name = 'shared' })
-            }
-        }
-
-        It 'writes a YAML config compatible with Invoke-RBAC4AppConfig using a normalized assignment filename' {
-            $result = Get-RBAC4AppEntry -ExportConfig -ExportPath $TestDrive
-            $path = Join-Path $TestDrive 'rbac4app-AppMailboxSettings-Tailspin.yml'
-
-            Test-Path -LiteralPath $path | Should -BeTrue
-            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $path } {
-                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
-            }
-            $config.SchemaVersion | Should -Be '4.3'
-            $config.Application.DisplayName | Should -Be 'Tailspin'
-            $config.Application.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
-            @($config.Rbac.Roles) | Should -Be @('Application MailboxSettings.Read')
-            $config.RbacScope.ScopeKind | Should -Be 'Group'
-            $config.RbacScope.AssignmentScope | Should -Be 'RecipientGroupScope'
-            $config.RbacScope.AccessGroupName | Should -Be 'UDLRAo1P-Tailspin'
-            @($config.RbacScope.Members) | Should -Contain 'shared@tailspin.com'
-            $result.Name | Should -Be 'AppMailboxSettings-Tailspin'
-        }
-
-        It 'resolves a service principal when the assignee name omits the _SP suffix' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                [pscustomobject]@{
-                    Name = 'AppMailboxSettings-Tailspin'
-                    Role = 'Application MailboxSettings.Read'
-                    RoleAssigneeName = 'Tailspin'
-                    RoleAssigneeType = 'ServicePrincipal'
-                    CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'
-                    RecipientWriteScope = 'Group'
-                    Enabled = $true
-                }
-            }
-
-            $errors = @()
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $TestDrive -ErrorVariable errors
-            $path = Join-Path $TestDrive 'rbac4app-AppMailboxSettings-Tailspin.yml'
-            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $path } {
-                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
-            }
-
-            $errors | Should -BeNullOrEmpty
-            $config.Application.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
-            $config.Application.SpObjectId | Should -Be '66666666-6666-6666-6666-666666666666'
-        }
-
-        It 'exports a GUID assignee using a unique generated assignment name when the pointer object id is missing' {
-            Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
-                [pscustomobject]@{ DisplayName = 'api-P00003-sp_SP'; AppId = '55555555-5555-5555-5555-555555555555'; ObjectId = $null }
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                [pscustomobject]@{
-                    Name = 'AppMailSend-api-P00003-sp'; Role = 'Application Mail.Send'
-                    RoleAssigneeName = '66666666-6666-6666-6666-666666666666'; RoleAssigneeType = 'ServicePrincipal'
-                    EffectiveUserName = '66666666-6666-6666-6666-666666666666'
-                    CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'
-                    RecipientWriteScope = 'Group'; Enabled = $true
-                }
-            }
-            $path = Join-Path $TestDrive 'assignment.json'
-            $errors = @()
-            $warnings = @()
-            $result = Get-RBAC4AppEntry -ExportConfig -ExportPath $path -ExportFormat Json -ErrorVariable errors -WarningVariable warnings -WarningAction SilentlyContinue
-            $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-            $errors | Should -BeNullOrEmpty
-            $result.RoleAssignmentName | Should -Be 'AppMailSend-api-P00003-sp'
-            $result.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
-            $config.Application.AppId | Should -Be $result.AppId
-            $config.Application.SpObjectId | Should -Be '66666666-6666-6666-6666-666666666666'
-            ($config.Runtime.CollectedWarnings -join ';') | Should -Match 'verify the application identity'
-            ($warnings -join ';') | Should -Match 'verify the application identity'
-            $byAppPath = Join-Path $TestDrive 'byapp.json'
-            $byApp = Get-RBAC4AppEntry -ByApplication -ExportConfig -ExportPath $byAppPath -ExportFormat Json -WarningAction SilentlyContinue
-            $byApp.RoleAssignmentNames | Should -Contain $result.Name
-            (Get-Content -LiteralPath $byAppPath -Raw | ConvertFrom-Json).Application.AppId | Should -Be $result.AppId
-        }
-
-        It 'does not guess an identity from ambiguous, conflicting, or uncorroborated assignment names' -TestCases @(
-            @{ Case = 'ambiguous' }
-            @{ Case = 'conflicting' }
-            @{ Case = 'ambiguous with object id' }
-            @{ Case = 'uncorroborated' }
-            @{ Case = 'wrong role name' }
-        ) {
-            param($Case)
-            $script:NameFallbackCase = $Case
-            Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
-                $id = if ($script:NameFallbackCase -eq 'conflicting') { '77777777-7777-7777-7777-777777777777' } else { $null }
-                [pscustomobject]@{ DisplayName = 'Tailspin_SP'; AppId = '55555555-5555-5555-5555-555555555555'; ObjectId = $id }
-                if ($script:NameFallbackCase -in @('ambiguous', 'ambiguous with object id')) {
-                    $otherId = if ($script:NameFallbackCase -eq 'ambiguous with object id') { '77777777-7777-7777-7777-777777777777' } else { $null }
-                    [pscustomobject]@{ DisplayName = 'Tailspin_SP'; AppId = '88888888-8888-8888-8888-888888888888'; ObjectId = $otherId }
-                }
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                [pscustomobject]@{
-                    Name = $(if ($script:NameFallbackCase -eq 'wrong role name') { 'AppMailR-Tailspin' } else { 'AppMailSend-Tailspin' })
-                    Role = 'Application Mail.Send'; RoleAssigneeName = '66666666-6666-6666-6666-666666666666'; RoleAssigneeType = 'ServicePrincipal'
-                    EffectiveUserName = $(if ($script:NameFallbackCase -eq 'uncorroborated') { '77777777-7777-7777-7777-777777777777' } else { '66666666-6666-6666-6666-666666666666' })
-                    CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'
-                    RecipientWriteScope = 'Group'; Enabled = $true
-                }
-            }
-            $path = Join-Path $TestDrive "$Case.json"
-            $errors = @()
-            $result = Get-RBAC4AppEntry -ExportConfig -ExportPath $path -ExportFormat Json -ErrorVariable errors -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
-            $result.AppId | Should -BeNullOrEmpty
-            ($errors -join ';') | Should -Match 'Cannot export role assignment'
-            Test-Path -LiteralPath $path | Should -BeFalse
-        }
-
-        It 'refuses a name-based match when another assignment for the assignee has a conflicting effective user id' {
-            Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
-                [pscustomobject]@{ DisplayName = 'Tailspin_SP'; AppId = '55555555-5555-5555-5555-555555555555'; ObjectId = $null }
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                foreach ($id in @('66666666-6666-6666-6666-666666666666', '77777777-7777-7777-7777-777777777777')) {
-                    [pscustomobject]@{
-                        Name = 'AppMailSend-Tailspin'; Role = 'Application Mail.Send'
-                        RoleAssigneeName = '66666666-6666-6666-6666-666666666666'; RoleAssigneeType = 'ServicePrincipal'
-                        EffectiveUserName = $id; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'
-                        RecipientWriteScope = 'Group'; Enabled = $true
-                    }
-                }
-            }
-            $path = Join-Path $TestDrive 'conflicting-assignments.json'
-            $errors = @()
-            $result = Get-RBAC4AppEntry -ByApplication -ExportConfig -ExportPath $path -ExportFormat Json -ErrorVariable errors -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
-            $result.AppId | Should -BeNullOrEmpty
-            ($errors -join ';') | Should -Match 'Cannot export role assignment'
-            Test-Path -LiteralPath $path | Should -BeFalse
-        }
-
-        It 'writes all assignments to one JSON file when an explicit filename is supplied' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                @(
-                    [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-                    [pscustomobject]@{ Name = 'AppCldR-Fabrikam'; Role = 'Application Calendars.Read'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-                    [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-                )
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
-            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
-                if ($Identity -eq 'UDLRAo1P-Tailspin') {
-                    [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' }
-                }
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember {
-                @([pscustomobject]@{ PrimarySmtpAddress = 'shared@tailspin.com'; Name = 'shared' })
-            }
-
-            $path = Join-Path $TestDrive 'inventory.yml'
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $path -ExportFormat Json
-            $path = Join-Path $TestDrive 'inventory.json'
-
-            Test-Path -LiteralPath $path | Should -BeTrue
-            $configs = @(Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
-            $configs.Count | Should -Be 3
-            ($configs | Where-Object { $_.Application.DisplayName -eq 'Contoso' }).Rbac.Roles | Should -Be 'Application Mail.Send'
-            $configs.SchemaVersion | Should -Be @('4.3', '4.3', '4.3')
-        }
-
-        It 'exports each ByApplication result to a specifically named JSON config' {
-            $path = Join-Path $TestDrive 'by-application.json'
-            $result = Get-RBAC4AppEntry -ByApplication -ExportConfig -ExportPath $path -ExportFormat Json
-
-            Test-Path -LiteralPath $path | Should -BeTrue
-            $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-            @($config.Rbac.Roles) | Should -Be @('Application MailboxSettings.Read')
-            $result.DisplayName | Should -Be 'Tailspin'
-        }
-
-        It 'exports one config per application holding all of its roles with -ByApplication' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                foreach ($r in 'Mail.Send', 'Mail.Read') {
-                    [pscustomobject]@{ Name = "App$r-Tailspin"; Role = "Application $r"; RoleAssigneeName = '66666666-6666-6666-6666-666666666666'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-                }
-            }
-            $dir = Join-Path $TestDrive 'byapp'
-
-            $result = Get-RBAC4AppEntry -ByApplication -ExportConfig -ExportPath $dir
-
-            @(Get-ChildItem -LiteralPath $dir).Name | Should -Be @('rbac4app-Tailspin.yml')
-            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = (Join-Path $dir 'rbac4app-Tailspin.yml') } {
-                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
-            }
-            @($config.Rbac.Roles) | Should -Be @('Application Mail.Read', 'Application Mail.Send')
-            $config.RbacScope.AccessGroupName | Should -Be 'UDLRAo1P-Tailspin'
-            $result.AssignmentCount | Should -Be 2
-
-            # A single application written to an explicit file is one config, not a JSON array.
-            $file = Join-Path $TestDrive 'byapp-single.json'
-            $null = Get-RBAC4AppEntry -ByApplication -ExportConfig -ExportPath $file -ExportFormat Json
-            $json = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
-            $json -is [array] | Should -BeFalse
-            @($json.Rbac.Roles) | Should -Be @('Application Mail.Read', 'Application Mail.Send')
-        }
-
-        It 'numbers exported files whose assignment names sanitize to the same file name instead of overwriting' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                foreach ($pair in @(@('App Mail/Send-Tailspin', 'Mail.Send'), @('App Mail:Send-Tailspin', 'Mail.Read'), @('App Mail*Send-Tailspin', 'Calendars.Read'))) {
-                    [pscustomobject]@{ Name = $pair[0]; Role = "Application $($pair[1])"; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-                }
-            }
-            $dir = Join-Path $TestDrive 'collide'
-
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $dir
-
-            $files = @(Get-ChildItem -LiteralPath $dir | Sort-Object Name)
-            $files.Count | Should -Be 3
-            $roles = foreach ($f in $files) {
-                InModuleScope EXORBACforAppManagement -Parameters @{ Path = $f.FullName } {
-                    @((ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)).Rbac.Roles)
-                }
-            }
-            @($roles | Sort-Object) | Should -Be @('Application Calendars.Read', 'Application Mail.Read', 'Application Mail.Send')
-        }
-
-        It 'exports recipient-scoped assignments with the resolved recipient list' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                [pscustomobject]@{
-                    Name = 'AppMailSend-Tailspin'
-                    Role = 'Application Mail.Send'
-                    RoleAssigneeName = 'Tailspin_SP'
-                    RoleAssigneeType = 'ServicePrincipal'
-                    CustomResourceScope = 'MSRAo1P-Tailspin'
-                    RecipientWriteScope = 'CustomRecipientScope'
-                    Enabled = $true
-                }
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementScope {
-                [pscustomobject]@{
-                    Name = $Identity
-                    RecipientFilter = "PrimarySmtpAddress -eq 'alice@tailspin.com' -or PrimarySmtpAddress -eq 'bob@tailspin.com'"
-                }
-            }
-
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $TestDrive
-            $path = Join-Path $TestDrive 'rbac4app-AppMailSend-Tailspin.yml'
-            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $path } {
-                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
-            }
-
-            $config.RbacScope.ScopeKind | Should -Be 'Recipients'
-            @($config.RbacScope.ScopeRecipients) | Should -Be @('alice@tailspin.com', 'bob@tailspin.com')
-        }
-
-        It 'still exports an assignment whose scope group cannot be resolved, inferring its type with a warning' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                @(
-                    [pscustomobject]@{ Name = 'AppMailR-Gone'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'Um365RAo1-Gone_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-                    [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-                )
-            }
-            $dir = Join-Path $TestDrive 'partial'
-
-            $errors = @(); $warn = @()
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $dir -ErrorVariable errors -WarningVariable warn -WarningAction SilentlyContinue
-
-            $errors | Should -BeNullOrEmpty
-            @(Get-ChildItem -LiteralPath $dir).Count | Should -Be 2
-            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = (Join-Path $dir 'rbac4app-AppMailR-Gone.yml') } {
-                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
-            }
-            $config.RbacScope.AccessGroupName | Should -Be 'Um365RAo1-Gone'
-            $config.RbacScope.AccessGroupType | Should -Be 'M365Group'
-            ($warn.Message -join ';') | Should -Match "inferred AccessGroupType 'M365Group'"
-        }
-
-        It 'resolves a scope group via Get-Recipient -Anr when Get-UnifiedGroup and Get-DistributionGroup miss it' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                [pscustomobject]@{ Name = 'AppMailR-Renamed'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'Um365RAo1-Renamed_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-            }
-            Mock -ModuleName EXORBACforAppManagement Get-Recipient {
-                @(
-                    [pscustomobject]@{ Name = 'someone'; DisplayName = 'Um365RAo1-Renamed owner'; RecipientTypeDetails = 'UserMailbox'; Guid = 'u1' }
-                    [pscustomobject]@{ Name = 'Um365RAo1-Renamed_abc'; DisplayName = 'Um365RAo1-Renamed'; Alias = 'renamed'; RecipientTypeDetails = 'GroupMailbox'; Guid = 'g1' }
-                )
-            } -ParameterFilter { $Anr -eq 'Um365RAo1-Renamed' }
-            Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks {
-                @([pscustomobject]@{ PrimarySmtpAddress = 'alice@tailspin.com' })
-            } -ParameterFilter { $Identity -eq 'g1' }
-
-            $warn = @()
-            $row = Get-RBAC4AppEntry -WarningVariable warn -WarningAction SilentlyContinue
-
-            $row.ScopeGroupType | Should -Be 'M365Group'
-            @($row.ScopeMembers) | Should -Be @('alice@tailspin.com')
-            (@($warn | ForEach-Object { "$_" }) -join ';') | Should -Not -Match 'Could not resolve scope group'
-        }
-
-        It 'honors WhatIf without writing config files' {
-            $whatIfPath = Join-Path $TestDrive 'whatif'
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $whatIfPath -WhatIf
-
-            Test-Path -LiteralPath $whatIfPath | Should -BeFalse
-        }
-
-        It 'records the inferred group type warning in the exported config Runtime section' {
-            Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-                [pscustomobject]@{ Name = 'AppMailR-Gone'; Role = 'Application Mail.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'Um365RAo1-Gone_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true }
-            }
-            $dir = Join-Path $TestDrive 'runtime-inferred'
-
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $dir -WarningAction SilentlyContinue
-            $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = (Join-Path $dir 'rbac4app-AppMailR-Gone.yml') } {
-                ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
-            }
-
-            @($config.Runtime.CollectedWarnings).Count | Should -Be 1
-            $config.Runtime.CollectedWarnings[0] | Should -Match "inferred AccessGroupType 'M365Group'"
-            @($config.Runtime.CollectedErrors).Count | Should -Be 0
-        }
-
-        It 'writes an empty Runtime section to an exported config when nothing was collected' {
-            $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $TestDrive -ExportFormat Json
-            $json = Get-Content -LiteralPath (Join-Path $TestDrive 'rbac4app-AppMailboxSettings-Tailspin.json') -Raw | ConvertFrom-Json
-
-            $json.Runtime.PSObject.Properties.Name | Should -Be @('GeneratedAt', 'OperatorUsername', 'OperatorMachineName', 'CollectedErrors', 'CollectedWarnings')
-            $json.Runtime.OperatorMachineName | Should -Be ([System.Environment]::MachineName)
-            @($json.Runtime.CollectedErrors).Count | Should -Be 0
-            @($json.Runtime.CollectedWarnings).Count | Should -Be 0
-        }
-    }
-
-    It 'returns one row per distinct registered application' {
-        $r = Get-RBAC4AppEntry -ByApplication
-
-        $r.Count | Should -Be 2
-        ($r.DisplayName | Sort-Object) | Should -Be @('Contoso', 'Fabrikam')
-        ($r | Where-Object DisplayName -eq 'Contoso').Roles | Should -Be @('Application Calendars.Read', 'Application Mail.Send')
-    }
-
-    It 'aggregates non-blank EffectiveUserName/App values across an application''s assignments' {
-        $r = Get-RBAC4AppEntry -ByApplication
-
-        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
-        $contoso.EffectiveUserNames | Should -Be @('NT AUTHORITY\SYSTEM (Contoso_SP)')
-        $contoso.Apps | Should -Be @('Contoso_SP')
-
-        $fabrikam = $r | Where-Object DisplayName -eq 'Fabrikam'
-        $fabrikam.EffectiveUserNames | Should -BeNullOrEmpty
-        $fabrikam.Apps | Should -BeNullOrEmpty
-    }
-
-    It 'resolves AppId/ServicePrincipalId from the EXO service principal pointer, with the "_SP" suffix stripped from DisplayName' {
-        $r = Get-RBAC4AppEntry -ByApplication
-
-        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
-        $contoso.AppId | Should -Be '11111111-1111-1111-1111-111111111111'
-        $contoso.ServicePrincipalId | Should -Be '22222222-2222-2222-2222-222222222222'
-        $contoso.ExoServicePrincipal | Should -Be 'Contoso_SP'
-    }
-
-    It 'resolves the scope group name and membership for an M365Group-scoped app' {
-        $r = Get-RBAC4AppEntry -ByApplication
-
-        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
-        $contoso.ScopeGroupNames | Should -Be @('Um365RAo1-Contoso')
-        $contoso.ScopeGroupMembers | Should -Contain 'shared@contoso.com'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroupLinks -Times 1 -ParameterFilter { $Identity -eq 'Um365RAo1-Contoso' }
-    }
-
-    It 'resolves the scope group name and membership for a DistributionList-scoped app' {
-        $r = Get-RBAC4AppEntry -ByApplication
-
-        $fabrikam = $r | Where-Object DisplayName -eq 'Fabrikam'
-        $fabrikam.ScopeGroupNames | Should -Be @('UDLRAo1-Fabrikam')
-        $fabrikam.ScopeGroupMembers | Should -Contain 'dl-member@fabrikam.com'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-DistributionGroupMember -Times 1
-    }
-
-    It 'caches scope group membership so a group shared by two applications is only read once' {
-        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            param($Role)
-            @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = $null; App = $null }
-                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Shared_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'; EffectiveUserName = $null; App = $null }
-            ) | Where-Object { -not $Role -or $_.Role -eq $Role }
-        }
-        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'Um365RAo1-Shared'; Identity = $Identity } }
-
-        $null = Get-RBAC4AppEntry -ByApplication
-
-        # Two different assignments (different apps, different CustomResourceScope GUIDs) resolve
-        # to the SAME group name "Um365RAo1-Shared" - its membership is still only read once.
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroup -Times 1
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-UnifiedGroupLinks -Times 1
-    }
-
-    It 'falls back to the raw CustomResourceScope value when it does not match the GroupName-underscore-GUID pattern, and warns when that cannot be resolved either' {
-        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            param($Role)
-            @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'SomeCustomScopeNoGuidSuffix'; EffectiveUserName = $null; App = $null }
-            ) | Where-Object { -not $Role -or $_.Role -eq $Role }
-        }
-        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
-        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
-
-        $warnings = $null
-        $r = Get-RBAC4AppEntry -ByApplication -WarningVariable warnings -WarningAction SilentlyContinue
-
-        $contoso = $r | Where-Object DisplayName -eq 'Contoso'
-        $contoso.ScopeGroupNames | Should -Be @('SomeCustomScopeNoGuidSuffix')
-        $contoso.ScopeGroupMembers | Should -BeNullOrEmpty
-        ($warnings -join ';') | Should -Match "Could not resolve scope group 'SomeCustomScopeNoGuidSuffix'"
-    }
-
-    It 'normalizes a short role filter before querying EXO' {
-        $r = Get-RBAC4AppEntry -ByApplication -Role 'Mail.Send'
-
-        $r.Count | Should -Be 2
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 1 -ParameterFilter { $Role -eq 'Application Mail.Send' }
-    }
-
-    It 'filters by enabled state after collecting assignments' {
-        $r = Get-RBAC4AppEntry -ByApplication -Enabled $false
-
-        $r.Count | Should -Be 1
-        $r.DisplayName | Should -Be 'Fabrikam'
-        $r.DisabledAssignmentCount | Should -Be 1
-    }
-}
-
-Describe 'Get-RBAC4AppEntry -ByApplication with an unresolvable EXO service principal' {
-    BeforeEach {
-        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            @(
-                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $true; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f'; EffectiveUserName = $null; App = $null }
-                [pscustomobject]@{ Name = 'AppMailSend-Fabrikam'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Fabrikam_SP'; RoleAssigneeType = 'ServicePrincipal'; Enabled = $false; RecipientWriteScope = 'CustomRecipientScope'; CustomRecipientWriteScope = 'UDLRAo1-Fabrikam'; EffectiveUserName = $null; App = $null }
-            )
-        }
-        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
-        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { }
-    }
-
-    It 'returns EXO-only rows and warns once per unresolvable assignee, without needing Microsoft Graph' {
-        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @() }
-
-        $warnings = $null
-        $r = Get-RBAC4AppEntry -ByApplication -WarningVariable warnings -WarningAction SilentlyContinue
-
-        $r.Count | Should -Be 2
-        ($r | Where-Object DisplayName -eq 'Contoso').AppId | Should -BeNullOrEmpty
-        ($r | Where-Object DisplayName -eq 'Contoso').ServicePrincipalId | Should -BeNullOrEmpty
-        ($r | Where-Object DisplayName -eq 'Contoso').DisplayName | Should -Be 'Contoso'
-        ($warnings -join ';') | Should -Match "Could not resolve EXO assignee 'Contoso_SP'"
-    }
-}
-
 Describe 'Get-RBAC4AppEntry empty ServicePrincipalId fallback to EffectiveUserName' {
     BeforeEach {
         $script:FallbackGuid = 'abcdef01-2345-6789-abcd-ef0123456789'
@@ -762,11 +270,6 @@ Describe 'Get-RBAC4AppEntry empty ServicePrincipalId fallback to EffectiveUserNa
         @($warn | Where-Object { "$_" -match 'from EffectiveUserName' }).Count | Should -Be 1
     }
 
-    It 'fills ServicePrincipalId in the -ByApplication view' {
-        $r = Get-RBAC4AppEntry -ByApplication -WarningAction SilentlyContinue
-        $r.ServicePrincipalId | Should -Be $script:FallbackGuid
-    }
-
     It 'extracts the GUID when EffectiveUserName wraps it in other text' {
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
             [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true; EffectiveUserName = "ServicePrincipal ($($script:FallbackGuid))"; App = $null }
@@ -784,34 +287,7 @@ Describe 'Get-RBAC4AppEntry empty ServicePrincipalId fallback to EffectiveUserNa
         $r.ServicePrincipalId | Should -BeNullOrEmpty
         ($warn -join ';') | Should -Match 'holds no object id'
     }
-
-    It 'exports the fallback SpObjectId and records the warning in Runtime.CollectedWarnings' {
-        $dir = Join-Path $TestDrive 'fallback'
-        $errors = @()
-        $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $dir -ErrorVariable errors -WarningAction SilentlyContinue
-
-        $errors | Should -BeNullOrEmpty
-        $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = (Join-Path $dir 'rbac4app-AppMailboxSettings-Tailspin.yml') } {
-            ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw)
-        }
-        $config.Application.SpObjectId | Should -Be $script:FallbackGuid
-        @($config.Runtime.CollectedWarnings).Count | Should -Be 1
-        $config.Runtime.CollectedWarnings[0] | Should -Match 'from EffectiveUserName'
-    }
-
-    It 'still refuses to export when neither the pointer nor EffectiveUserName yields an object id' {
-        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
-            [pscustomobject]@{ Name = 'AppMailboxSettings-Tailspin'; Role = 'Application MailboxSettings.Read'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomResourceScope = 'UDLRAo1P-Tailspin_20d5848c-4d61-4b82-a44f-205adc37321f'; RecipientWriteScope = 'Group'; Enabled = $true; EffectiveUserName = $null; App = $null }
-        }
-        $dir = Join-Path $TestDrive 'nofallback'
-        $errors = @()
-        $null = Get-RBAC4AppEntry -ExportConfig -ExportPath $dir -ErrorVariable errors -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
-
-        ($errors -join ';') | Should -Match 'could not be resolved'
-        Test-Path -LiteralPath $dir | Should -BeFalse
-    }
 }
-
 
 Describe 'Get-RBAC4AppEntry management scope resolution' {
     BeforeEach {
@@ -876,8 +352,8 @@ Describe 'Get-RBAC4AppEntry management scope resolution' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementScope -ParameterFilter { $Identity -eq 'MSRAo1P-Contoso' } -Times 1 -Exactly
     }
 
-    It 'reports management scope names and kinds per application with -ByApplication' {
-        $contoso = Get-RBAC4AppEntry -ByApplication | Where-Object DisplayName -eq 'Contoso'
+    It 'reports management scope names and kinds per application via Get-RBAC4AppApplication' {
+        $contoso = Get-RBAC4AppEntry | Get-RBAC4AppApplication | Where-Object DisplayName -eq 'Contoso'
         $contoso.ManagementScopeNames | Should -Be @('MSRAo1P-Contoso')
         $contoso.ScopeKinds | Should -Be @('Group')
         $contoso.ScopeGroupNames | Should -Be @('UDLRAo1P-Contoso')
@@ -895,15 +371,11 @@ Describe 'Get-RBAC4AppEntry management scope resolution' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementScope -Times 0
     }
 }
+
 Describe 'Get-RBAC4AppEntry validation and failure paths' {
     BeforeEach {
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { $script:ExoServicePrincipals }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { $script:Assignments }
-        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { }
-    }
-
-    It 'throws when -ExportConfig is combined with -ApplicationAccessPolicy' {
-        { Get-RBAC4AppEntry -ExportConfig -ApplicationAccessPolicy } | Should -Throw '*cannot be combined*'
     }
 
     It 'resolves the application by -SpObjectId' {
@@ -912,32 +384,42 @@ Describe 'Get-RBAC4AppEntry validation and failure paths' {
         $r[0].RoleAssigneeName | Should -Be 'Contoso_SP'
     }
 
+    It 'reports an unresolvable piped identity and still processes the next one' {
+        $err = @()
+        $r = @('Nope', 'Contoso' | Get-RBAC4AppEntry -ErrorVariable err -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        $r.Name | Should -Be @('AppMailSend-Contoso')
+        ($err -join ';') | Should -Match "matching 'Nope'"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ServicePrincipal -Times 1 -Exactly
+    }
+
+    It 'writes an error for an ambiguous application name' {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            [pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = '11111111-1111-1111-1111-111111111111'; ObjectId = '22222222-2222-2222-2222-222222222222' }
+            [pscustomobject]@{ DisplayName = 'Contoso'; AppId = '77777777-7777-7777-7777-777777777777'; ObjectId = '88888888-8888-8888-8888-888888888888' }
+        }
+        $err = @()
+        $r = Get-RBAC4AppEntry -RegisteredAppName 'Contoso' -ErrorVariable err -ErrorAction SilentlyContinue
+        $r | Should -BeNullOrEmpty
+        ($err -join ';') | Should -Match 'Ambiguous'
+    }
+
+    It 'reports a failed read once per call and does not retry for later pipeline items' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment { throw 'boom' }
+        $err = @()
+        $r = 'Contoso', 'Fabrikam' | Get-RBAC4AppEntry -ErrorVariable err -ErrorAction SilentlyContinue
+        $r | Should -BeNullOrEmpty
+        @($err | Where-Object { "$_" -match 'Failed to read the management role assignments' }).Count | Should -Be 1
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 1 -Exactly
+    }
+
+    It 'does not accept -ScopeType values outside RecipientWriteScopeType' {
+        { Get-RBAC4AppEntry -ScopeType 'Everything' } | Should -Throw -ErrorId 'ParameterArgumentValidationError*'
+    }
+
     It 'writes an error and returns nothing when the application cannot be resolved' {
         $r = Get-RBAC4AppEntry -AppId '99999999-9999-9999-9999-999999999999' -ErrorVariable err -ErrorAction SilentlyContinue
         $r | Should -BeNullOrEmpty
         ($err -join ';') | Should -Match 'No Exchange Online service principal found'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
-    }
-
-    It 'filters -ApplicationAccessPolicy by the AppId of an application resolved by name' {
-        $null = Get-RBAC4AppEntry -RegisteredAppName 'Contoso' -ApplicationAccessPolicy
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 1 -ParameterFilter {
-            $AppId -eq '11111111-1111-1111-1111-111111111111'
-        }
-    }
-
-    It 'writes an error when Get-ApplicationAccessPolicy is not available in the session' {
-        Mock -ModuleName EXORBACforAppManagement Get-Command { } -ParameterFilter { $Name -eq 'Get-ApplicationAccessPolicy' }
-        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy -ErrorVariable err -ErrorAction SilentlyContinue
-        $r | Should -BeNullOrEmpty
-        ($err -join ';') | Should -Match 'Get-ApplicationAccessPolicy is unavailable'
-        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ApplicationAccessPolicy -Times 0
-    }
-
-    It 'writes an error when reading the Application Access Policies fails' {
-        Mock -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy { throw 'access denied' }
-        $r = Get-RBAC4AppEntry -ApplicationAccessPolicy -ErrorVariable err -ErrorAction SilentlyContinue
-        $r | Should -BeNullOrEmpty
-        ($err -join ';') | Should -Match 'Failed to read Application Access Policies: access denied'
     }
 }

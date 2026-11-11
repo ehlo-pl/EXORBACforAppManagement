@@ -9,7 +9,7 @@ function Resolve-RBAC4AppServicePrincipal {
     # itself) is derived from the *application's* display name. So a name lookup matches both the
     # raw value and its "_SP" counterpart, and the DisplayName returned is always normalized back
     # to the app name (the "_SP" suffix stripped) - the same both-forms handling
-    # Get-RBAC4AppEntry -ByApplication already relies on.
+    # Resolve-RBAC4AppAssignee (Get-RBAC4AppEntry) also applies.
     #
     # Throws when Get-ServicePrincipal itself fails. Returns $null when nothing matches (the app has not been registered via
     # Register-EXOServicePrincipal / New-RBAC4AppEntry / Invoke-RBAC4AppConfig yet); throws when
@@ -29,12 +29,19 @@ function Resolve-RBAC4AppServicePrincipal {
 
         [Parameter(Mandatory, ParameterSetName = 'BySpObjectId')]
         [ValidateNotNullOrEmpty()]
-        [string] $SpObjectId
+        [string] $SpObjectId,
+
+        # An already-read Get-ServicePrincipal result to match against instead of reading the
+        # directory again (Get-RBAC4AppEntry reads it once per call and shares it).
+        [Parameter()]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]] $Directory
     )
 
     # Fail closed: a failed directory read must surface as an error, not as "not found" (which
     # would send New-/Set-RBAC4AppEntry down the bootstrap path against an unread directory).
-    $all = @(Get-ServicePrincipal -ErrorAction Stop)
+    $all = if ($PSBoundParameters.ContainsKey('Directory')) { @($Directory) } else { @(Get-ServicePrincipal -ErrorAction Stop) }
 
     $matchesRes = @(
         switch ($PSCmdlet.ParameterSetName) {

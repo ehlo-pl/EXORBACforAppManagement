@@ -20,12 +20,12 @@ Describe 'Export-RBAC4AppStateReport' {
         $stateFolder = & $script:writeState 'state' @{
             'app.yaml' = @'
 SchemaVersion: "4.3"
-TenantId: "tenant-id"
 
 Application:
   AppId: "app-id"
   SpObjectId: "sp-id"
   DisplayName: "Contoso App"
+  TenantId: "tenant-id"
 
 Rbac:
   Roles:
@@ -92,6 +92,7 @@ Metadata:
         $first.'ConversionResult.ConfigPath' | Should -Be 'C:\state\app.yaml'
         $first.'ConversionResult.ResolvedDisplay' | Should -BeExactly ''
         $first.'Application.DisplayName' | Should -Be 'Contoso App'
+        $first.'Application.TenantId' | Should -Be 'tenant-id'
         $first.'Rbac.Roles' | Should -Be 'Application Mail.Send; Application Calendars.Read'
         $first.'RbacScope.ScopeKind' | Should -Be 'Recipients'
         $first.'RbacScope.ScopeRecipients' | Should -Be 'a@contoso.com; b@contoso.com'

@@ -206,19 +206,21 @@ function Remove-RBAC4AppEntry {
                 $result.Warnings += $ignoredMsg
             }
 
-            # --- Resolve the service principal depending on parameter set.
+            # --- Resolve the service principal depending on parameter set. One directory read
+            # (fail closed) serves both the identity lookup and the own/foreign partition below.
+            $spIndex = Get-RBAC4AppServicePrincipalIndex
             $sp = $null
             switch ($PSCmdlet.ParameterSetName) {
                 'BySpObjectId' {
                     $result.IdentityInput = $SpObjectId
-                    $sp = Resolve-RBAC4AppServicePrincipal -SpObjectId $SpObjectId
+                    $sp = Resolve-RBAC4AppServicePrincipal -SpObjectId $SpObjectId -Directory $spIndex.All
                 }
                 'ByAppId' {
                     $result.IdentityInput = $AppId
-                    $sp = Resolve-RBAC4AppServicePrincipal -AppId $AppId
+                    $sp = Resolve-RBAC4AppServicePrincipal -AppId $AppId -Directory $spIndex.All
                 }
                 'ByName' {
-                    $sp = Resolve-RBAC4AppServicePrincipal -DisplayName $RegisteredAppName
+                    $sp = Resolve-RBAC4AppServicePrincipal -DisplayName $RegisteredAppName -Directory $spIndex.All
                 }
             }
             if (-not $sp) {
@@ -283,16 +285,20 @@ function Remove-RBAC4AppEntry {
             }
             $result.AssignmentsScoped = @($scoped | ForEach-Object { [string]$_.Name })
 
-            # --- Partition own vs foreign by assignee (same needle set as Get-RBAC4AppEntry).
-            $needles = @($sp.DisplayName, ("{0}_SP" -f $sp.DisplayName), $sp.AppId, $sp.Id) | Where-Object { $_ }
+            # --- Partition own vs foreign by assignee, exactly (same rule as Get-RBAC4AppEntry): an
+            # assignment is "own" - and so removed - only when its resolved assignee is this service
+            # principal. Never a name substring: '-RegisteredAppName Mail' must not claim (and delete)
+            # another app's assignments. An unresolved assignee, or one resolved only by the name
+            # heuristic, counts as foreign, which blocks removal instead of deleting it.
+            $assigneeCache = @{}
             $own = @()
             $foreign = @()
             foreach ($a in $scoped) {
-                $assignee = [string]$a.RoleAssigneeName
-                $isOwn = $false
-                foreach ($n in $needles) {
-                    $escapedNeedle = [System.Management.Automation.WildcardPattern]::Escape([string]$n)
-                    if ($assignee -and $assignee -like "*$escapedNeedle*") { $isOwn = $true; break }
+                $assignee = Resolve-RBAC4AppAssignee -Assignment $a -Index $spIndex -AllAssignments $allAssignments -Cache $assigneeCache
+                $isOwn = Test-RBAC4AppAssigneeMatch -Assignee $assignee -Application $sp
+                if ($isOwn -and $assignee.ServicePrincipalIdSource -eq 'NameHeuristic') {
+                    $isOwn = $false
+                    $result.Warnings += "Role assignment '$([string]$a.Name)' was matched to this application only by its generated name; treated as foreign, so nothing is removed. Remove it explicitly after verifying it."
                 }
                 if ($isOwn) { $own += $a } else { $foreign += $a }
             }

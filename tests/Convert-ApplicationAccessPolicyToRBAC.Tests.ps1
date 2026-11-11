@@ -96,7 +96,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         $config.RbacScope.AccessGroupName | Should -Be 'EvenUsers'
         $config.RbacScope.ScopeKind | Should -Be 'Group'
         $config.RbacScope.AssignmentScope | Should -Be 'RecipientGroupScope'
-        $config.TenantId | Should -Be 'tenant-id-123'
+        $config.Application.TenantId | Should -Be 'tenant-id-123'
         Split-Path $r.ConfigPath -Leaf | Should -Match '^rbac4app-Contoso-EvenUsers-11111111-1111-1111-1111-111111111111-\d{14}-[a-f0-9]{32}\.yml$'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 0
     }
@@ -392,6 +392,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC failure paths' {
         $r = Convert-ApplicationAccessPolicyToRBAC -Format Json -OutputPath $TestDrive -Confirm:$false
         $r.Errors | Should -BeNullOrEmpty
         (Get-Content $r.ConfigPath -Raw | ConvertFrom-Json).PSObject.Properties.Name | Should -Not -Contain 'TenantId'
+        (Get-Content $r.ConfigPath -Raw | ConvertFrom-Json).Application.PSObject.Properties.Name | Should -Not -Contain 'TenantId'
     }
 
     It 'records a grant whose permission name cannot be resolved as skipped' {

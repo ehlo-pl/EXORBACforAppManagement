@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 `EXORBACforAppManagement` — a PowerShell module for managing Exchange Online (EXO) Role-Based Access
-Control for Entra (Azure AD) applications. It packages thirteen public functions plus shared private
+Control for Entra (Azure AD) applications. It packages fifteen public functions plus shared private
 helpers, with Pester tests, a build script, and GitHub Actions CI.
 
 Only three functions touch Microsoft Graph at all: `New-RegisteredApp` (creates the Entra app
@@ -28,12 +28,23 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
   (by default) its service principal via `New-MgServicePrincipal`. Its output exposes
   `AppId`/`ServicePrincipalId` so it can pipe into `New-RBAC4AppEntry`.
 - **`Get-RBAC4AppEntry`** — lists EXO management role assignments for application roles (the
-  assignments `New-RBAC4AppEntry` makes). Every row resolves the assignee to its Exchange Online
-  service principal pointer (`AppId`/`ServicePrincipalId`, via `Get-ServicePrincipal`) and its
-  recipient scope to a real scope group name/type/membership (via the private
-  `Resolve-RBAC4AppScope`). `-ByApplication` switches to an app-centric view - one row per
-  distinct application instead of one row per assignment - absorbing what used to be the separate
-  `Get-RegisteredAppWithPermission` function (removed).
+  assignments `New-RBAC4AppEntry` makes), one `RBAC4App.Entry` row per assignment. Every row
+  resolves the assignee to its Exchange Online service principal pointer
+  (`AppId`/`ServicePrincipalId`, via `Get-ServicePrincipal`) and its recipient scope to a real scope
+  group name/type/membership (via the private `Resolve-RBAC4AppScope`). A pure read since 0.9.0:
+  `-ByApplication`, `-ApplicationAccessPolicy`, `-ExportConfig`/`-ExportPath`/`-ExportFormat`, and
+  `SupportsShouldProcess` were removed (see the two functions below).
+- **`Get-RBAC4AppApplication`** — app-centric inventory: groups `RBAC4App.Entry` rows (piped, or
+  fetched itself with the `Get-RBAC4AppEntry` parameters) into one `RBAC4App.Application` row per
+  assignee (`RoleAssigneeType` + `RoleAssigneeName`). Replaces `Get-RBAC4AppEntry -ByApplication`
+  (which had absorbed the former `Get-RegisteredAppWithPermission`).
+- **`Export-RBAC4AppConfig`** — writes piped `RBAC4App.Entry` rows as schema-4.3 configs for
+  `Invoke-RBAC4AppConfig` (per assignment, or `-PerApplication`); never reads EXO. Collects in
+  `process`, writes in `end`; `SupportsShouldProcess` (`ConfirmImpact='Low'`), `-PassThru`. Refuses
+  guessed data without `-Force`: a `ServicePrincipalIdSource` of `NameHeuristic`, or an unreadable
+  scope group (`ScopeGroupResolved` `$false`), which `-Force` exports as a reference-only
+  `MailEnabledSecurityGroup` with no members (never a type guessed from the group-name prefix).
+  Replaces `Get-RBAC4AppEntry -ExportConfig`.
 - **`New-RBAC4AppUnifiedGroup`** — ensures/creates and configures the scoped Unified Group used
   when `-AccessGroupType M365Group` (extracted from `New-RBAC4AppEntry`, which now delegates to it).
 - **`New-RBAC4AppDistributionGroup`** — ensures/creates and configures a scoped Exchange-Online-only
@@ -62,7 +73,9 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`Remove-RBAC4AppEntry`** — safe teardown counterpart to `New-RBAC4AppEntry`. Resolves the
   SP, derives the scope group and management scope names, and removes this app's EXO role assignments,
   management scope, and scope group — but only after confirming the scope is no longer in use (no foreign role
-  assignments scoped to it and no members beyond the `-BootstrapMember` placeholder). Aborts and
+  assignments scoped to it and no members beyond the `-BootstrapMember` placeholder). Own vs. foreign
+  is exact (private `Resolve-RBAC4AppAssignee` + `Test-RBAC4AppAssigneeMatch`, as in
+  `Get-RBAC4AppEntry`); an unresolved or name-heuristic assignee counts as foreign. Aborts and
   removes nothing on an unsafe condition, returning a `[pscustomobject]` with a `Reason`, the
   offending foreign assignments / real members, and an `IsRemoved` flag. Leaves the shared EXO
   service principal pointer in place; `SupportsShouldProcess` (`ConfirmImpact='High'`).
@@ -80,7 +93,7 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
 - **`New-RBAC4AppConfig`** / **`Invoke-RBAC4AppConfig`** — a two-session alternative to
   `New-RBAC4AppEntry` for provisioning a brand-new (never-before-registered) application across two
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
-  writes a config file (schema version `4.3` - `Invoke-RBAC4AppConfig` accepts only `4.3`; `New-RBAC4AppConfig -Repository` state files may still be 3.0-4.3; top-level `Rbac:`/`RbacScope:` sections, a `Metadata:` section for descriptive fields and `ChangeReference`, a `Runtime:` section holding `GeneratedAt` (top-level before 4.3), and - from `Convert-ApplicationAccessPolicyToRBAC` only - a `ConversionResult:` section) in
+  writes a config file (schema version `4.3` - `Invoke-RBAC4AppConfig` accepts only `4.3`; `New-RBAC4AppConfig -Repository` state files may still be 3.0-4.3; top-level `Rbac:`/`RbacScope:` sections, a `Metadata:` section for descriptive fields and `ChangeReference`, `TenantId` inside `Application:` (informational; a legacy top-level key is still read), a `Runtime:` section holding `GeneratedAt` (top-level before 4.3), and - from `Convert-ApplicationAccessPolicyToRBAC` only - a `ConversionResult:` section) in
   either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
   `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
   (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and
@@ -103,16 +116,23 @@ so `Mock -ModuleName`, pipeline input, and `-WhatIf`/`-ErrorVariable` work uncha
 
 Together the first three form a create → assign → read flow:
 `New-RegisteredApp` → `New-RBAC4AppEntry` → `Get-RBAC4AppEntry`, all sharing the same
-`ByName`/`ByAppId`/`BySpObjectId` parameter-set conventions so they compose over the pipeline.
+`ByName`/`ByAppId`/`BySpObjectId` parameter sets. Pipeline binding: in `Get-RBAC4AppEntry` only
+`-AppId` binds by property name (a name binds from a plain string, the SP object id only
+explicitly), because an object carrying several identity properties - a `New-RegisteredApp` result
+or an `RBAC4App.Entry` row - cannot otherwise resolve a parameter set (D7 of
+`plans/GET-RBAC4APPENTRY_REBUILD_PLAN.md`; `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry` still use
+the older all-by-property-name binding). Reads then flow on:
+`Get-RBAC4AppEntry | Get-RBAC4AppApplication` and `Get-RBAC4AppEntry | Export-RBAC4AppConfig`.
 
 ## Repository layout
 
 ```
 src/EXORBACforAppManagement/
-  EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 13 public)
+  EXORBACforAppManagement.psd1          # manifest (RootModule -> .psm1, FunctionsToExport = 15 public)
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
   locations.txt                  # valid Metadata.NetworkAccessLocation names (read by Get-RBAC4AppLocationList)
   Public/                        # New-RBAC4AppEntry, New-RegisteredApp, Get-RBAC4AppEntry,
+                                 # Get-RBAC4AppApplication, Export-RBAC4AppConfig,
                                  # New-RBAC4AppUnifiedGroup,
                                  # New-RBAC4AppDistributionGroup, Register-EXOServicePrincipal,
                                  # Convert-ApplicationAccessPolicyToRBAC, Test-RBAC4AppEntry,
@@ -134,7 +154,12 @@ src/EXORBACforAppManagement/
                                  # Get-RBAC4AppRoleAssignment, Resolve-ApplicationAccessPolicy,
                                  # Invoke-MsGraphEntraIDApiPerm (formerly public),
                                  # Get-RBAC4AppEffectiveUserObjectId (GUID from EffectiveUserName),
-                                 # Test-RBAC4AppIPRange (Metadata.NetworkAccessIP4Range/IP6Range)
+                                 # Test-RBAC4AppIPRange (Metadata.NetworkAccessIP4Range/IP6Range),
+                                 # Get-RBAC4AppEntry pipeline: Get-RBAC4AppAssignmentSet,
+                                 # Get-RBAC4AppServicePrincipalIndex, Resolve-RBAC4AppAssignee,
+                                 # Test-RBAC4AppAssigneeMatch, ConvertTo-RBAC4AppEntryRow,
+                                 # ConvertTo-RBAC4AppApplicationRow,
+                                 # ConvertTo-RBAC4AppConfigFromEntry, Write-RBAC4AppConfigFile
 tests/                           # Pester v5 tests (one *.Tests.ps1 per area)
 build.ps1                        # Init / Clean / Analyze / Test / Build tasks
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)
@@ -338,25 +363,35 @@ main `BeforeEach` fixture.
   together with the private `Resolve-AppRolePermissionValue` (resolves a Graph app-role grant's
   `AppRoleId` to its permission value). Update the shared private helpers when adding a role.
 
-- **`Get-RBAC4AppEntry`** filters to `Application *` roles. `Get-ManagementRoleAssignment` has no
-  `-App` parameter, so role filtering uses native `-Role` and the app filter is client-side
-  (matching the resolved SP's `DisplayName`/`<DisplayName>_SP`/`AppId`/`Id` against each
-  assignment's `RoleAssigneeName`/`Name`). The private `ConvertTo-RBAC4AppRoleName` normalizes role names. `-ScopeType` (default `Group`,`CustomRecipientScope`; pass `All` for
-  every recipient scope) replaces what used to be a hard-coded scope filter. Every returned row
-  (per-assignment or, with `-ByApplication`, per-application) is enriched via a single
-  `Get-ServicePrincipal` directory read (`DisplayName`/`AppId`/`ServicePrincipalId`, matched by
-  exact assignee name - the same both-forms `_SP` rule `Resolve-RBAC4AppServicePrincipal` uses) and
-  via the private `Resolve-RBAC4AppScope` (reads the management scope via `Get-ManagementScope`,
-  parses its filter into `ScopeKind`/`ScopeFilter`, and resolves members - the group's membership
-  for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter`
-  preview for Tag/Filter; a legacy group-bound assignment reports `ScopeKind` `GroupDirect`; cached
-  per distinct scope name for the call). Rows expose `ManagementScope`/`ScopeKind`/`ScopeFilter`;
-  `-ByApplication` adds `ManagementScopeNames`/`ScopeKinds`. `-ByApplication` groups the enriched per-assignment rows by
-  assignee - this replaces the former standalone `Get-RegisteredAppWithPermission` function (removed). Each
+- **`Get-RBAC4AppEntry`** filters to `Application *` roles (private `Get-RBAC4AppAssignmentSet`).
+  `Get-ManagementRoleAssignment` has no `-App` parameter, so role filtering uses native `-Role` and
+  the app filter is client-side and exact (private `Test-RBAC4AppAssigneeMatch`: the assignment's
+  *resolved* assignee must be the requested SP - object id, or AppId when an object id is missing;
+  never a name substring). The private `ConvertTo-RBAC4AppRoleName` normalizes role names.
+  `-ScopeType` (ValidateSet of `RecipientWriteScopeType` values plus `All`; default
+  `Group`,`CustomRecipientScope`). `begin`/`process`/`end`: EXO is read lazily, once per call (one
+  `Get-ServicePrincipal` via `Get-RBAC4AppServicePrincipalIndex`, shared with
+  `Resolve-RBAC4AppServicePrincipal -Directory`; one assignment read), however many identities are
+  piped; an unresolvable identity is a `Write-Error` per item, a failed read one `Write-Error` per
+  call (later items skipped, no retry). Each assignee is resolved by the private
+  `Resolve-RBAC4AppAssignee` (object id, exact name, `_SP`-stripped name, then the name heuristic -
+  reported as `ServicePrincipalIdSource` `NameHeuristic`), each scope by `Resolve-RBAC4AppScope`
+  (reads the management scope via `Get-ManagementScope`, parses its filter into
+  `ScopeKind`/`ScopeFilter`, and resolves members - the group's membership for Group kind, the
+  listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter` preview for
+  Tag/Filter; a legacy group-bound assignment reports `ScopeKind` `GroupDirect`; an unreadable
+  custom recipient scope reports `ScopeKind` `$null` and is never probed as a group; cached per
+  distinct scope name for the call; returns its warnings instead of writing them). The private
+  `ConvertTo-RBAC4AppEntryRow` is the single source of the row shape (`PSTypeName`
+  `RBAC4App.Entry`; adds `ServicePrincipalIdSource`, `ScopeSource`, `ScopeGroupName`,
+  `ScopeGroupResolved`, `Warnings`, `Errors`); each distinct warning is written once per call and
+  kept on the rows it applies to. `Get-RBAC4AppApplication` (private
+  `ConvertTo-RBAC4AppApplicationRow`) and `Export-RBAC4AppConfig` (private
+  `ConvertTo-RBAC4AppConfigFromEntry` + `Write-RBAC4AppConfigFile`) work only from those rows. Each
   row also carries `EffectiveUserName`/`App` straight from the raw `Get-ManagementRoleAssignment`
   object (Exchange Online typically leaves both blank/placeholder for application-role
-  assignments); `-ByApplication` aggregates them per application as `EffectiveUserNames`/`Apps`
-  (sorted, unique, non-blank). When the resolved `ServicePrincipalId` is empty (typically an incomplete
+  assignments); `Get-RBAC4AppApplication` aggregates them per application as
+  `EffectiveUserNames`/`Apps` (sorted, unique, non-blank). When the resolved `ServicePrincipalId` is empty (typically an incomplete
   `Connect-MgGraph`/directory read), it - and `Test-RBAC4AppEntry`'s `SpObjectId`, and the exported
   config's `Application.SpObjectId` - falls back to the GUID found in `EffectiveUserName` (private
   `Get-RBAC4AppEffectiveUserObjectId`; non-GUID values are never used), with a warning that also lands
@@ -383,7 +418,9 @@ main `BeforeEach` fixture.
      non-empty (emitting from `finally` keeps a terminating error from being re-caught into `Errors`).
   5. *Fail closed on safety reads* - an EXO read whose result gates a destructive or create decision
      (Remove's foreign-assignment and member reads, `Get-ServicePrincipal` in
-     `Resolve-RBAC4AppServicePrincipal`/`Register-EXOServicePrincipal`) uses `-ErrorAction Stop`; never
+     `Resolve-RBAC4AppServicePrincipal`/`Register-EXOServicePrincipal`, and `Get-RBAC4AppEntry`'s
+     `Get-ServicePrincipal`/`Get-ManagementRoleAssignment` reads, whose output feeds exported configs)
+     uses `-ErrorAction Stop`; never
      let `SilentlyContinue` turn a read failure into "nothing found". Note: EXO
      `Get-ManagementRoleAssignment` and `Get-ServicePrincipal` have no `-ResultSize` parameter.
 

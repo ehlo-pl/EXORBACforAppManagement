@@ -51,8 +51,12 @@ function Get-RBAC4AppRoleAssignment {
             return ($identityName -replace '_SP$', '')
         }
 
+        $writtenScopeWarnings = [System.Collections.Generic.HashSet[string]]::new()
         foreach ($assignment in $assignments) {
             $scope = Resolve-RBAC4AppScope -Assignment $assignment -Cache $scopeCache
+            foreach ($scopeWarning in @($scope.Warnings)) {
+                if ($writtenScopeWarnings.Add([string]$scopeWarning)) { Write-Warning -Message $scopeWarning }
+            }
             $result = [ordered]@{
                 Name               = $assignment.Name
                 Role               = $assignment.Role

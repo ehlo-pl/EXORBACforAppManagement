@@ -4,9 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - Unreleased
+
+`Get-RBAC4AppEntry` is split into three single-purpose functions (plan:
+`plans/GET-RBAC4APPENTRY_REBUILD_PLAN.md`, findings F1-F10 in `plans/GET-RBAC4APPENTRY_ANALYSIS.md`).
+No version had been published, so this is a clean break without deprecation shims.
 
 ### Added
+- `Get-RBAC4AppApplication`: one `RBAC4App.Application` row per assignee (grouped by
+  `RoleAssigneeType` + `RoleAssigneeName`), from piped `Get-RBAC4AppEntry` rows or fetched itself
+  with the same parameters. Adds `RoleAssigneeType` and `Warnings`, and warns when an assignee's rows
+  disagree on `ServicePrincipalId`. Replaces `Get-RBAC4AppEntry -ByApplication`.
+- `Export-RBAC4AppConfig`: writes piped `Get-RBAC4AppEntry` rows as schema-4.3 configs for
+  `Invoke-RBAC4AppConfig` (`-Path`, `-Format`, `-PerApplication`, `-PassThru`, `-Force`;
+  `-WhatIf`/`-Confirm`). Replaces `Get-RBAC4AppEntry -ExportConfig`/`-ExportPath`/`-ExportFormat`.
+  The module now exports 15 functions.
+- `Get-RBAC4AppEntry` rows are typed `RBAC4App.Entry` and add `ServicePrincipalIdSource`
+  (`ExoPointer`/`EffectiveUserName`/`NameHeuristic`/`None`), `ScopeSource`
+  (`ManagementScope`/`Legacy`/`None`), `ScopeGroupName`, `ScopeGroupResolved`, `Warnings`, and
+  `Errors` (reserved).
 - `Get-RBAC4AppEntry` and `Test-RBAC4AppEntry`: when the service principal object id
   (`ServicePrincipalId` / `SpObjectId`) comes back empty - usually an incomplete `Connect-MgGraph` or
   directory read that is not always visible as `$null` from `Get-MgContext` - it is filled from the
@@ -30,6 +46,28 @@ All notable changes to this project are documented here. The format is based on
   skipped assignments, grouped errors, warnings, and the before/after file count.
 
 ### Fixed
+- **Safety:** `Remove-RBAC4AppEntry` decides which scoped assignments are its own (and so removed)
+  by exact identity - the assignee must resolve to this service principal (object id, or AppId when
+  no object id) - instead of a name/AppId substring. Before, `-RegisteredAppName 'Mail'` could
+  remove `MailArchiver`'s assignments on the same scope group. An unresolved assignee, or one
+  matched only by the generated assignment name, now counts as foreign and blocks removal.
+- `Get-RBAC4AppEntry` reads Exchange Online once per call instead of once per piped identity (F1),
+  and the export no longer keeps only the last piped item's configs when writing to one file path.
+- The application filter is exact: an assignment is kept only when its resolved assignee is the
+  requested service principal. `-RegisteredAppName 'Mail'` no longer matches every
+  `AppMailSend-...` assignment or `MailArchiver` (F2).
+- A failed `Get-ManagementRoleAssignment` or `Get-ServicePrincipal` read is an error (once per call)
+  instead of an empty result (F3).
+- `Get-RBAC4AppApplication` no longer shows a role group as an application with a `DisplayName` (F6).
+- `-ScopeType` rejects values that are not `RecipientWriteScopeType` values (or `All`) instead of
+  silently returning nothing (F7).
+- `Get-RBAC4AppEntry` rows and `New-RegisteredApp` output pipe into `Get-RBAC4AppEntry` again: only
+  `-AppId` binds by property name now, so an object with several identity properties no longer
+  fails with "Parameter set cannot be resolved" (F8).
+- An assignment bound to a custom recipient scope whose management scope cannot be read reports
+  `ScopeKind` `$null` with a warning instead of being looked up as a group of the same name (F10).
+- Exporting an unreadable scope group no longer guesses its type from the name prefix (which could
+  make `Invoke-RBAC4AppConfig` create an empty M365 group or distribution list); see Changed (F9).
 - `Remove-RBAC4AppEntry` now fails closed: a failed `Get-ManagementRoleAssignment` or group member
   read (`Get-UnifiedGroupLinks` / `Get-DistributionGroupMember`) aborts the teardown with nothing
   removed. Previously the read error was swallowed, so the foreign-assignment / real-member safety
@@ -59,6 +97,25 @@ All notable changes to this project are documented here. The format is based on
   `Get-UnifiedGroup` and `Get-DistributionGroup` cannot find a scope group by its stored name.
 
 ### Changed
+- **Breaking:** `Export-RBAC4AppConfig` refuses guessed data without `-Force`: an application
+  identity inferred from the generated role assignment name, and a scope group that could not be
+  read. With `-Force` the latter is exported as a reference-only
+  `AccessGroupType: MailEnabledSecurityGroup` with no members, which `Invoke-RBAC4AppConfig`
+  validates but never creates. The reason is recorded in `Runtime.CollectedWarnings` together with
+  the rows' own warnings.
+- `Get-RBAC4AppEntry` is a pure read (no `SupportsShouldProcess`), writes each distinct warning once
+  per call, and keeps it on the affected rows. Unresolvable piped identities are reported per item
+  without stopping the pipeline.
+- `Invoke-RBAC4AppConfig`'s schema-version error now points at `Get-RBAC4AppEntry | Export-RBAC4AppConfig`.
+- Assignments whose assignee cannot be resolved to a service principal are no longer returned by an
+  identity-filtered query (`-AppId`/`-RegisteredAppName`/`-SpObjectId`); they still appear in the
+  unfiltered listing with a warning.
+- `Get-RBAC4AppEntry`/`Get-RBAC4AppApplication` `-ScopeType` also accepts `ExclusiveRecipientScope`.
+- Config schema 4.3: `TenantId` moved from the top level into the `Application` section
+  (`Application.TenantId`; still informational, written only when known). The schema version is
+  unchanged because 4.3 was never published. Readers still accept a top-level `TenantId` from
+  earlier pre-release files and map it to `Application.TenantId`; `Invoke-RBAC4AppConfig`'s result
+  `TenantId` and `scripts/Export-RBAC4AppStateReport.ps1`'s column (`Application.TenantId`) follow.
 - **Breaking:** `Metadata.NetworkAccessIPRange` is split into `NetworkAccessIP4Range` (IPv4 address
   or CIDR) and `NetworkAccessIP6Range` (IPv6 address or CIDR, prefix 0-128), so IPv4 and IPv6 ranges
   are managed separately; `New-RBAC4AppConfig -NetworkAccessIPRange` is replaced by
@@ -99,12 +156,17 @@ All notable changes to this project are documented here. The format is based on
   `4.2`. Readers continue to accept existing configs with `Rbac.ChangeReference`.
 
 ### Removed
+- **Breaking:** `Get-RBAC4AppEntry -ByApplication` (use `Get-RBAC4AppApplication`),
+  `-ExportConfig`/`-ExportPath`/`-ExportFormat` (use `Get-RBAC4AppEntry | Export-RBAC4AppConfig`),
+  `-ApplicationAccessPolicy` (call `Get-ApplicationAccessPolicy` directly), and its
+  `SupportsShouldProcess` (`-WhatIf`/`-Confirm`). `-RegisteredAppName` and `-SpObjectId` no longer
+  bind by property name from the pipeline.
 - **Breaking:** `Get-RBAC4AppRoleAssignment`, `Resolve-ApplicationAccessPolicy`, and
-  `Invoke-MsGraphEntraIDApiPerm` are no longer exported; they moved to `Private/` (the module now
-  exports 13 functions). For the role-assignment listing use `Get-RBAC4AppEntry`, and for raw
-  Application Access Policies `Get-RBAC4AppEntry -ApplicationAccessPolicy`.
+  `Invoke-MsGraphEntraIDApiPerm` are no longer exported; they moved to `Private/`. For the
+  role-assignment listing use `Get-RBAC4AppEntry`, and for raw Application Access Policies
+  `Get-ApplicationAccessPolicy`.
 - **Breaking:** `Get-RegisteredAppWithPermission` (deprecated wrapper) - use
-  `Get-RBAC4AppEntry -ByApplication` (add `-ScopeType All` for its old no-scope-filter behavior).
+  `Get-RBAC4AppApplication` (add `-ScopeType All` for its old no-scope-filter behavior).
 - **Breaking:** the pre-0.6.0 `*-RBACforApp*` aliases (`New-`/`Get-`/`Set-`/`Test-`/`Remove-RBACforAppEntry`,
   `New-RBACforAppUnifiedGroup`, `New-RBACforAppDistributionGroup`); use the `RBAC4App` names. The module
   now exports no aliases.

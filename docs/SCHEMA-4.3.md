@@ -1,6 +1,6 @@
 # Configuration schema 4.3
 
-Schema 4.3 is the version written by `New-RBAC4AppConfig`, `Get-RBAC4AppEntry -ExportConfig`, and
+Schema 4.3 is the version written by `New-RBAC4AppConfig`, `Export-RBAC4AppConfig`, and
 `Convert-ApplicationAccessPolicyToRBAC`. `Invoke-RBAC4AppConfig` reads YAML or JSON with this same
 structure and accepts only `SchemaVersion: "4.3"` - a file of an earlier version is rejected and must
 be re-generated. The file is a handoff, not a credential store: it identifies an
@@ -13,8 +13,7 @@ The document has the following top-level properties:
 | Property | Required in generated files | Description |
 | --- | --- | --- |
 | `SchemaVersion` | Yes | The string `"4.3"`. |
-| `TenantId` | No | Tenant ID for reference; defaults to an empty value and is not used to provision the resources. |
-| `Application` | Yes | Application identity; all three fields below are required. |
+| `Application` | Yes | Application identity; `AppId`, `SpObjectId`, and `DisplayName` are required. |
 | `Rbac` | Yes | Desired Exchange Online roles and optional change reference. |
 | `RbacScope` | No | Scope, assignment binding, and (for Group) group provisioning settings. |
 | `Metadata` | No | Descriptive information; never affects provisioning. Always written in full by the module (empty values as `""`). |
@@ -28,6 +27,7 @@ The document has the following top-level properties:
 | `AppId` | string | Entra application (client) ID. |
 | `SpObjectId` | string | Entra service-principal object ID. |
 | `DisplayName` | string | Application display name. |
+| `TenantId` | string | Optional. Tenant ID for reference; written only when known, and never used to provision the resources. |
 
 `Rbac` fields:
 

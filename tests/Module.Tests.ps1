@@ -16,7 +16,7 @@ Describe 'EXORBACforAppManagement module' {
 
     It 'exports all public functions (and no private ones)' {
         $exported = (Get-Command -Module EXORBACforAppManagement -CommandType Function).Name | Sort-Object
-        $exported | Should -Be @('Convert-ApplicationAccessPolicyToRBAC', 'Get-RBAC4AppEntry', 'Invoke-RBAC4AppConfig', 'New-RBAC4AppConfig', 'New-RBAC4AppDistributionGroup', 'New-RBAC4AppEntry', 'New-RBAC4AppManagementScope', 'New-RBAC4AppUnifiedGroup', 'New-RegisteredApp', 'Register-EXOServicePrincipal', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry', 'Test-RBAC4AppEntry')
+        $exported | Should -Be @('Convert-ApplicationAccessPolicyToRBAC', 'Export-RBAC4AppConfig', 'Get-RBAC4AppApplication', 'Get-RBAC4AppEntry', 'Invoke-RBAC4AppConfig', 'New-RBAC4AppConfig', 'New-RBAC4AppDistributionGroup', 'New-RBAC4AppEntry', 'New-RBAC4AppManagementScope', 'New-RBAC4AppUnifiedGroup', 'New-RegisteredApp', 'Register-EXOServicePrincipal', 'Remove-RBAC4AppEntry', 'Set-RBAC4AppEntry', 'Test-RBAC4AppEntry')
     }
 
     It 'exports no aliases' {

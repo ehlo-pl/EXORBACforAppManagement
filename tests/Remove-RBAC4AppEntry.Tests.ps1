@@ -152,6 +152,53 @@ Describe 'Remove-RBAC4AppEntry' {
         Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
     }
 
+    It 'treats an assignee whose name merely contains the app name as foreign (exact match, no substring)' {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            @(
+                $script:ExoSp,
+                [pscustomobject]@{ DisplayName = 'ContosoArchiver_SP'; AppId = '33333333-3333-3333-3333-333333333333'; ObjectId = '44444444-4444-4444-4444-444444444444' }
+            )
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @(
+                [pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' },
+                [pscustomobject]@{ Name = 'AppMailRead-ContosoArchiver'; Role = 'Application Mail.Read'; RoleAssigneeName = 'ContosoArchiver_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }
+            )
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeFalse
+        $r.OwnAssignments | Should -Be @('AppMailSend-Contoso')
+        $r.ForeignAssignments | Should -Be @('AppMailRead-ContosoArchiver')
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-UnifiedGroup -Times 0
+    }
+
+    It 'treats an assignment bound by the service principal object id as own' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @([pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = '22222222-2222-2222-2222-222222222222'; RoleAssigneeType = 'ServicePrincipal'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' })
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeTrue
+        $r.OwnAssignments | Should -Be @('AppMailSend-Contoso')
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment -Times 1
+    }
+
+    It 'treats an unresolvable assignee that only embeds the AppId in its name as foreign' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @([pscustomobject]@{ Name = 'AppMailSend-Legacy'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Legacy-11111111-1111-1111-1111-111111111111'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'Um365RAo1-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' })
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType M365Group -GroupPrefix 'Um365RAo1' -Confirm:$false
+
+        $r.IsRemoved | Should -BeFalse
+        $r.ForeignAssignments | Should -Be @('AppMailSend-Legacy')
+        Should -Invoke -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment -Times 0
+    }
+
     It 'aborts when the group has a real member beyond the bootstrap dummy' {
         Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroupLinks {
             @(
