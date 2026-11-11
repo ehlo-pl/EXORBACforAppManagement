@@ -1,0 +1,6 @@
+# Valid NetworkAccessLocation names for New-RBAC4AppConfig / Invoke-RBAC4AppConfig.
+# One name per line; blank lines and lines starting with # are ignored.
+# PLACEHOLDER VALUES - edit this list for your organization.
+HeadOffice
+BranchOffice
+DataCenter
