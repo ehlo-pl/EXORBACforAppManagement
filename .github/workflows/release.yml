@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build, analyze, and test
+        shell: pwsh
+        run: ./build.ps1 -Task All
+
+      - name: Package module
+        shell: pwsh
+        run: |
+          $version = (Import-PowerShellDataFile './src/EXORBACforAppManagement/EXORBACforAppManagement.psd1').ModuleVersion
+          $zip = "EXORBACforAppManagement-$version.zip"
+          Compress-Archive -Path "./output/$version/EXORBACforAppManagement/*" -DestinationPath $zip -Force
+          "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$env:RELEASE_TAG" --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:RELEASE_TAG" "$env:ZIP" --clobber
+          }
+          else {
+            gh release create "$env:RELEASE_TAG" "$env:ZIP" --title "$env:RELEASE_TAG" --generate-notes
+          }
