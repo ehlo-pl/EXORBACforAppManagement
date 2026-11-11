@@ -45,11 +45,11 @@ function ConvertFrom-RBAC4AppYaml {
 
     $config = [pscustomobject]@{
         SchemaVersion = ''
-        TenantId      = ''
         Application   = [pscustomobject]@{
             AppId       = ''
             SpObjectId  = ''
             DisplayName = ''
+            TenantId    = ''
         }
         Rbac          = [pscustomobject]@{
             Roles           = [System.Collections.Generic.List[string]]::new()
@@ -105,6 +105,8 @@ function ConvertFrom-RBAC4AppYaml {
     $listKey = $null
     # Before schema 4.3 GeneratedAt was a top-level key; it is read into Runtime.GeneratedAt.
     $legacyGeneratedAt = ''
+    # Older pre-release files carried TenantId as a top-level key; it is read into Application.TenantId.
+    $legacyTenantId = ''
 
     foreach ($line in ($Content -split '\r?\n')) {
         if ($line -match '^\s*#' -or $line -match '^\s*$') { continue }
@@ -142,7 +144,7 @@ function ConvertFrom-RBAC4AppYaml {
                 switch ($key) {
                     'SchemaVersion' { $config.SchemaVersion = $value }
                     'GeneratedAt'   { $legacyGeneratedAt    = $value }
-                    'TenantId'      { $config.TenantId      = $value }
+                    'TenantId'      { $legacyTenantId       = $value }
                 }
             }
             elseif ($section -eq 'Application') {
@@ -151,6 +153,7 @@ function ConvertFrom-RBAC4AppYaml {
                     'AppId'       { $config.Application.AppId       = $value }
                     'SpObjectId'  { $config.Application.SpObjectId  = $value }
                     'DisplayName' { $config.Application.DisplayName = $value }
+                    'TenantId'    { $config.Application.TenantId    = $value }
                 }
             }
             elseif ($section -eq 'Rbac') {
@@ -225,6 +228,7 @@ function ConvertFrom-RBAC4AppYaml {
     }
 
     if ($legacyGeneratedAt -and -not $config.Runtime.GeneratedAt) { $config.Runtime.GeneratedAt = $legacyGeneratedAt }
+    if ($legacyTenantId -and -not $config.Application.TenantId) { $config.Application.TenantId = $legacyTenantId }
 
     if ($Raw) { return $config }
 

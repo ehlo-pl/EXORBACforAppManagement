@@ -15,7 +15,9 @@ The three functions form a **create → assign → read** flow and share the sam
 | [`New-RegisteredApp`](#new-registeredapp) | create | Creates an Entra app registration and (by default) its service principal. NOTE: requires high privileges; intended mainly for testing environments when production app registration is handled by a separate pipeline/team. |
 | [`New-RBAC4AppEntry`](#new-rbac4appentry) | assign | Ensures the scope source (group, recipients, tag, or filter), the EXO service principal, and assigns EXO Application roles bound directly to the group (default) or to a management scope (`-AssignmentScope ManagementScope`, and every non-Group kind). |
 | `New-RBAC4AppManagementScope` | helper | Ensures an EXO management scope exists with a given `RecipientRestrictionFilter` (creates, updates on drift, or leaves an equivalent one alone; `-NoUpdate` only warns). |
-| [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read / inventory | Lists the EXO Application-role assignments, each resolved to its AppId/ServicePrincipalId and scope group name/type/members; `-ByApplication` groups them into one row per application. |
+| [`Get-RBAC4AppEntry`](#get-rbac4appentry) | read / inventory | Lists the EXO Application-role assignments, each resolved to its AppId/ServicePrincipalId and scope group name/type/members (one `RBAC4App.Entry` row per assignment). |
+| [`Get-RBAC4AppApplication`](#get-rbac4appapplication) | read / inventory | Groups `Get-RBAC4AppEntry` rows into one row per application (assignee), or fetches them itself. |
+| [`Export-RBAC4AppConfig`](#export-rbac4appconfig) | export | Writes `Get-RBAC4AppEntry` rows as YAML/JSON configs for `Invoke-RBAC4AppConfig`; refuses guessed data without `-Force`. |
 | [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, scope source, management scope when `-AssignmentScope ManagementScope`, EXO service principal, role assignments) and returns an `IsValid` summary. |
 | [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate / plan | Writes YAML/JSON RBAC configs from legacy Application Access Policies for later provisioning with `Invoke-RBAC4AppConfig`. |
 | [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry` when `-AccessGroupType M365Group`). |
@@ -37,7 +39,9 @@ descriptions, defaults, and aliases.
 | Function | Parameter sets | Parameters | `-WhatIf` / `-Confirm` |
 | --- | --- | --- | --- |
 | [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | All, ByAppId, ByPolicy | `-AppId <string>`<br>`-Policy <object[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupType {M365Group\|DistributionList}`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json}` | yes |
-| [`Get-RBAC4AppEntry`](#get-rbac4appentry) | All, ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-Enabled <bool>`<br>`-RoleAssigneeType {All\|ServicePrincipal\|User\|SecurityGroup\|RoleGroup\|RoleAssignmentPolicy\|ForeignSecurityPrincipal\|LinkedRoleGroup\|Computer}`<br>`-ScopeType <string[]>`<br>`-ByApplication`<br>`-ApplicationAccessPolicy`<br>`-ExportConfig`<br>`-ExportPath <string>`<br>`-ExportFormat {Yaml\|Json}` | yes |
+| [`Get-RBAC4AppEntry`](#get-rbac4appentry) | All, ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-Enabled <bool>`<br>`-RoleAssigneeType {All\|ServicePrincipal\|User\|SecurityGroup\|RoleGroup\|RoleAssignmentPolicy\|ForeignSecurityPrincipal\|LinkedRoleGroup\|Computer}`<br>`-ScopeType <string[]>` (RecipientWriteScope values, or `All`) | yes |
+| [`Get-RBAC4AppApplication`](#get-rbac4appapplication) | FromEntry, All, ByName, ByAppId, BySpObjectId | **`-InputObject <RBAC4App.Entry[]>`** (pipeline, FromEntry)<br>plus the `Get-RBAC4AppEntry` identity and filter parameters | yes |
+| [`Export-RBAC4AppConfig`](#export-rbac4appconfig) | — | **`-InputObject <RBAC4App.Entry[]>`** (pipeline)<br>`-Path <string>`<br>`-Format {Yaml\|Json}`<br>`-PerApplication`<br>`-PassThru`<br>`-Force` | yes |
 | [`Invoke-RBAC4AppConfig`](#invoke-rbac4appconfig) | — | **`-Path <string>`**<br>`-Format {Auto\|Yaml\|Json}` | yes |
 | [`New-RBAC4AppConfig`](#new-rbac4appconfig) | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-AccessGroupType {M365Group\|DistributionList\|MailEnabledSecurityGroup}`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-Members <string[]>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-SeparateScopePerRole`<br>`-ChangeReference <string>`<br>`-OwnerUsername <string>`<br>`-OwnerDisplayName <string>`<br>`-TechnicalContactUsername <string>`<br>`-TechnicalContactDisplayName <string>`<br>`-PCode <string>`<br>`-CmdbId <string>`<br>`-Description <string>`<br>`-NetworkAccessIP4Range <string>`<br>`-NetworkAccessIP6Range <string>`<br>`-NetworkAccessLocation <string>`<br>`-Repository <string>`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json}` | yes |
 | `New-RBAC4AppDistributionGroup` | ByAppName, ByName | **`-AppName <string>`** (required in ByAppName)<br>`-Prefix <string>`<br>**`-Name <string>`** (required in ByName)<br>`-DisplayName <string>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ChangeReference <string>` | yes |
@@ -91,7 +95,9 @@ needs no Graph session, working around the MSAL/WAM assembly conflict between `M
 | `Set-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Add-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` `Remove-ManagementRoleAssignment` *(same bootstrap fallback as `New-RBAC4AppEntry` when the pointer doesn't exist yet)* |
 | `Test-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` |
 | `Remove-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ConnectionInformation` `Get-UnifiedGroup`/`Get-DistributionGroup`/`Get-Recipient` `Get-ManagementRoleAssignment` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Remove-ManagementRoleAssignment` `Remove-UnifiedGroup`/`Remove-DistributionGroup` |
-| `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementScope` `Get-Recipient` *(resolves the assignee to AppId/ServicePrincipalId via `Get-ServicePrincipal`, and each management scope to its `ScopeKind`/`ScopeFilter` and members - group membership for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter` preview for Tag/Filter kinds; legacy group-direct assignments report `ScopeKind` `GroupDirect`; cached per run; `-ByApplication` groups the same data per application)* |
+| `Get-RBAC4AppEntry` | — | `Get-ServicePrincipal` `Get-ManagementRoleAssignment` `Get-UnifiedGroup`/`Get-DistributionGroup` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementScope` `Get-Recipient` *(resolves the assignee to AppId/ServicePrincipalId via `Get-ServicePrincipal`, and each management scope to its `ScopeKind`/`ScopeFilter` and members - group membership for Group kind, the listed recipients for Recipients kind, a `Get-Recipient -RecipientPreviewFilter` preview for Tag/Filter kinds; legacy group-direct assignments report `ScopeKind` `GroupDirect`; cached per run)* |
+| `Get-RBAC4AppApplication` | — | same as `Get-RBAC4AppEntry` when it fetches the rows itself; none for piped rows |
+| `Export-RBAC4AppConfig` | — | — *(works only from piped `Get-RBAC4AppEntry` rows; writes config files)* |
 | `Convert-ApplicationAccessPolicyToRBAC` | `Get-MgServicePrincipal` `Get-MgServicePrincipalAppRoleAssignment` `Get-MgContext` | `Get-ApplicationAccessPolicy` *(read-only; writes config files, does not provision RBAC)* |
 | `Invoke-RBAC4AppConfig` | — | `Get-ServicePrincipal` `Get-Recipient` `Add-DistributionGroupMember` `Get-UnifiedGroupLinks`/`Get-DistributionGroupMember` `Get-ManagementRoleAssignment` `New-ManagementRoleAssignment` *(+ delegates to scope-group helpers and `Register-EXOServicePrincipal`, same as `New-RBAC4AppEntry`)* |
 
@@ -121,7 +127,7 @@ service principal pointer yet) split cleanly across two sessions.
 | **App registration** | `New-RegisteredApp` | — |
 | **Plan RBAC config** | `New-RBAC4AppConfig` → writes `.yml` (or `.json` with `-Format Json`) | — |
 | **Provision from config** | — | `Invoke-RBAC4AppConfig -Path .\config.yml` (format auto-detected from the extension) |
-| **Everything else** | — | `New-RBAC4AppEntry` `Set-RBAC4AppEntry` `Test-RBAC4AppEntry` `Remove-RBAC4AppEntry` `Get-RBAC4AppEntry` `New-RBAC4AppUnifiedGroup` `New-RBAC4AppDistributionGroup` `Register-EXOServicePrincipal` |
+| **Everything else** | — | `New-RBAC4AppEntry` `Set-RBAC4AppEntry` `Test-RBAC4AppEntry` `Remove-RBAC4AppEntry` `Get-RBAC4AppEntry` `Get-RBAC4AppApplication` `Export-RBAC4AppConfig` `New-RBAC4AppUnifiedGroup` `New-RBAC4AppDistributionGroup` `Register-EXOServicePrincipal` |
 
 For a never-before-registered application, `New-RBAC4AppEntry` and `Set-RBAC4AppEntry` can also
 bootstrap the Exchange Online service principal pointer directly in one Exchange-Online-only
@@ -181,12 +187,12 @@ Generated files contain **only the entries that are actually used**: keys the se
 # RBAC4App configuration — generated by New-RBAC4AppConfig
 # Feed to Invoke-RBAC4AppConfig in a session with only ExchangeOnlineManagement connected.
 SchemaVersion: "4.3"
-TenantId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 Application:
   AppId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
   SpObjectId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
   DisplayName: "Contoso Mail App"
+  TenantId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 Rbac:
   Roles:
@@ -202,7 +208,7 @@ Every key and the value it takes when absent:
 
 | Key | Used when | Default when absent |
 | --- | --- | --- |
-| `TenantId` | always (informational) | `""` |
+| `Application.TenantId` | always (informational) | `""` |
 | `Metadata.ChangeReference` | always | `""` (no change record) |
 | `RbacScope.ScopeKind` | always | `Group` (`Recipients` / `Tag` / `Filter`) |
 | `RbacScope.AssignmentScope` | `ScopeKind: Group` | `RecipientGroupScope` for schema `4.1` or later; `ManagementScope` for `4.0`/`3.0` and every non-Group kind |
@@ -248,8 +254,8 @@ Exchange provisioning.
 The `Runtime` section records who generated the config (`OperatorUsername`, `OperatorMachineName`)
 and the errors (`CollectedErrors`) and warnings
 (`CollectedWarnings`) the writer collected while building the config - for example
-`Get-RBAC4AppEntry -ExportConfig` notes there that `SpObjectId` was taken from a role assignment's
-`EffectiveUserName`, or that a scope group type was inferred. Like `Metadata`, it is always written in
+`Export-RBAC4AppConfig` notes there that `SpObjectId` was taken from a role assignment's
+`EffectiveUserName`, or that an unreadable scope group was exported reference-only under `-Force`. Like `Metadata`, it is always written in
 full (each list as `[]` when empty) and is never used for provisioning. `GeneratedAt` lives in this
 section since schema 4.3 (it used to be a top-level key).
 
@@ -298,7 +304,7 @@ New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' -Repository 'C:
 
 `Invoke-RBAC4AppConfig` accepts only `SchemaVersion: "4.3"`. A config of any earlier version (`"4.2"`,
 `"4.1"`, `"4.0"`, `"3.0"`, ...) is refused with an error pointing back at `New-RBAC4AppConfig`
-(or `Get-RBAC4AppEntry -ExportConfig` / `Convert-ApplicationAccessPolicyToRBAC`) to regenerate it.
+(or `Get-RBAC4AppEntry | Export-RBAC4AppConfig` / `Convert-ApplicationAccessPolicyToRBAC`) to regenerate it.
 State files read by `New-RBAC4AppConfig -Repository` may still be of version 3.0-4.3.
 
 ## Install / import
@@ -345,7 +351,7 @@ New-RegisteredApp -DisplayName 'Contoso Mail App' |
 Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App'
 
 # Inventory distinct registered applications that already hold supported EXO app permissions:
-Get-RBAC4AppEntry -ByApplication
+Get-RBAC4AppApplication
 ```
 
 ### New-RegisteredApp
@@ -525,28 +531,63 @@ Get-RBAC4AppEntry                                            # every application
 Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send'
 Get-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' | Format-Table Name,Role,Scope
 Get-RBAC4AppEntry -ScopeType All -RoleAssigneeType All            # every recipient scope/assignee
-Get-RBAC4AppEntry -ByApplication                                  # one row per application (inventory view)
-Get-RBAC4AppEntry -ApplicationAccessPolicy                        # all legacy Application Access Policies
-Get-RBAC4AppEntry -ApplicationAccessPolicy -AppId '11111111-2222-3333-4444-555555555555'
+'Contoso Mail App', 'Fabrikam Archiver' | Get-RBAC4AppEntry       # several apps, one EXO read
 ```
 
-`-ApplicationAccessPolicy` returns the raw objects from `Get-ApplicationAccessPolicy` instead of
-RBAC role assignments. It supports the existing `-RegisteredAppName`, `-AppId`, and `-SpObjectId`
-identity filters; an unfiltered call returns all policies. This mode requires an Exchange Online
-session where `Get-ApplicationAccessPolicy` is available.
+Each row is an `RBAC4App.Entry` and also says where its data came from:
+`ServicePrincipalIdSource` (`ExoPointer`, `EffectiveUserName`, `NameHeuristic`, or `None`),
+`ScopeSource` (`ManagementScope`, `Legacy`, or `None`), `ScopeGroupName`, and `ScopeGroupResolved`
+(whether the scope group was actually read). `Warnings` lists the warnings that apply to the row.
 
 > `Get-ManagementRoleAssignment` has no `-App` parameter, so role filtering uses native `-Role`
-> while the application filter is applied client-side against each assignment's `RoleAssigneeName`
-> and `Name`. `-ScopeType` defaults to `Group`/`CustomRecipientScope` (the only recipient scopes
-> this module creates); pass `-ScopeType All` to also see e.g. Organization-wide assignments.
+> while the application filter is applied client-side: an assignment is kept when its resolved
+> assignee *is* the requested service principal (object id, or AppId when the object id is
+> missing) - never by name substring. `-ScopeType` defaults to `Group`/`CustomRecipientScope` (the
+> only recipient scopes this module creates); pass `-ScopeType All` to also see e.g.
+> Organization-wide assignments.
 
-`-ByApplication` returns the app-centric inventory view instead — one row per distinct registered
-application, aggregating that application's roles, assignment names, and resolved scope group
-names/members (plus `ManagementScopeNames`/`ScopeKinds`) onto a single object. (This replaces the former `Get-RegisteredAppWithPermission` function, which has been removed.)
+Exchange Online is read once per call, however many identities are piped in. A failed
+`Get-ServicePrincipal` or `Get-ManagementRoleAssignment` read is reported as one error and returns
+nothing - it is never mistaken for an empty tenant. Only `-AppId` binds by property name from the
+pipeline, so a row, a `New-RegisteredApp` result, or any object with an `AppId` pipes in; names are
+piped as plain strings. For legacy Application Access Policies, call `Get-ApplicationAccessPolicy`
+directly (or `Convert-ApplicationAccessPolicyToRBAC`).
+
+### Get-RBAC4AppApplication
+
+The app-centric inventory view: one `RBAC4App.Application` row per assignee (grouped by
+`RoleAssigneeType` + `RoleAssigneeName`), aggregating its roles, assignment names, management
+scopes, scope kinds, scope groups, and in-scope recipients. Pipe `Get-RBAC4AppEntry` rows into it
+(no further Exchange Online reads), or let it fetch them with the same parameters. A role group
+holding an application role keeps its own row with `RoleAssigneeType` `RoleGroup` and no
+`DisplayName`.
 
 ```powershell
-Get-RBAC4AppEntry -ByApplication
-Get-RBAC4AppEntry -ByApplication -Role 'Mail.Send'
+Get-RBAC4AppApplication
+Get-RBAC4AppApplication -Role 'Mail.Send'
+Get-RBAC4AppEntry -Enabled $true | Get-RBAC4AppApplication
+```
+
+### Export-RBAC4AppConfig
+
+Writes `Get-RBAC4AppEntry` rows as schema 4.3 configs for `Invoke-RBAC4AppConfig` - one per role
+assignment, or one per application (and scope) with `-PerApplication`. `-Path` is a directory
+(default: the current one; one `rbac4app-<name>.yml|.json` file per config, colliding names
+numbered) or a file (several configs become one JSON array). Rows are collected and written once at
+the end, `-WhatIf` is honored, and `-PassThru` returns `Path`/`Config` per file.
+
+Guessed data is refused (a non-terminating error naming `-Force`) unless `-Force`:
+
+- an application identity inferred from the generated role assignment name
+  (`ServicePrincipalIdSource` `NameHeuristic`);
+- a scope group that could not be read (`ScopeGroupResolved` `$false`). With `-Force` it is exported
+  as a reference-only `AccessGroupType: MailEnabledSecurityGroup` with no members, which
+  `Invoke-RBAC4AppConfig` validates but never creates.
+
+```powershell
+Get-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' | Export-RBAC4AppConfig -Path .\configs
+Get-RBAC4AppEntry | Export-RBAC4AppConfig -PerApplication -Format Json -Path .\inventory.json
+Get-RBAC4AppEntry | Export-RBAC4AppConfig -PerApplication -WhatIf
 ```
 
 ### Test-RBAC4AppEntry
@@ -707,7 +748,7 @@ Get-ChildItem C:\rbac-configs\*.yml, C:\rbac-configs\*.json | Invoke-RBAC4AppCon
 src/EXORBACforAppManagement/
   EXORBACforAppManagement.psd1          # manifest
   EXORBACforAppManagement.psm1          # loader: dot-sources Private + Public, exports Public only
-  Public/                        # 13 exported functions (see table above)
+  Public/                        # 15 exported functions (see table above)
   Private/                       # Format-RBAC4AppSafeName, ConvertTo-RBAC4AppRoleName, ConvertTo/From-RBAC4AppYaml,
                                  # ConvertTo/From-RBAC4AppRecipientFilter, Get-RBAC4AppManagementScopeName, ...
 tests/                           # Pester v5 tests

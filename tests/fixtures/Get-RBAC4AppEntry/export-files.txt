@@ -1,0 +1,7 @@
+rbac4app-AppCldR-Litware.yml
+rbac4app-AppMailR-Contoso.yml
+rbac4app-AppMailSend-Adatum.yml
+rbac4app-AppMailSend-Contoso.yml
+rbac4app-AppMailSend-Fabrikam.yml
+rbac4app-AppMailSend-Northwind.yml
+rbac4app-AppMailSend-Tailspin.yml

@@ -75,9 +75,7 @@
         $lines.Add("$Indent$($Name): $(ConvertTo-RBAC4AppYamlScalar $Value)")
     }
 
-    foreach ($key in @('SchemaVersion', 'TenantId')) {
-        if ($Config.PSObject.Properties[$key]) { Add-RBAC4AppYamlProperty -Indent '' -Name $key -Value $Config.$key }
-    }
+    if ($Config.PSObject.Properties['SchemaVersion']) { Add-RBAC4AppYamlProperty -Indent '' -Name 'SchemaVersion' -Value $Config.SchemaVersion }
     # Metadata, ConversionResult, and Runtime are written in full: empty scalars as "", empty lists as [].
     $fullSections = @('Metadata', 'ConversionResult', 'Runtime')
     foreach ($section in @('Application', 'Rbac', 'RbacScope', 'Metadata', 'ConversionResult', 'Runtime')) {

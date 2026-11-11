@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Diagnoses why Get-RBAC4AppEntry -ExportConfig does not write the expected rbac4app-*.yml/.json files.
+Diagnoses why Get-RBAC4AppEntry | Export-RBAC4AppConfig does not write the expected rbac4app-*.yml/.json files.
 
 .DESCRIPTION
 Run in a connected Exchange Online session (Connect-ExchangeOnline). The script imports the module
@@ -32,7 +32,7 @@ Module manifest to import. Defaults to src/EXORBACforAppManagement in this repos
 Yaml (default) or Json, passed through to Get-RBAC4AppEntry.
 
 .PARAMETER ByApplication
-Also pass -ByApplication (one config per application instead of one per assignment).
+Also pass -PerApplication to Export-RBAC4AppConfig (one config per application instead of one per assignment).
 
 .EXAMPLE
 Connect-ExchangeOnline; ./scripts/Debug-ExportConfig.ps1
@@ -102,12 +102,12 @@ try {
     if (-not $exportFolder) { $exportFolder = (Get-Location).Path }
     $before = @(Get-ChildItem -LiteralPath $exportFolder -Filter 'rbac4app-*' -ErrorAction SilentlyContinue)
 
-    $exportParameters = @{ ExportConfig = $true; ExportPath = $ExportPath; ExportFormat = $ExportFormat; ByApplication = $ByApplication; Verbose = $true }
-    "== Running: Get-RBAC4AppEntry $(($exportParameters.GetEnumerator() | ForEach-Object { "-$($_.Key):$($_.Value)" }) -join ' ')"
+    $exportParameters = @{ Path = $ExportPath; Format = $ExportFormat; PerApplication = $ByApplication; Verbose = $true }
+    "== Running: Get-RBAC4AppEntry | Export-RBAC4AppConfig $(($exportParameters.GetEnumerator() | ForEach-Object { "-$($_.Key):$($_.Value)" }) -join ' ')"
     $ev = $null; $wv = $null
-    $output = Get-RBAC4AppEntry @exportParameters -ErrorVariable ev -WarningVariable wv 4>&1
+    $rows = @(Get-RBAC4AppEntry -ErrorVariable ev -WarningVariable wv)
+    $output = $rows | Export-RBAC4AppConfig @exportParameters -ErrorVariable +ev -WarningVariable +wv 4>&1
     $verbose = @($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
-    $rows = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
 
     "== Rows returned: $($rows.Count)"
     $rows | Select-Object -First 10 Name, DisplayName, AppId, ScopeKind, Scope, ManagementScope, ScopeGroupType |

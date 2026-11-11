@@ -41,11 +41,12 @@ function Complete-RBAC4AppConfig {
 
     [pscustomobject]@{
         SchemaVersion = $schemaVersion
-        TenantId      = [string]$Config.TenantId
         Application   = [pscustomobject]@{
             AppId       = [string]$app.AppId
             SpObjectId  = [string]$app.SpObjectId
             DisplayName = [string]$app.DisplayName
+            # Older pre-release files carried TenantId as a top-level key.
+            TenantId    = if ([string]$app.TenantId) { [string]$app.TenantId } else { [string]$Config.TenantId }
         }
         Rbac          = [pscustomobject]@{
             Roles = & $list $rbac.Roles

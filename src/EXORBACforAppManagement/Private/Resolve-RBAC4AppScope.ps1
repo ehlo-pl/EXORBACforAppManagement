@@ -25,8 +25,14 @@ function Resolve-RBAC4AppScope {
     #
     # Returns a [pscustomobject] with ScopeName (the scope group name for Group/GroupDirect kinds,
     # otherwise the management scope name), ScopeGroupName, ScopeGroupType, Members (always an
-    # array), ManagementScope, ScopeKind, and ScopeFilter. Never throws; unresolvable pieces
-    # produce a warning and empty values.
+    # array), ManagementScope, ScopeKind, ScopeFilter, Source (ManagementScope, Legacy, or None),
+    # GroupResolved (whether a Group/GroupDirect scope group was actually read), and Warnings
+    # (string[]). Never throws and never writes warnings itself: unresolvable pieces produce empty
+    # values plus a message in Warnings, and the caller decides how to surface it.
+    #
+    # An assignment bound to a custom recipient scope (RecipientWriteScope CustomRecipientScope)
+    # whose management scope cannot be read returns ScopeKind $null with a warning; it is never
+    # looked up as a legacy group, because that name is a scope name, not a group name.
     param(
         [Parameter(Mandatory)]
         [psobject] $Assignment,
@@ -52,6 +58,7 @@ function Resolve-RBAC4AppScope {
 
         $groupType = $null
         $members = @()
+        $groupWarnings = @()
         if (Get-UnifiedGroup -Identity $groupName -ErrorAction SilentlyContinue) {
             $groupType = 'M365Group'
             $members = Get-MemberAddress @(Get-UnifiedGroupLinks -Identity $groupName -LinkType Members -ErrorAction SilentlyContinue)
@@ -98,17 +105,17 @@ function Resolve-RBAC4AppScope {
                     Write-Verbose ("Scope group '{0}' resolved via Get-Recipient -Anr to '{1}' ({2})." -f $groupName, $anrHit.Name, $groupType)
                 }
                 else {
-                    Write-Warning -Message ("Could not resolve scope group '{0}' via Get-UnifiedGroup, Get-DistributionGroup, or Get-Recipient -Anr; its type and membership will be omitted." -f $groupName)
+                    $groupWarnings += "Could not resolve scope group '{0}' via Get-UnifiedGroup, Get-DistributionGroup, or Get-Recipient -Anr; its type and membership will be omitted." -f $groupName
                 }
             }
         }
 
-        $info = [pscustomobject]@{ ScopeGroupType = $groupType; Members = @($members) }
+        $info = [pscustomobject]@{ ScopeGroupType = $groupType; Members = @($members); Warnings = @($groupWarnings) }
         $Cache[$key] = $info
         $info
     }
 
-    function ConvertTo-ScopeResult($scopeName, $groupName, $groupType, $members, $managementScope, $kind, $filter) {
+    function ConvertTo-ScopeResult($scopeName, $groupName, $groupType, $members, $managementScope, $kind, $filter, $source, $warnings) {
         [pscustomobject][ordered]@{
             ScopeName       = $scopeName
             ScopeGroupName  = $groupName
@@ -117,6 +124,9 @@ function Resolve-RBAC4AppScope {
             ManagementScope = $managementScope
             ScopeKind       = $kind
             ScopeFilter     = $filter
+            Source          = $source
+            GroupResolved   = [bool]($kind -in @('Group', 'GroupDirect') -and $groupType)
+            Warnings        = @($warnings | Where-Object { $_ })
         }
     }
 
@@ -129,13 +139,18 @@ function Resolve-RBAC4AppScope {
     elseif ([string]$Assignment.RecipientWriteScope -eq 'CustomRecipientScope' -and $Assignment.CustomRecipientWriteScope) {
         $candidate = [string]$Assignment.CustomRecipientWriteScope
     }
+    $isCustomRecipientScope = [string]$Assignment.RecipientWriteScope -eq 'CustomRecipientScope'
 
     if ($candidate) {
         $key = "scope:$candidate"
         if (-not $Cache.ContainsKey($key)) {
             $scopeObj = $null
+            $readError = $null
             try { $scopeObj = Get-ManagementScope -Identity $candidate -ErrorAction Stop | Select-Object -First 1 }
-            catch { Write-Verbose -Message "'$candidate' is not a readable management scope: $($_.Exception.Message)" }
+            catch {
+                $readError = $_.Exception.Message
+                Write-Verbose -Message "'$candidate' is not a readable management scope: $readError"
+            }
 
             $resolved = $null
             if ($scopeObj) {
@@ -151,29 +166,37 @@ function Resolve-RBAC4AppScope {
                             $groupName = [string]$rec.Name
                             if (-not $groupName) { $groupName = [string]$rec.DisplayName }
                             $info = Get-GroupInfo $groupName
-                            $resolved = ConvertTo-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $candidate 'Group' $filter
+                            $resolved = ConvertTo-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $candidate 'Group' $filter 'ManagementScope' $info.Warnings
                         }
                         else {
-                            Write-Warning -Message ("Could not resolve the group '{0}' referenced by management scope '{1}'; its type and membership will be omitted." -f $dn, $candidate)
-                            $resolved = ConvertTo-ScopeResult $dn $dn $null @() $candidate 'Group' $filter
+                            $msg = "Could not resolve the group '{0}' referenced by management scope '{1}'; its type and membership will be omitted." -f $dn, $candidate
+                            $resolved = ConvertTo-ScopeResult $dn $dn $null @() $candidate 'Group' $filter 'ManagementScope' @($msg)
                         }
                     }
                     'Recipients' {
-                        $resolved = ConvertTo-ScopeResult $candidate $null $null $parsed.Recipients $candidate 'Recipients' $filter
+                        $resolved = ConvertTo-ScopeResult $candidate $null $null $parsed.Recipients $candidate 'Recipients' $filter 'ManagementScope' @()
                     }
                     default {
                         $members = @()
+                        $previewWarnings = @()
                         if ($filter) {
                             $preview = @(Get-Recipient -RecipientPreviewFilter $filter -ResultSize $PreviewLimit -ErrorAction SilentlyContinue)
                             if ($preview.Count -ge $PreviewLimit) {
-                                Write-Warning -Message ("Management scope '{0}' matches at least {1} recipients; ScopeMembers is truncated." -f $candidate, $PreviewLimit)
+                                $previewWarnings += "Management scope '{0}' matches at least {1} recipients; ScopeMembers is truncated." -f $candidate, $PreviewLimit
                             }
                             $members = Get-MemberAddress $preview
                         }
                         $kind = if ($parsed.ScopeKind) { $parsed.ScopeKind } else { 'Filter' }
-                        $resolved = ConvertTo-ScopeResult $candidate $null $null $members $candidate $kind $filter
+                        $resolved = ConvertTo-ScopeResult $candidate $null $null $members $candidate $kind $filter 'ManagementScope' $previewWarnings
                     }
                 }
+            }
+            elseif ($isCustomRecipientScope) {
+                # F10: a custom recipient scope names a management scope, never a group - report it
+                # unreadable rather than probing the group cmdlets with a scope name.
+                $reason = if ($readError) { $readError } else { 'not found' }
+                $msg = "Could not read management scope '{0}' ({1}); its kind, filter, and members will be omitted." -f $candidate, $reason
+                $resolved = ConvertTo-ScopeResult $candidate $null $null @() $candidate $null $null 'ManagementScope' @($msg)
             }
             $Cache[$key] = $resolved
         }
@@ -183,8 +206,8 @@ function Resolve-RBAC4AppScope {
     # --- Legacy: assignment scoped directly to a group (-RecipientGroupScope).
     $groupName = Resolve-RBAC4AppScopeGroupName -Assignment $Assignment
     if (-not $groupName) {
-        return ConvertTo-ScopeResult $null $null $null @() $null $null $null
+        return ConvertTo-ScopeResult $null $null $null @() $null $null $null 'None' @()
     }
     $info = Get-GroupInfo $groupName
-    ConvertTo-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $null 'GroupDirect' $null
+    ConvertTo-ScopeResult $groupName $groupName $info.ScopeGroupType $info.Members $null 'GroupDirect' $null 'Legacy' $info.Warnings
 }

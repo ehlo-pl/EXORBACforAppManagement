@@ -147,7 +147,7 @@ function Invoke-RBAC4AppConfig {
 
         # Only the current schema is accepted - no compatibility with earlier versions.
         if ([string]$config.SchemaVersion -ne $script:RBAC4AppConfigSchemaVersion) {
-            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)'. Re-generate the config with New-RBAC4AppConfig (or Get-RBAC4AppEntry -ExportConfig / Convert-ApplicationAccessPolicyToRBAC)."
+            Write-Error "Config '$Path' has SchemaVersion '$($config.SchemaVersion)', but this version of Invoke-RBAC4AppConfig requires '$($script:RBAC4AppConfigSchemaVersion)'. Re-generate the config with New-RBAC4AppConfig (or Get-RBAC4AppEntry | Export-RBAC4AppConfig, or Convert-ApplicationAccessPolicyToRBAC)."
             return
         }
         if (-not $config.Application.SpObjectId) {
@@ -261,7 +261,7 @@ function Invoke-RBAC4AppConfig {
             ResolvedDisplay     = $spDisplayName
             AppId               = $spAppId
             SpObjectId          = $spId
-            TenantId            = $config.TenantId
+            TenantId            = $config.Application.TenantId
             ScopeKind           = $ScopeKind
             AssignmentScope     = $AssignmentScope
             ManagementScopeName    = $null

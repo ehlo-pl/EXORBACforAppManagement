@@ -56,10 +56,10 @@ $module = Import-Module -Name $modulePath -PassThru -Force
 # Every schema 4.3 field, in schema order (docs/SCHEMA-4.3.md). Top-level fields have no section.
 $schemaFields = @(
     'SchemaVersion'
-    'TenantId'
     'Application.AppId'
     'Application.SpObjectId'
     'Application.DisplayName'
+    'Application.TenantId'
     'Rbac.Roles'
     'Rbac.ChangeReference'
     'RbacScope.ScopeKind'
