@@ -1,4 +1,4 @@
-function Get-RBAC4AppSafeDisplayName {
+﻿function Get-RBAC4AppSafeDisplayName {
     # Returns the display-name part used by the Get-RBAC4App*Name helpers. Normally this is the
     # display name unchanged (the helpers sanitize the full "{Prefix}-{DisplayName}" string, so
     # existing names stay byte-for-byte identical). When the display name has no character that
@@ -30,3 +30,4 @@ function Get-RBAC4AppSafeDisplayName {
     }
     throw ("Application display name '{0}' contains no characters usable in an Exchange object name (A-Z, a-z, 0-9, '-'), and no AppId is available as a fallback. Supply {1}." -f $DisplayName, $OverrideHint)
 }
+
