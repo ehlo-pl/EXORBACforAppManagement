@@ -3,7 +3,7 @@
 Exports Get-RBAC4AppEntry rows as Invoke-RBAC4AppConfig config files (YAML or JSON).
 
 .DESCRIPTION
-Export-RBAC4AppConfig turns RBAC4App.Entry rows (from Get-RBAC4AppEntry) into schema-4.3 configs
+Export-RBAC4AppConfig turns RBAC4App.Entry rows (from Get-RBAC4AppEntry) into schema-4.4 configs
 that Invoke-RBAC4AppConfig can provision from, and writes them to disk. It never reads Exchange
 Online: everything it needs is on the rows.
 
@@ -21,7 +21,7 @@ Guessed data is refused unless -Force:
 - an application identity inferred from the generated role assignment name
   (ServicePrincipalIdSource NameHeuristic);
 - a group scope whose group could not be read (ScopeGroupResolved $false). With -Force it is
-  exported as a reference-only AccessGroupType MailEnabledSecurityGroup with no members, which
+  exported as a reference-only AccessGroupType HybridMailEnabledSecurityGroup with no members, which
   Invoke-RBAC4AppConfig validates but never creates.
 The reason is recorded in the config's Runtime.CollectedWarnings, together with the rows' own
 warnings.

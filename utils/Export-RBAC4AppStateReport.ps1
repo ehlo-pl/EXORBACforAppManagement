@@ -4,7 +4,7 @@ Exports a CSV inventory of RBAC4App YAML state files.
 
 .DESCRIPTION
 Scans a directory recursively for .yaml and .yml state files and writes one CSV row per file. Every
-field defined by config schema 4.3 is a column, named by its full schema path (for example
+field defined by config schema 4.4 is a column, named by its full schema path (for example
 Application.AppId, RbacScope.ScopeKind, Metadata.PCode, Runtime.OperatorUsername), in schema order -
 so every row has the same columns even when a file leaves fields out.
 
@@ -29,7 +29,7 @@ Directory to scan for YAML state files.
 CSV report destination. Defaults to RBAC4AppStateReport.csv in the current directory.
 
 .EXAMPLE
-./scripts/Export-RBAC4AppStateReport.ps1 -Path ./state -OutputPath ./state-report.csv
+./utils/Export-RBAC4AppStateReport.ps1 -Path ./state -OutputPath ./state-report.csv
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
 param(
@@ -53,7 +53,7 @@ $modulePath = Join-Path $modulePath 'EXORBACforAppManagement.psd1'
 # session (e.g. one without ConvertFrom-RBAC4AppYaml -Raw) would be reused.
 $module = Import-Module -Name $modulePath -PassThru -Force
 
-# Every schema 4.3 field, in schema order (docs/SCHEMA-4.3.md). Top-level fields have no section.
+# Every schema 4.4 field, in schema order (docs/SCHEMA-4.4.md). Top-level fields have no section.
 $schemaFields = @(
     'SchemaVersion'
     'Application.AppId'

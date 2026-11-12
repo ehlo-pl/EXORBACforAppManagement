@@ -4,10 +4,40 @@
 
 $script:RBAC4AppDefaultManagementScopePrefix = 'MSRAo1P'
 
-# RecipientTypeDetails values accepted for -AccessGroupType MailEnabledSecurityGroup (reference-only,
-# on-prem/hybrid-synced). Any other recipient (a mailbox, a plain distribution group, ...) is rejected
-# so a MemberOfGroup scope is never bound to the wrong object.
+# RecipientTypeDetails values accepted for -AccessGroupType HybridMailEnabledSecurityGroup
+# (reference-only, on-prem/hybrid-synced). Any other recipient (a mailbox, a plain distribution group,
+# ...) is rejected so a MemberOfGroup scope is never bound to the wrong object.
 $script:RBAC4AppSecurityGroupRecipientTypes = @('MailUniversalSecurityGroup', 'MailNonUniversalGroup')
+
+# -AccessGroupType values. CloudMailEnabledSecurityGroup (default) and DistributionList are
+# Exchange-Online-mastered groups created and managed with the *-DistributionGroup cmdlets;
+# M365Group with the *-UnifiedGroup cmdlets; HybridMailEnabledSecurityGroup is reference-only
+# (never created, re-membered, or send-restricted). 'MailEnabledSecurityGroup' is the pre-0.9.0 name
+# of the hybrid type, still accepted on input (parameters and config files) and normalized by
+# ConvertTo-RBAC4AppAccessGroupType; every writer emits the new name.
+$script:RBAC4AppAccessGroupTypes = @('CloudMailEnabledSecurityGroup', 'DistributionList', 'M365Group', 'HybridMailEnabledSecurityGroup')
+$script:RBAC4AppDistributionGroupTypes = @('CloudMailEnabledSecurityGroup', 'DistributionList')
+$script:RBAC4AppCreatableGroupTypes = @('CloudMailEnabledSecurityGroup', 'DistributionList', 'M365Group')
+$script:RBAC4AppDefaultOwner = 'GraphAPI-Dummy-owner'
+
+function ConvertTo-RBAC4AppAccessGroupType {
+    # Normalizes an -AccessGroupType value: maps the legacy alias 'MailEnabledSecurityGroup' to
+    # 'HybridMailEnabledSecurityGroup' and returns the canonical casing of a known value. An empty
+    # value is returned as-is (callers apply their own default); an unknown one is returned unchanged
+    # for the caller to reject.
+    param(
+        [Parameter()]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string] $AccessGroupType
+    )
+
+    if (-not $AccessGroupType) { return $AccessGroupType }
+    if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { return 'HybridMailEnabledSecurityGroup' }
+    $known = $script:RBAC4AppAccessGroupTypes | Where-Object { $_ -eq $AccessGroupType } | Select-Object -First 1
+    if ($known) { return [string]$known }
+    return $AccessGroupType
+}
 
 # Maximum generated-name lengths per Exchange object type. Group and role-assignment names are
 # held at 63 (alias-safe), management scope names at 64; changing a value renames any generated
@@ -27,20 +57,26 @@ function Get-RBAC4AppDefaultGroupPrefix {
     )
 
     switch ($AccessGroupType) {
-        'DistributionList'         { 'UDLRAo1P' }
-        'MailEnabledSecurityGroup' { 'USRAo1P' }
-        default                    { 'Um365RAo1P' }
+        'CloudMailEnabledSecurityGroup'  { 'USRACo1P' }
+        'DistributionList'               { 'UDLRAo1P' }
+        'HybridMailEnabledSecurityGroup' { 'USRAHo1P' }
+        'MailEnabledSecurityGroup'       { 'USRAHo1P' }
+        default                          { 'Um365RAo1P' }
     }
 }
 
 # Version of the RBAC4App config file schema. Every writer emits it (via ConvertTo-RBAC4AppConfig)
 # and Invoke-RBAC4AppConfig accepts only this version - no compatibility with earlier ones.
-$script:RBAC4AppConfigSchemaVersion = '4.3'
+$script:RBAC4AppConfigSchemaVersion = '4.4'
 # Versions the shared reader still understands for non-provisioning uses (the New-RBAC4AppConfig
-# -Repository state file, scripts/Export-RBAC4AppStateReport.ps1): '3.0' is read as ScopeKind Group,
-# '3.0'/'4.0' have no RbacScope.AssignmentScope and are read as ManagementScope, and before 4.3
-# GeneratedAt was a top-level key (read into Runtime.GeneratedAt).
-$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1', '4.2', '4.3')
+# -Repository state file, utils/Export-RBAC4AppStateReport.ps1): '3.0' is read as ScopeKind Group,
+# '3.0'/'4.0' have no RbacScope.AssignmentScope and are read as ManagementScope, before 4.3
+# GeneratedAt was a top-level key (read into Runtime.GeneratedAt), and before 4.4 an absent
+# RbacScope.AccessGroupType meant DistributionList (4.4 made CloudMailEnabledSecurityGroup the
+# default and renamed MailEnabledSecurityGroup to HybridMailEnabledSecurityGroup).
+$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1', '4.2', '4.3', '4.4')
+# Schema versions whose absent RbacScope.AccessGroupType means DistributionList (the default before 4.4).
+$script:RBAC4AppConfigDistributionListDefaultSchemaVersions = @('3.0', '4.0', '4.1', '4.2', '4.3')
 
 # Values a config file falls back to when a key is absent. ConvertTo-RBAC4AppConfig omits any key
 # equal to its default (or empty unless explicitly overridden, or unused by the selected
@@ -50,7 +86,7 @@ $script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1', '4.2', '4
 # $script:RBAC4AppDefaultManagementScopePrefix, and AssignmentScope per schema version (see
 # Complete-RBAC4AppConfig).
 $script:RBAC4AppConfigDefaults = @{
-    AccessGroupType   = 'DistributionList'
+    AccessGroupType   = 'CloudMailEnabledSecurityGroup'
     Members           = @('GraphAPI-Dummy')
     ManagedBy         = @('GraphAPI-Dummy-owner')
     BootstrapMember   = 'GraphAPI-Dummy'

@@ -62,17 +62,19 @@ membership check.
 
 .PARAMETER GroupPrefix
 Prefix used when building the scope group name (matching New-RBAC4AppEntry). When omitted,
-defaults to 'UDLRAo1P' (DistributionList), 'USRAo1P' (MailEnabledSecurityGroup), or
-'Um365RAo1P' (M365Group) based on -AccessGroupType.
+defaults to 'USRACo1P'
+(CloudMailEnabledSecurityGroup), 'UDLRAo1P' (DistributionList), 'Um365RAo1P' (M365Group), or 'USRAHo1P'
+(HybridMailEnabledSecurityGroup) based on -AccessGroupType.
 
 .PARAMETER AccessGroupName
 Explicit scope group name to check instead of generating one from GroupPrefix and the
-resolved display name. Required when -AccessGroupType is MailEnabledSecurityGroup.
+resolved display name. Required when -AccessGroupType is HybridMailEnabledSecurityGroup.
 
 .PARAMETER AccessGroupType
-Kind of group that backs the RBAC scope (M365Group, DistributionList, or
-MailEnabledSecurityGroup). Defaults to DistributionList (matching New-RBAC4AppEntry). Controls
-which cmdlets are used to read the group and its membership.
+Kind of group that backs the RBAC scope (CloudMailEnabledSecurityGroup, DistributionList,
+M365Group, or HybridMailEnabledSecurityGroup). Defaults to CloudMailEnabledSecurityGroup (matching
+New-RBAC4AppEntry). Controls which cmdlets are used to read the group and its membership, and whether
+the send restriction is checked (SendRestricted; not for the hybrid type). The pre-0.9.0 name MailEnabledSecurityGroup is still accepted for HybridMailEnabledSecurityGroup.
 
 .PARAMETER ScopeKind
 How the management scope's recipient filter is built: Group (default; MemberOfGroup of the scope
@@ -166,8 +168,8 @@ function Test-RBAC4AppEntry {
         [string] $AccessGroupName,
 
         [Parameter()]
-        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'DistributionList',
+        [ValidateSet('CloudMailEnabledSecurityGroup', 'DistributionList', 'M365Group', 'HybridMailEnabledSecurityGroup', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'CloudMailEnabledSecurityGroup',
 
         [Parameter()]
         [ValidateSet('Group', 'Recipients', 'Tag', 'Filter')]
@@ -225,6 +227,7 @@ function Test-RBAC4AppEntry {
         $AssignmentScope = $assignmentScopeInfo.AssignmentScope
         $isDirectGroup = $AssignmentScope -eq 'RecipientGroupScope'
 
+        $AccessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType $AccessGroupType
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
             $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
@@ -242,6 +245,7 @@ function Test-RBAC4AppEntry {
             ServicePrincipalExists  = $false
             ScopeGroupName          = $null
             ScopeGroupExists        = $false
+            SendRestricted          = $null
             ExoServicePrincipalName = $null
             ExoServicePrincipalExists = $false
             ManagementScopeName     = $null
@@ -328,25 +332,36 @@ function Test-RBAC4AppEntry {
             if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
                 $umGroupName = $AccessGroupName
             }
-            elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+            elseif ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
+                throw "-AccessGroupName is required when -AccessGroupType is HybridMailEnabledSecurityGroup."
             }
             else {
                 $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName -AppId $sp.AppId
             }
             $result.ScopeGroupName = $umGroupName
             $group = switch ($AccessGroupType) {
-                'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
-                'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
+                'CloudMailEnabledSecurityGroup' { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                'DistributionList'              { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                'HybridMailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
                 default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
             }
-            if ($group -and $AccessGroupType -eq 'MailEnabledSecurityGroup' -and
+            if ($group -and $AccessGroupType -eq 'HybridMailEnabledSecurityGroup' -and
                 ([string]$group.RecipientTypeDetails -notin $script:RBAC4AppSecurityGroupRecipientTypes)) {
                 # Found, but not a mail-enabled security group: not a valid scope source.
                 $result.Missing += "$AccessGroupType '$umGroupName' (wrong recipient type '$([string]$group.RecipientTypeDetails)')"
             }
             elseif ($group) {
                 $result.ScopeGroupExists = $true
+                # Send restriction: checked for module-managed groups only (never a hybrid group). A
+                # group that can still receive mail is a warning, not a missing component.
+                if ($AccessGroupType -in $script:RBAC4AppCreatableGroupTypes) {
+                    $result.SendRestricted = Test-RBAC4AppScopeGroupSendRestriction -Group $group
+                    if ($result.SendRestricted -eq $false) {
+                        $sendMsg = Get-RBAC4AppSendRestrictionWarning -Name $umGroupName
+                        $result.Warnings += $sendMsg
+                        Write-Warning -Message $sendMsg
+                    }
+                }
             }
             else {
                 $result.Missing += "$AccessGroupType '$umGroupName'"

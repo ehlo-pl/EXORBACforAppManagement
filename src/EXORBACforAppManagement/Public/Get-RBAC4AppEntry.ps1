@@ -11,7 +11,7 @@ nothing.
 
 Every row resolves the assignee back to its Exchange Online service principal pointer
 (Get-ServicePrincipal; no Microsoft Graph session is needed) and its recipient scope to the real
-scope group name, group type (M365Group, DistributionList, or MailEnabledSecurityGroup) and
+scope group name, group type (CloudMailEnabledSecurityGroup, DistributionList, M365Group, or HybridMailEnabledSecurityGroup) and
 membership, or to the management scope's kind, filter, and in-scope recipients.
 
 Related functions consume these rows from the pipeline without reading Exchange Online again:
@@ -114,7 +114,7 @@ One object per matching assignment:
                              management scope could not be read.
   ScopeFilter              - The management scope's RecipientFilter (null for GroupDirect).
   ScopeGroupName           - The scope group name for Group/GroupDirect scopes, otherwise null.
-  ScopeGroupType           - M365Group, DistributionList, or MailEnabledSecurityGroup; null when not a
+  ScopeGroupType           - CloudMailEnabledSecurityGroup, DistributionList, M365Group, or HybridMailEnabledSecurityGroup (security group: by IsDirSynced); null when not a
                              group scope or the group could not be read.
   ScopeGroupResolved       - $true when a Group/GroupDirect scope group was actually read.
   ScopeMembers             - Sorted, unique in-scope recipients (PrimarySmtpAddress, falling back to

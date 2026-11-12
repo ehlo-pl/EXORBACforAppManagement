@@ -20,7 +20,7 @@ Number of applications to create. Must be divisible by four. Defaults to 140.
 
 .EXAMPLE
 Connect-MgGraph -Scopes 'Application.ReadWrite.All', 'AppRoleAssignment.ReadWrite.All'
-./scripts/New-SampleRegisteredApps.ps1 -WhatIf
+./utils/New-SampleRegisteredApps.ps1 -WhatIf
 
 Shows the planned batch without creating applications or granting permissions.
 #>

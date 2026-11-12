@@ -1,7 +1,7 @@
 #requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
 BeforeAll {
-    $script:sampleScript = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'scripts') 'New-SampleRegisteredApps.ps1'
+    $script:sampleScript = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'utils') 'New-SampleRegisteredApps.ps1'
 
     function global:Get-MgContext { }
     function global:Get-MgServicePrincipal { param($Filter, $Property, $ErrorAction) }

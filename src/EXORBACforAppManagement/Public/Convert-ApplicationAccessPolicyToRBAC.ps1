@@ -4,7 +4,7 @@ Generates RBAC configuration files from legacy Exchange Online Application Acces
 
 .DESCRIPTION
 Convert-ApplicationAccessPolicyToRBAC reads existing Application Access Policy entries
-(via Get-ApplicationAccessPolicy) and writes schema 4.3 configuration files, like
+(via Get-ApplicationAccessPolicy) and writes schema 4.4 configuration files, like
 New-RBAC4AppConfig, for later provisioning with Invoke-RBAC4AppConfig. Each file also carries the
 policy's full conversion result: its ConversionResult section holds AppId, ResolvedDisplay,
 AccessRight, ScopeGroup, DerivedRoles, SkippedPermissions, and ConfigPath (the file itself), and
@@ -19,7 +19,7 @@ AssignmentScope RecipientGroupScope). No Exchange Online objects are created or 
 DenyAccess policies have no additive RBAC equivalent and are skipped with a warning.
 
 The migration always keeps the group the policy uses today. Every config records the policy's
-ScopeName verbatim as AccessGroupName with AccessGroupType MailEnabledSecurityGroup - the
+ScopeName verbatim as AccessGroupName with AccessGroupType HybridMailEnabledSecurityGroup - the
 reference-only group type - so Invoke-RBAC4AppConfig only checks that the group exists
 (Get-Recipient -Identity <ScopeName>) and fails if it does not; it never creates, renames,
 re-configures, or changes the membership or owners of that group, and it never sanitizes or
@@ -52,7 +52,7 @@ policy's ScopeName is always used, and a policy without one is reported as an er
 
 .PARAMETER AccessGroupType
 Deprecated and ignored (a warning is written when supplied). Every config records
-AccessGroupType MailEnabledSecurityGroup, the reference-only type, so the existing ScopeName group
+AccessGroupType HybridMailEnabledSecurityGroup, the reference-only type, so the existing ScopeName group
 is validated but never created or modified.
 
 .PARAMETER OutputPath
@@ -142,7 +142,7 @@ function Convert-ApplicationAccessPolicyToRBAC {
         # The existing policy scope group is always kept: these no longer influence the config.
         foreach ($ignored in @('AccessGroupType', 'GroupPrefix', 'ManagedBy')) {
             if ($PSBoundParameters.ContainsKey($ignored)) {
-                Write-Warning -Message ("-{0} is deprecated and ignored: every config reuses the policy's existing ScopeName group as-is (AccessGroupType MailEnabledSecurityGroup, never created or modified)." -f $ignored)
+                Write-Warning -Message ("-{0} is deprecated and ignored: every config reuses the policy's existing ScopeName group as-is (AccessGroupType HybridMailEnabledSecurityGroup, never created or modified)." -f $ignored)
             }
         }
     }
@@ -250,7 +250,7 @@ function Convert-ApplicationAccessPolicyToRBAC {
                     continue
                 }
 
-                # --- Build the same schema consumed by Invoke-RBAC4AppConfig. MailEnabledSecurityGroup
+                # --- Build the same schema consumed by Invoke-RBAC4AppConfig. HybridMailEnabledSecurityGroup
                 # is the reference-only group type: Invoke-RBAC4AppConfig looks the group up by this
                 # exact name, never creates it, never sanitizes/shortens the name, and never touches
                 # its members or owners - so the migrated assignments keep using today's group.
@@ -273,8 +273,8 @@ function Convert-ApplicationAccessPolicyToRBAC {
                     -TenantId $tenantId `
                     -AppId ([string]$sp.AppId) -SpObjectId ([string]$sp.Id) -DisplayName ([string]$sp.DisplayName) `
                     -Roles $rolesNormalized `
-                    -AccessGroupType 'MailEnabledSecurityGroup' `
-                    -GroupPrefix (Get-RBAC4AppDefaultGroupPrefix -AccessGroupType 'MailEnabledSecurityGroup') `
+                    -AccessGroupType 'HybridMailEnabledSecurityGroup' `
+                    -GroupPrefix (Get-RBAC4AppDefaultGroupPrefix -AccessGroupType 'HybridMailEnabledSecurityGroup') `
                     -AccessGroupName $scopeGroupName `
                     -AssignmentScope RecipientGroupScope `
                     -CollectedWarnings @($result.Warnings) `

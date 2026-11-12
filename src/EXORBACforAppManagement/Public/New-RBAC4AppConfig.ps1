@@ -13,7 +13,7 @@ working around the MSAL/WAM assembly conflict that prevents both modules from co
 single session. Invoke-RBAC4AppConfig auto-detects the format from the file extension
 (.json vs .yml/.yaml).
 
-The config uses schema version 4.3: an optional Metadata section carries descriptive application
+The config uses schema version 4.4: an optional Metadata section carries descriptive application
 details (contacts, PCode, CMDB ID, description, network access) that never affect provisioning. On
 top of the 3.0 group settings, RbacScope carries the
 scope settings (ScopeKind, AssignmentScope, ManagementScopeName/ManagementScopePrefix,
@@ -38,15 +38,19 @@ Exchange Online application roles to include in the config. Short names such as 
 normalised to Application Mail.Send. Defaults to @('Application Mail.Send').
 
 .PARAMETER AccessGroupType
-Kind of scope group: DistributionList (default), M365Group, or MailEnabledSecurityGroup.
+Kind of scope group: CloudMailEnabledSecurityGroup (default; EXO-mastered mail-enabled security
+group), DistributionList, M365Group, or HybridMailEnabledSecurityGroup (existing on-prem/synced group,
+reference-only). The pre-0.9.0 name MailEnabledSecurityGroup is still accepted for HybridMailEnabledSecurityGroup. For a type the module creates, a warning is
+recorded when -ManagedBy is left at the default owner GraphAPI-Dummy-owner: that recipient must exist
+in Exchange Online, or Invoke-RBAC4AppConfig creates the group without the send restriction.
 
 .PARAMETER GroupPrefix
-Prefix used when generating the scope group name. When omitted, defaults to
-'Um365RAo1P' (M365Group), 'UDLRAo1P' (DistributionList), or 'USRAo1P'
-(MailEnabledSecurityGroup) based on -AccessGroupType.
+Prefix used when generating the scope group name. When omitted, defaults to 'USRACo1P'
+(CloudMailEnabledSecurityGroup), 'UDLRAo1P' (DistributionList), 'Um365RAo1P' (M365Group), or 'USRAHo1P'
+(HybridMailEnabledSecurityGroup) based on -AccessGroupType.
 
 .PARAMETER AccessGroupName
-Explicit scope group name. Required when -AccessGroupType is MailEnabledSecurityGroup.
+Explicit scope group name. Required when -AccessGroupType is HybridMailEnabledSecurityGroup.
 Cannot be combined with -GroupPrefix.
 
 .PARAMETER Members
@@ -200,8 +204,8 @@ function New-RBAC4AppConfig {
         [string[]] $Role = @('Application Mail.Send'),
 
         [Parameter()]
-        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'DistributionList',
+        [ValidateSet('CloudMailEnabledSecurityGroup', 'DistributionList', 'M365Group', 'HybridMailEnabledSecurityGroup', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'CloudMailEnabledSecurityGroup',
 
         [Parameter()]
         [string] $GroupPrefix = $null,
@@ -360,8 +364,20 @@ function New-RBAC4AppConfig {
                 $collectedWarnings.Add([string]$ignoredMsg)
             }
 
+            $AccessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType $AccessGroupType
             if (-not $boundParameters.ContainsKey('GroupPrefix') -and -not $GroupPrefix) {
                 $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
+            }
+
+            # --- Send restriction pre-check (Graph session: the owner cannot be resolved in Exchange
+            # here). A group Invoke-RBAC4AppConfig will create is restricted to its -ManagedBy owner(s);
+            # with the default placeholder owner that only works if it exists as an EXO recipient.
+            $effectiveOwners = @($ManagedBy | Where-Object { $_ })
+            if ($ScopeKind -eq 'Group' -and $AccessGroupType -in $script:RBAC4AppCreatableGroupTypes -and
+                ($effectiveOwners.Count -eq 0 -or @($effectiveOwners | Where-Object { $_ -ne $script:RBAC4AppDefaultOwner }).Count -eq 0)) {
+                $ownerMsg = "ManagedBy is the default owner '$($script:RBAC4AppDefaultOwner)'. Invoke-RBAC4AppConfig restricts the $AccessGroupType it creates so only the owner can send to it; if '$($script:RBAC4AppDefaultOwner)' does not exist as an Exchange Online recipient, the send restriction is skipped (only sender authentication is required). Create that recipient or pass -ManagedBy."
+                Write-Warning -Message $ownerMsg
+                $collectedWarnings.Add($ownerMsg)
             }
         }
         if (-not $Repository) { . $validateSettings }
@@ -479,7 +495,7 @@ function New-RBAC4AppConfig {
         $accessGroupNameValue = if ($AccessGroupName) {
             $AccessGroupName
         }
-        elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+        elseif ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
             ''
         }
         else {

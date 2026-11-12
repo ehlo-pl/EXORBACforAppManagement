@@ -341,28 +341,54 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-DistributionGroupMember -Times 1
     }
 
-    It 'MailEnabledSecurityGroup: reads existence via Get-Recipient and flags the named group when missing' {
+
+    It 'CloudMailEnabledSecurityGroup (default): reports a group without send restriction as a warning, not as invalid' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ DisplayName = 'USRACo1P-Contoso'; Identity = 'USRACo1P-Contoso'; DistinguishedName = $script:GroupDn; AcceptMessagesOnlyFromSendersOrMembers = @() } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+
+        $r = Test-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -WarningAction SilentlyContinue
+
+        $r.AccessGroupType | Should -Be 'CloudMailEnabledSecurityGroup'
+        $r.ScopeGroupName | Should -Be 'USRACo1P-Contoso'
+        $r.ScopeGroupExists | Should -BeTrue
+        $r.SendRestricted | Should -BeFalse
+        ($r.Warnings -join ';') | Should -Match "Scope group 'USRACo1P-Contoso' has no send restriction"
+        $r.Missing | Should -BeNullOrEmpty
+        $r.IsValid | Should -BeTrue
+    }
+
+    It 'CloudMailEnabledSecurityGroup: reports a restricted group as SendRestricted without a warning' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ DisplayName = 'USRACo1P-Contoso'; Identity = 'USRACo1P-Contoso'; DistinguishedName = $script:GroupDn; AcceptMessagesOnlyFromSendersOrMembers = @('GraphAPI-Dummy-owner') } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+
+        $r = Test-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso'
+
+        $r.SendRestricted | Should -BeTrue
+        ($r.Warnings -join ';') | Should -Not -Match 'send restriction'
+    }
+
+    It 'HybridMailEnabledSecurityGroup: reads existence via Get-Recipient and flags the named group when missing' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { }   # group not found
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope'
 
         $r.ScopeGroupName | Should -Be 'OnPrem-Scope'
         $r.ScopeGroupExists | Should -BeFalse
-        $r.Missing | Should -Contain "MailEnabledSecurityGroup 'OnPrem-Scope'"
+        $r.Missing | Should -Contain "HybridMailEnabledSecurityGroup 'OnPrem-Scope'"
     }
 
-    It 'MailEnabledSecurityGroup: flags a recipient that is not a security group as missing' {
+    It 'HybridMailEnabledSecurityGroup: flags a recipient that is not a security group as missing' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ RecipientTypeDetails = 'UserMailbox'; DisplayName = 'someone' } }
 
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'someone'
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'someone'
 
         $r.ScopeGroupExists | Should -BeFalse
         ($r.Missing -join ';') | Should -Match "wrong recipient type 'UserMailbox'"
         $r.IsValid | Should -BeFalse
     }
 
-    It 'MailEnabledSecurityGroup: errors when -AccessGroupName is omitted' {
-        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup
+    It 'HybridMailEnabledSecurityGroup: errors when -AccessGroupName is omitted' {
+        $r = Test-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup
         ($r.Errors -join ';') | Should -Match 'AccessGroupName is required'
     }
 

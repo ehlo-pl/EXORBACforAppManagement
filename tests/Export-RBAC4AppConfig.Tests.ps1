@@ -59,7 +59,7 @@ Describe 'Export-RBAC4AppConfig' {
 
         Test-Path -LiteralPath $path | Should -BeTrue
         $config = Read-RBAC4AppTestConfig $path
-        $config.SchemaVersion | Should -Be '4.3'
+        $config.SchemaVersion | Should -Be '4.4'
         $config.Application.DisplayName | Should -Be 'Tailspin'
         $config.Application.AppId | Should -Be '55555555-5555-5555-5555-555555555555'
         $config.Application.SpObjectId | Should -Be '66666666-6666-6666-6666-666666666666'
@@ -229,7 +229,7 @@ Describe 'Export-RBAC4AppConfig' {
             $configs = @(Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
             $configs.Count | Should -Be 3
             ($configs | Where-Object { $_.Application.DisplayName -eq 'Contoso' }).Rbac.Roles | Should -Be 'Application Mail.Send'
-            $configs.SchemaVersion | Should -Be @('4.3', '4.3', '4.3')
+            $configs.SchemaVersion | Should -Be @('4.4', '4.4', '4.4')
         }
 
         It 'collects every piped item before writing, so per-item pipeline input is not overwritten (F1)' {
@@ -360,7 +360,7 @@ Describe 'Export-RBAC4AppConfig' {
             @(Get-ChildItem -LiteralPath $dir).Name | Should -Be @('rbac4app-AppMailboxSettings-Tailspin.yml')
         }
 
-        It 'exports it with -Force as a reference-only MailEnabledSecurityGroup with no members, never guessing the type from the prefix' {
+        It 'exports it with -Force as a reference-only HybridMailEnabledSecurityGroup with no members, never guessing the type from the prefix' {
             $dir = Join-Path $TestDrive 'forced'
             $errors = @(); $warn = @()
             Get-RBAC4AppEntry -WarningAction SilentlyContinue | Export-RBAC4AppConfig -Path $dir -Force -ErrorVariable errors -WarningVariable warn -WarningAction SilentlyContinue
@@ -369,7 +369,7 @@ Describe 'Export-RBAC4AppConfig' {
             @(Get-ChildItem -LiteralPath $dir).Count | Should -Be 2
             $config = Read-RBAC4AppTestConfig (Join-Path $dir 'rbac4app-AppMailR-Gone.yml')
             $config.RbacScope.AccessGroupName | Should -Be 'Um365RAo1-Gone'
-            $config.RbacScope.AccessGroupType | Should -Be 'MailEnabledSecurityGroup'
+            $config.RbacScope.AccessGroupType | Should -Be 'HybridMailEnabledSecurityGroup'
             # No members written (an empty list is the sparse default; a reference-only group's
             # membership is never touched by Invoke-RBAC4AppConfig anyway).
             (Get-Content -LiteralPath (Join-Path $dir 'rbac4app-AppMailR-Gone.yml') -Raw) | Should -Not -Match '(?m)^\s*Members:'

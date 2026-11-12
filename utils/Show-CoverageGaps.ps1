@@ -14,7 +14,7 @@ JaCoCo coverage XML to read. Defaults to coverage.xml at the repository root.
 Only show the N files with the most missed commands. Default: all files with any miss.
 
 .EXAMPLE
-./build.ps1 -Task Test; ./scripts/Show-CoverageGaps.ps1 -Top 5
+./build.ps1 -Task Test; ./utils/Show-CoverageGaps.ps1 -Top 5
 #>
 [CmdletBinding()]
 param(

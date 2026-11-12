@@ -7,7 +7,7 @@ BeforeAll {
     function global:Get-ConnectionInformation { }
     function global:Get-UnifiedGroup { }
     function global:New-UnifiedGroup { param($DisplayName, $Name, $Alias, $AccessType, [string[]]$ManagedBy, $Members) }
-    function global:Set-UnifiedGroup { param($Identity, $IsMemberAllowedToEditContent, $AutoSubscribeNewMembers, $AlwaysSubscribeMembersToCalendarEvents, $Language, $SubscriptionEnabled, $HiddenFromAddressListsEnabled, $ConnectorsEnabled) }
+    function global:Set-UnifiedGroup { param($Identity, $IsMemberAllowedToEditContent, $AutoSubscribeNewMembers, $AlwaysSubscribeMembersToCalendarEvents, $Language, $SubscriptionEnabled, $HiddenFromAddressListsEnabled, $ConnectorsEnabled, $RequireSenderAuthenticationEnabled, [string[]]$AcceptMessagesOnlyFromSendersOrMembers) }
     function global:Get-Recipient { }
 }
 
@@ -216,5 +216,33 @@ Describe 'New-RBAC4AppUnifiedGroup' {
 
         $null = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1-Contoso' -WhatIf
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-UnifiedGroup -Times 0
+    }
+}
+
+Describe 'New-RBAC4AppUnifiedGroup send restriction' {
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Set-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = 'owner@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Alias = 'g'; AccessType = 'Private' } }
+    }
+
+    It 'restricts a created group to its owner and requires sender authentication' {
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1P-Contoso' -ManagedBy 'owner@contoso.com' -Confirm:$false
+
+        $res.SendRestricted | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-UnifiedGroup -Times 1 -Exactly -ParameterFilter {
+            $RequireSenderAuthenticationEnabled -eq $true -and (@($AcceptMessagesOnlyFromSendersOrMembers) -join ',') -eq 'owner@contoso.com'
+        }
+    }
+
+    It 'warns about an existing group without a send restriction' {
+        Mock -ModuleName EXORBACforAppManagement Get-UnifiedGroup { [pscustomobject]@{ DisplayName = 'g'; Identity = 'g'; ManagedBy = @('o'); AcceptMessagesOnlyFromSendersOrMembers = @() } }
+        $warn = $null
+        $res = New-RBAC4AppUnifiedGroup -Name 'Um365RAo1P-Contoso' -Confirm:$false -WarningVariable warn -WarningAction SilentlyContinue
+
+        $res.SendRestricted | Should -BeFalse
+        ($warn.Message -join ';') | Should -Match 'has no send restriction'
     }
 }

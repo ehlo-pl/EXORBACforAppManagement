@@ -24,9 +24,9 @@ BeforeAll {
     function global:Set-ManagementScope { param($Identity, $RecipientRestrictionFilter) }
     function global:Remove-ManagementRoleAssignment { param([string]$Identity) }
     function global:Get-DistributionGroup { param([string]$Identity) }
-    function global:Set-DistributionGroup { param([string]$Identity) }
+    function global:Set-DistributionGroup { param([string]$Identity, $RequireSenderAuthenticationEnabled, [string[]]$AcceptMessagesOnlyFromSendersOrMembers, [switch]$BypassSecurityGroupManagerCheck) }
     function global:Get-DistributionGroupMember { param([string]$Identity) }
-    function global:Add-DistributionGroupMember { param([string]$Identity, [string]$Member) }
+    function global:Add-DistributionGroupMember { param([string]$Identity, [string]$Member, [switch]$BypassSecurityGroupManagerCheck) }
 
     $script:ExoSp = [pscustomobject]@{
         DisplayName = 'Contoso_SP'
@@ -334,8 +334,60 @@ Describe 'Set-RBAC4AppEntry -AccessGroupType' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 0
     }
 
-    It 'MailEnabledSecurityGroup: references an existing group and skips membership' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -Members 'new@contoso.com' -Confirm:$false
+    It 'CloudMailEnabledSecurityGroup: restricts an existing group that can still receive mail to its owner' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ Identity = $Identity; RecipientTypeDetails = 'MailUniversalSecurityGroup'; AcceptMessagesOnlyFromSendersOrMembers = @(); DistinguishedName = "CN=$Identity,OU=contoso,DC=prod" } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
+
+        $r.AccessGroupType | Should -Be 'CloudMailEnabledSecurityGroup'
+        $r.TargetGroupName | Should -Be 'USRACo1P-Contoso'
+        $r.ScopeGroupExisted | Should -BeTrue
+        $r.SendRestricted | Should -BeTrue
+        $r.SendRestrictionApplied | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 1 -Exactly -ParameterFilter {
+            $Identity -eq 'USRACo1P-Contoso' -and $RequireSenderAuthenticationEnabled -eq $true -and $BypassSecurityGroupManagerCheck -and
+            (@($AcceptMessagesOnlyFromSendersOrMembers) -join ',') -eq 'GraphAPI-Dummy-owner'
+        }
+    }
+
+    It 'CloudMailEnabledSecurityGroup: leaves an already restricted group alone' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ Identity = $Identity; RecipientTypeDetails = 'MailUniversalSecurityGroup'; AcceptMessagesOnlyFromSendersOrMembers = @('GraphAPI-Dummy-owner'); DistinguishedName = "CN=$Identity,OU=contoso,DC=prod" } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false
+
+        $r.SendRestricted | Should -BeTrue
+        $r.SendRestrictionApplied | Should -BeFalse
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 0
+    }
+
+    It 'CloudMailEnabledSecurityGroup: changes nothing under -WhatIf' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup { [pscustomobject]@{ Identity = $Identity; RecipientTypeDetails = 'MailUniversalSecurityGroup'; AcceptMessagesOnlyFromSendersOrMembers = @(); DistinguishedName = "CN=$Identity,OU=contoso,DC=prod" } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -WhatIf
+
+        $r.SendRestricted | Should -BeFalse
+        $r.SendRestrictionApplied | Should -BeFalse
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 0
+    }
+
+    It 'HybridMailEnabledSecurityGroup: never applies a send restriction' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -Confirm:$false
+
+        $r.SendRestricted | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Set-DistributionGroup -Times 0
+    }
+
+    It 'HybridMailEnabledSecurityGroup: references an existing group and skips membership' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -Members 'new@contoso.com' -Confirm:$false
 
         $r.CurrentGroupName | Should -Be 'OnPrem-Scope'
         ($r.Warnings -join ';') | Should -Match 'managed on-premises'
@@ -344,36 +396,36 @@ Describe 'Set-RBAC4AppEntry -AccessGroupType' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Add-UnifiedGroupLinks -Times 0
     }
 
-    It 'MailEnabledSecurityGroup: errors when -AccessGroupName is omitted' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -Confirm:$false
+    It 'HybridMailEnabledSecurityGroup: errors when -AccessGroupName is omitted' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -Confirm:$false
         ($r.Errors -join ';') | Should -Match 'AccessGroupName is required'
     }
 
-    It 'MailEnabledSecurityGroup: errors (never creates) when the referenced group does not exist' {
+    It 'HybridMailEnabledSecurityGroup: errors (never creates) when the referenced group does not exist' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'Missing-Scope' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'Missing-Scope' -Confirm:$false
 
         ($r.Errors -join ';') | Should -Match 'cannot be created'
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppDistributionGroup -Times 0
     }
 
-    It 'MailEnabledSecurityGroup: records an error when the recipient is not a security group' {
+    It 'HybridMailEnabledSecurityGroup: records an error when the recipient is not a security group' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ RecipientTypeDetails = 'SharedMailbox'; DisplayName = $Identity } }
 
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'shared' -Confirm:$false
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'shared' -Confirm:$false
 
         ($r.Errors -join ';') | Should -Match "is of type 'SharedMailbox'"
         $r.IsValid | Should -BeFalse
     }
 
-    It 'MailEnabledSecurityGroup: rejects -NewGroupPrefix' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -NewGroupPrefix 'Um365Prod' -Confirm:$false
+    It 'HybridMailEnabledSecurityGroup: rejects -NewGroupPrefix' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -NewGroupPrefix 'Um365Prod' -Confirm:$false
         ($r.Errors -join ';') | Should -Match 'cannot be used with'
     }
 
-    It 'MailEnabledSecurityGroup: warns that -ManagedBy and -BootstrapMember are ignored when set to non-default values' {
-        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType MailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -ManagedBy 'custom-owner@contoso.com' -BootstrapMember 'custom-bootstrap@contoso.com' -Confirm:$false
+    It 'HybridMailEnabledSecurityGroup: warns that -ManagedBy and -BootstrapMember are ignored when set to non-default values' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'OnPrem-Scope' -ManagedBy 'custom-owner@contoso.com' -BootstrapMember 'custom-bootstrap@contoso.com' -Confirm:$false
         ($r.Warnings -join ';') | Should -Match 'ManagedBy was ignored'
         ($r.Warnings -join ';') | Should -Match 'BootstrapMember was ignored'
     }

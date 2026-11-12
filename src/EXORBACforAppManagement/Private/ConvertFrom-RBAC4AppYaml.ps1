@@ -5,7 +5,7 @@ function ConvertFrom-RBAC4AppYaml {
 
         # Return the values exactly as written in the file (absent keys stay '' / empty lists, and
         # Members/BootstrapMember are only present when the file has them) instead of completing
-        # them with defaults. Used by scripts/Export-RBAC4AppStateReport.ps1.
+        # them with defaults. Used by utils/Export-RBAC4AppStateReport.ps1.
         [switch] $Raw
     )
 
