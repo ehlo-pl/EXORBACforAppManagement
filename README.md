@@ -488,8 +488,11 @@ Because the owner is normally not the operator, every `Set-DistributionGroup`,
 `Add-DistributionGroupMember`, and `Remove-DistributionGroup` call passes
 `-BypassSecurityGroupManagerCheck`, which needs an Exchange admin role (for example Organization
 Management). **Apps provisioned before 0.9.0** use a `DistributionList` (`UDLRAo1P-*`): pass
-`-AccessGroupType DistributionList` to `Set-`/`Test-`/`Remove-RBAC4AppEntry` for them, otherwise
-`Set-RBAC4AppEntry` creates a new `USRACo1P-*` group and re-scopes the assignments onto it.
+`-AccessGroupType DistributionList` to `Set-`/`Test-`/`Remove-RBAC4AppEntry` for them. Called with
+the defaults, `Set-RBAC4AppEntry` refuses to touch such an app (it still has its `UDLRAo1P-*` list
+but no `USRACo1P-*` group): it changes nothing and returns an error with the list in
+`LegacyGroupName`. To move the app onto a cloud security group, pass
+`-AccessGroupType CloudMailEnabledSecurityGroup` explicitly.
 
 When `-AccessGroupName` is omitted, `-GroupPrefix` itself defaults to a value based on
 `-AccessGroupType` — `USRACo1P` (CloudMailEnabledSecurityGroup), `UDLRAo1P` (DistributionList),

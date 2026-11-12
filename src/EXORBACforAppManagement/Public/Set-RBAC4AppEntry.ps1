@@ -38,6 +38,14 @@ left in place (use Remove-RBAC4AppEntry to tear it down once it is no longer in 
 not migrated. Switching -ScopeKind (e.g. from Group to Recipients) likewise just rewrites the
 scope's filter.
 
+Applications provisioned before 0.9.0: the default scope group used to be a DistributionList
+('UDLRAo1P-{DisplayName}'); it is now a CloudMailEnabledSecurityGroup ('USRACo1P-{DisplayName}').
+When -AccessGroupType, -AccessGroupName, and -GroupPrefix are all omitted and the application still
+has its 'UDLRAo1P-*' list but no 'USRACo1P-*' group, nothing is changed: the result carries the old
+group in LegacyGroupName and an error asking for -AccessGroupType DistributionList (keep the list) or
+an explicit -AccessGroupType CloudMailEnabledSecurityGroup (create the security group and move the
+role assignments onto it).
+
 For an application that has never been registered in Exchange Online (its service principal pointer
 does not exist yet), none of -RegisteredAppName, -AppId, or -SpObjectId alone is enough to resolve
 it: supply all three together (-AppId, -SpObjectId, and -RegisteredAppName as the display name) to
@@ -180,7 +188,8 @@ Re-scopes the application's role assignments onto the 'Um365Prod-...' group (cre
 PSCustomObject
 
 A summary object with the resolved identity, the current and target scope group names, management
-scope state, a GroupChanged flag, which components were created, the requested/added members and the
+scope state, a GroupChanged flag, LegacyGroupName (the pre-0.9.0 'UDLRAo1P-*' list that stopped the
+run, else $null), which components were created, the requested/added members and the
 final group membership (MembersFinal), and the role assignments partitioned into created /
 re-scoped / unchanged, an overall IsValid flag, and any Warnings/Errors.
 
@@ -339,6 +348,7 @@ function Set-RBAC4AppEntry {
             CurrentGroupName          = $null
             TargetGroupName           = $null
             GroupChanged              = $false
+            LegacyGroupName           = $null
             ScopeGroupExisted         = $false
             ScopeGroupCreated         = $false
             SendRestricted            = $null
@@ -434,6 +444,7 @@ function Set-RBAC4AppEntry {
                     if ((Get-DistributionGroup -Identity $legacyGroup -ErrorAction SilentlyContinue) -and
                         -not (Get-DistributionGroup -Identity $currentGroup -ErrorAction SilentlyContinue)) {
                         $result.LegacyGroupName = $legacyGroup
+                        $result.CurrentGroupName = $currentGroup
                         throw ("Scope group '{0}' (a DistributionList, the default before 0.9.0) exists for this application but '{1}' does not; nothing was changed. Pass -AccessGroupType DistributionList to reconcile the existing list, or -AccessGroupType CloudMailEnabledSecurityGroup explicitly to create '{1}' and move the role assignments onto it." -f $legacyGroup, $currentGroup)
                     }
                 }

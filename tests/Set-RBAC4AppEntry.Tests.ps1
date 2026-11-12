@@ -507,3 +507,71 @@ Describe 'Set-RBAC4AppEntry validation and failure paths' {
         ($r.Errors -join ';') | Should -Match "Failed to reconcile role assignment 'AppMailSend-Contoso' \(Application Mail.Send\): quota exceeded"
     }
 }
+
+Describe 'Set-RBAC4AppEntry pre-0.9.0 DistributionList guard' {
+    BeforeAll {
+        function global:Set-DistributionGroup { param([string]$Identity, $RequireSenderAuthenticationEnabled, [string[]]$AcceptMessagesOnlyFromSendersOrMembers, [switch]$BypassSecurityGroupManagerCheck) }
+        function global:New-DistributionGroup { param($Name, $DisplayName, $Alias, $Type, $ManagedBy, $Members) }
+    }
+
+    BeforeEach {
+        Mock -ModuleName EXORBACforAppManagement Get-ConnectionInformation { [pscustomobject]@{ TenantId = 'tenant-1'; UserPrincipalName = 'admin@contoso.com' } }
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @($script:ExoSp) }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ PrimarySmtpAddress = $Identity; Name = $Identity; DistinguishedName = "CN=$Identity,DC=prod" } }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+        Mock -ModuleName EXORBACforAppManagement Add-DistributionGroupMember { }
+        Mock -ModuleName EXORBACforAppManagement Set-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-DistributionGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-RBAC4AppScopeGroup { }
+        Mock -ModuleName EXORBACforAppManagement New-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Remove-ManagementRoleAssignment { }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @([pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' })
+        }
+        # Only the pre-0.9.0 distribution list exists.
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            if ($Identity -eq 'UDLRAo1P-Contoso') { [pscustomobject]@{ Identity = $Identity; Name = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup'; AcceptMessagesOnlyFromSendersOrMembers = @('GraphAPI-Dummy-owner'); DistinguishedName = "CN=$Identity,DC=prod" } }
+        }
+    }
+
+    It 'stops without changes when only the pre-0.9.0 UDLRAo1P list exists and the defaults are used' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        $r.LegacyGroupName | Should -Be 'UDLRAo1P-Contoso'
+        $r.CurrentGroupName | Should -Be 'USRACo1P-Contoso'
+        ($r.Errors -join ';') | Should -Match "Scope group 'UDLRAo1P-Contoso' \(a DistributionList, the default before 0\.9\.0\) exists.*-AccessGroupType DistributionList"
+        $r.IsValid | Should -BeFalse
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppScopeGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-DistributionGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Remove-ManagementRoleAssignment -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ManagementRoleAssignment -Times 0
+    }
+
+    It 'reconciles the existing list with -AccessGroupType DistributionList' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -AccessGroupType DistributionList -Confirm:$false
+
+        $r.LegacyGroupName | Should -BeNullOrEmpty
+        $r.TargetGroupName | Should -Be 'UDLRAo1P-Contoso'
+        ($r.Errors -join ';') | Should -Not -Match 'default before 0\.9\.0'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Remove-ManagementRoleAssignment -Times 0
+    }
+
+    It 'lets an explicit -AccessGroupType CloudMailEnabledSecurityGroup move the application' {
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -AccessGroupType CloudMailEnabledSecurityGroup -Confirm:$false
+
+        $r.LegacyGroupName | Should -BeNullOrEmpty
+        ($r.Errors -join ';') | Should -Not -Match 'default before 0\.9\.0'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppScopeGroup -Times 1 -ParameterFilter { $Name -eq 'USRACo1P-Contoso' }
+    }
+
+    It 'does not apply once the USRACo1P group exists (application already moved)' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            [pscustomobject]@{ Identity = $Identity; Name = $Identity; RecipientTypeDetails = 'MailUniversalSecurityGroup'; AcceptMessagesOnlyFromSendersOrMembers = @('GraphAPI-Dummy-owner'); DistinguishedName = "CN=$Identity,DC=prod" }
+        }
+
+        $r = Set-RBAC4AppEntry -RegisteredAppName 'Contoso' -Role 'Mail.Send' -Confirm:$false
+
+        $r.LegacyGroupName | Should -BeNullOrEmpty
+        ($r.Errors -join ';') | Should -Not -Match 'default before 0\.9\.0'
+    }
+}

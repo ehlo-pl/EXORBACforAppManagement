@@ -122,9 +122,12 @@ No version had been published, so this is a clean break without deprecation shim
 - **Breaking:** the default `-AccessGroupType` (and the sparse-config default) is
   `CloudMailEnabledSecurityGroup`, not `DistributionList`; a `DistributionList` group is now written
   explicitly in configs. Pass `-AccessGroupType DistributionList` to keep the old behaviour - and
-  **always pass it for apps provisioned before 0.9.0**: without it `Set-RBAC4AppEntry` targets a new
-  `USRACo1P-*` group and re-scopes the existing assignments onto it (remove + recreate), while
-  `Test-`/`Remove-RBAC4AppEntry` look for the wrong group name.
+  **pass it for apps provisioned before 0.9.0**. `Set-RBAC4AppEntry` guards against the silent
+  move: with `-AccessGroupType`/`-AccessGroupName`/`-GroupPrefix` all omitted, an app that still has
+  its `UDLRAo1P-*` list but no `USRACo1P-*` group is left unchanged, with an error and the list in
+  the new `LegacyGroupName` result field (an explicit `-AccessGroupType CloudMailEnabledSecurityGroup`
+  performs the move). `Test-`/`Remove-RBAC4AppEntry` have no guard and look for the
+  `USRACo1P-*` name.
 - Every `Set-DistributionGroup`, `Add-DistributionGroupMember` and `Remove-DistributionGroup` call
   passes `-BypassSecurityGroupManagerCheck`: the group's owner (`ManagedBy`, default
   `GraphAPI-Dummy-owner`) is not the operator, and Exchange Online otherwise refuses changes with

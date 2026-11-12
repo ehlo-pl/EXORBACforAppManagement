@@ -87,7 +87,10 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
   in the group (additive only), and ensures one role assignment per role scoped to the target management scope
   (creates a missing one; re-scopes one pointing elsewhere by remove+recreate under the same
   deterministic name). An optional `-NewGroupPrefix`/`-NewGroupName` moves the assignments onto a
-  different scoping group (created if needed; old group left in place, members not migrated). Returns
+  different scoping group (created if needed; old group left in place, members not migrated). A
+  pre-0.9.0 guard stops a defaults-only run (no `-AccessGroupType`/`-AccessGroupName`/`-GroupPrefix`)
+  for an app that still has its `UDLRAo1P-*` distribution list but no `USRACo1P-*` group: no
+  change, an error, and `LegacyGroupName` set. Returns
   a `[pscustomobject]` with current/target group names, a `GroupChanged` flag, created-component and
   member add flags, role assignments partitioned into created/re-scoped/unchanged, and an overall
   `IsValid`. `SupportsShouldProcess` (`ConfirmImpact='High'`).
