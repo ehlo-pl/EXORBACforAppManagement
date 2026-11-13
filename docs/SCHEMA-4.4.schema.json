@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ehlo-pl/EXORBACforAppManagement/blob/main/docs/SCHEMA-4.4.schema.json",
+  "title": "EXORBACforAppManagement configuration schema 4.4",
+  "description": "JSON representation of the sparse RBAC4App configuration. The same data model is used for YAML. Missing optional properties are completed with module defaults.",
+  "type": "object",
+  "required": [
+    "SchemaVersion",
+    "Application",
+    "Rbac"
+  ],
+  "properties": {
+    "SchemaVersion": {
+      "const": "4.4",
+      "description": "Current configuration schema version."
+    },
+    "TenantId": {
+      "type": "string",
+      "description": "Informational tenant identifier; not used to provision resources."
+    },
+    "Application": {
+      "type": "object",
+      "required": [
+        "AppId",
+        "SpObjectId",
+        "DisplayName"
+      ],
+      "properties": {
+        "AppId": {
+          "$ref": "#/$defs/guid"
+        },
+        "SpObjectId": {
+          "$ref": "#/$defs/guid"
+        },
+        "DisplayName": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "Rbac": {
+      "type": "object",
+      "required": [
+        "Roles"
+      ],
+      "properties": {
+        "Roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Role names, either short names or names prefixed with 'Application '."
+        },
+        "ChangeReference": {
+          "type": "string",
+          "description": "Optional change or incident reference."
+        }
+      },
+      "additionalProperties": true
+    },
+    "RbacScope": {
+      "type": "object",
+      "properties": {
+        "ScopeKind": {
+          "enum": [
+            "Group",
+            "Recipients",
+            "Tag",
+            "Filter"
+          ],
+          "default": "Group"
+        },
+        "AssignmentScope": {
+          "enum": [
+            "RecipientGroupScope",
+            "ManagementScope"
+          ],
+          "default": "RecipientGroupScope"
+        },
+        "AccessGroupType": {
+          "enum": [
+            "CloudMailEnabledSecurityGroup",
+            "DistributionList",
+            "M365Group",
+            "HybridMailEnabledSecurityGroup",
+            "MailEnabledSecurityGroup"
+          ],
+          "default": "CloudMailEnabledSecurityGroup"
+        },
+        "AccessGroupName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "GroupPrefix": {
+          "type": "string",
+          "minLength": 1
+        },
+        "Members": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [
+            "GraphAPI-Dummy"
+          ],
+          "description": "An explicit empty array overrides the default."
+        },
+        "ManagedBy": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [
+            "GraphAPI-Dummy-owner"
+          ]
+        },
+        "BootstrapMember": {
+          "type": "string",
+          "default": "GraphAPI-Dummy",
+          "description": "An explicitly empty string disables the bootstrap member."
+        },
+        "SeparateScopePerRole": {
+          "type": "boolean",
+          "default": false
+        },
+        "ManagementScopeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ManagementScopePrefix": {
+          "type": "string",
+          "minLength": 1,
+          "default": "MSRAo1P"
+        },
+        "ScopeRecipients": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "ScopeTagAttribute": {
+          "type": "string",
+          "pattern": "^CustomAttribute([1-9]|1[0-5])$",
+          "default": "CustomAttribute1"
+        },
+        "ScopeTagValue": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ScopeFilter": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ScopeKind": {
+                "const": "Recipients"
+              }
+            },
+            "required": [
+              "ScopeKind"
+            ]
+          },
+          "then": {
+            "required": [
+              "ScopeRecipients"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ScopeKind": {
+                "const": "Filter"
+              }
+            },
+            "required": [
+              "ScopeKind"
+            ]
+          },
+          "then": {
+            "required": [
+              "ScopeFilter"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "ScopeKind": {
+                "enum": [
+                  "Recipients",
+                  "Tag",
+                  "Filter"
+                ]
+              }
+            },
+            "required": [
+              "ScopeKind"
+            ]
+          },
+          "then": {
+            "not": {
+              "properties": {
+                "AssignmentScope": {
+                  "const": "RecipientGroupScope"
+                }
+              },
+              "required": [
+                "AssignmentScope"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "SeparateScopePerRole": {
+                "const": true
+              }
+            },
+            "required": [
+              "SeparateScopePerRole"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ScopeKind": {
+                "const": "Group"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "AccessGroupType": {
+                "enum": [
+                  "HybridMailEnabledSecurityGroup",
+                  "MailEnabledSecurityGroup"
+                ]
+              }
+            },
+            "required": [
+              "AccessGroupType"
+            ]
+          },
+          "then": {
+            "required": [
+              "AccessGroupName"
+            ]
+          }
+        }
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "AccessGroupName",
+              "GroupPrefix"
+            ]
+          },
+          {
+            "required": [
+              "ManagementScopeName",
+              "ManagementScopePrefix"
+            ]
+          }
+        ]
+      },
+      "additionalProperties": true
+    },
+    "Metadata": {
+      "type": "object",
+      "description": "Optional descriptive information; does not affect provisioning.",
+      "properties": {
+        "OwnerUsername": {
+          "type": "string"
+        },
+        "OwnerDisplayName": {
+          "type": "string"
+        },
+        "TechnicalContactUsername": {
+          "type": "string"
+        },
+        "TechnicalContactDisplayName": {
+          "type": "string"
+        },
+        "PCode": {
+          "type": "string",
+          "pattern": "^(?:P[0-9]{5})?$"
+        },
+        "CmdbId": {
+          "anyOf": [
+            { "$ref": "#/$defs/cmdbId" },
+            { "const": "" }
+          ]
+        },
+        "Description": {
+          "type": "string",
+          "pattern": "^[^\\r\\n]*$"
+        },
+        "NetworkAccessIP4Range": {
+          "type": "string",
+          "description": "IPv4 address or IPv4 CIDR range (e.g. 10.0.0.0/24); validated by the module at runtime."
+        },
+        "NetworkAccessIP6Range": {
+          "type": "string",
+          "description": "IPv6 address or IPv6 CIDR range (e.g. 2001:db8::/32, prefix 0-128, no zone id); validated by the module at runtime."
+        },
+        "NetworkAccessLocation": {
+          "type": "string",
+          "description": "A value from this installation's locations.txt; validated at runtime."
+        }
+      },
+      "additionalProperties": true
+    },
+    "ConversionResult": {
+      "type": "object",
+      "description": "Per-policy result of Convert-ApplicationAccessPolicyToRBAC (its Warnings/Errors are in Runtime). Written only by that function; does not affect provisioning.",
+      "properties": {
+        "AppId": { "type": "string" },
+        "ResolvedDisplay": { "type": "string" },
+        "AccessRight": { "type": "string" },
+        "ScopeGroup": { "type": "string" },
+        "DerivedRoles": { "type": "array", "items": { "type": "string" } },
+        "SkippedPermissions": { "type": "array", "items": { "type": "string" } },
+        "ConfigPath": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "Runtime": {
+      "type": "object",
+      "description": "Generation time, operator identity, and errors/warnings collected by the writer while generating the file; does not affect provisioning.",
+      "properties": {
+        "GeneratedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp in UTC, generated in ISO 8601 format."
+        },
+        "OperatorUsername": {
+          "type": "string"
+        },
+        "OperatorMachineName": {
+          "type": "string"
+        },
+        "CollectedErrors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "CollectedWarnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "guid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "cmdbId": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+    }
+  }
+}

@@ -1,0 +1,182 @@
+[
+  {
+    "DisplayName": "Contoso",
+    "AppId": "11111111-1111-1111-1111-111111111111",
+    "ServicePrincipalId": "22222222-2222-2222-2222-222222222222",
+    "ExoServicePrincipal": "22222222-2222-2222-2222-222222222222",
+    "RoleAssigneeType": "ServicePrincipal",
+    "ManagementScopeNames": [
+      "MSRAo1P-Contoso"
+    ],
+    "ScopeKinds": [
+      "Group"
+    ],
+    "ScopeGroupNames": [
+      "UDLRAo1P-Contoso"
+    ],
+    "ScopeGroupMembers": [
+      "shared@contoso.com"
+    ],
+    "Roles": [
+      "Application Mail.Read",
+      "Application Mail.Send"
+    ],
+    "RoleAssignmentNames": [
+      "AppMailR-Contoso",
+      "AppMailSend-Contoso"
+    ],
+    "EffectiveUserNames": [],
+    "Apps": [],
+    "AssignmentCount": 2,
+    "EnabledAssignmentCount": 1,
+    "DisabledAssignmentCount": 1,
+    "Warnings": []
+  },
+  {
+    "DisplayName": "Adatum",
+    "AppId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "ServicePrincipalId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    "ExoServicePrincipal": "Adatum_SP",
+    "RoleAssigneeType": "ServicePrincipal",
+    "ManagementScopeNames": [],
+    "ScopeKinds": [
+      "GroupDirect"
+    ],
+    "ScopeGroupNames": [
+      "Um365RAo1P-Adatum"
+    ],
+    "ScopeGroupMembers": [],
+    "Roles": [
+      "Application Mail.Send"
+    ],
+    "RoleAssignmentNames": [
+      "AppMailSend-Adatum"
+    ],
+    "EffectiveUserNames": [],
+    "Apps": [],
+    "AssignmentCount": 1,
+    "EnabledAssignmentCount": 1,
+    "DisabledAssignmentCount": 0,
+    "Warnings": [
+      "Could not resolve scope group 'Um365RAo1P-Adatum' via Get-UnifiedGroup, Get-DistributionGroup, or Get-Recipient -Anr; its type and membership will be omitted."
+    ]
+  },
+  {
+    "DisplayName": "Fabrikam",
+    "AppId": "33333333-3333-3333-3333-333333333333",
+    "ServicePrincipalId": "44444444-4444-4444-4444-444444444444",
+    "ExoServicePrincipal": "Fabrikam_SP",
+    "RoleAssigneeType": "ServicePrincipal",
+    "ManagementScopeNames": [
+      "MSRAo1P-Fabrikam"
+    ],
+    "ScopeKinds": [
+      "Recipients"
+    ],
+    "ScopeGroupNames": [],
+    "ScopeGroupMembers": [
+      "alice@fabrikam.com",
+      "bob@fabrikam.com"
+    ],
+    "Roles": [
+      "Application Mail.Send"
+    ],
+    "RoleAssignmentNames": [
+      "AppMailSend-Fabrikam"
+    ],
+    "EffectiveUserNames": [],
+    "Apps": [],
+    "AssignmentCount": 1,
+    "EnabledAssignmentCount": 1,
+    "DisabledAssignmentCount": 0,
+    "Warnings": []
+  },
+  {
+    "DisplayName": "Litware",
+    "AppId": "99999999-9999-9999-9999-999999999999",
+    "ServicePrincipalId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "ExoServicePrincipal": "Litware_SP",
+    "RoleAssigneeType": "ServicePrincipal",
+    "ManagementScopeNames": [],
+    "ScopeKinds": [
+      "GroupDirect"
+    ],
+    "ScopeGroupNames": [
+      "USRAo1P-Litware"
+    ],
+    "ScopeGroupMembers": [
+      "cal@litware.com"
+    ],
+    "Roles": [
+      "Application Calendars.Read"
+    ],
+    "RoleAssignmentNames": [
+      "AppCldR-Litware"
+    ],
+    "EffectiveUserNames": [],
+    "Apps": [],
+    "AssignmentCount": 1,
+    "EnabledAssignmentCount": 1,
+    "DisabledAssignmentCount": 0,
+    "Warnings": []
+  },
+  {
+    "DisplayName": "Northwind",
+    "AppId": "77777777-7777-7777-7777-777777777777",
+    "ServicePrincipalId": "88888888-8888-8888-8888-888888888888",
+    "ExoServicePrincipal": "Northwind_SP",
+    "RoleAssigneeType": "ServicePrincipal",
+    "ManagementScopeNames": [
+      "MSRAo1P-Northwind"
+    ],
+    "ScopeKinds": [
+      "Filter"
+    ],
+    "ScopeGroupNames": [],
+    "ScopeGroupMembers": [
+      "sales1@northwind.com",
+      "sales2@northwind.com"
+    ],
+    "Roles": [
+      "Application Mail.Send"
+    ],
+    "RoleAssignmentNames": [
+      "AppMailSend-Northwind"
+    ],
+    "EffectiveUserNames": [],
+    "Apps": [],
+    "AssignmentCount": 1,
+    "EnabledAssignmentCount": 1,
+    "DisabledAssignmentCount": 0,
+    "Warnings": []
+  },
+  {
+    "DisplayName": "Tailspin",
+    "AppId": "55555555-5555-5555-5555-555555555555",
+    "ServicePrincipalId": "66666666-6666-6666-6666-666666666666",
+    "ExoServicePrincipal": "Tailspin_SP",
+    "RoleAssigneeType": "ServicePrincipal",
+    "ManagementScopeNames": [
+      "MSRAo1P-Tailspin"
+    ],
+    "ScopeKinds": [
+      "Tag"
+    ],
+    "ScopeGroupNames": [],
+    "ScopeGroupMembers": [
+      "tagged@tailspin.com"
+    ],
+    "Roles": [
+      "Application Mail.Send"
+    ],
+    "RoleAssignmentNames": [
+      "AppMailSend-Tailspin"
+    ],
+    "EffectiveUserNames": [],
+    "Apps": [],
+    "AssignmentCount": 1,
+    "EnabledAssignmentCount": 1,
+    "DisabledAssignmentCount": 0,
+    "Warnings": []
+  }
+]
