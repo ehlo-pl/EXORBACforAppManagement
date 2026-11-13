@@ -11,11 +11,39 @@ All notable changes to this project are documented here. The format is based on
 No version had been published, so this is a clean break without deprecation shims.
 
 ### Added
+- `-Format M365DSC` on `New-RBAC4AppConfig`, `Export-RBAC4AppConfig` and
+  `Convert-ApplicationAccessPolicyToRBAC`: writes the YAML config plus a Microsoft365DSC
+  configuration script (`.ps1`, same name) with `EXOServicePrincipal`, `EXODistributionGroup`
+  (cloud security group / distribution list; other group types are only referenced),
+  `EXOManagementScope` and `EXOManagementRoleAssignment` resources. The script authenticates with a
+  managed identity, or with `-DscAuthentication Certificate` through `ApplicationId` /
+  `CertificateThumbprint` parameters (no secret is written either way), always binds through a management scope (the DSC resource has no
+  `RecipientGroupScope`), and takes the scope group's distinguished name as a Configuration
+  parameter (pre-filled by `Export-RBAC4AppConfig` when known). `New-RBAC4AppConfig` returns both
+  paths; `Export-RBAC4AppConfig -PassThru` and the `Convert-` result gain `DscPath`. The config
+  schema is unchanged (4.4).
+- `-AccessGroupType CloudMailEnabledSecurityGroup`: an Exchange-Online-only mail-enabled security
+  group created by `New-DistributionGroup -Type Security` (default prefix `USRACo1P`). Accepted by
+  `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry`, `New-RBAC4AppConfig`, and `Invoke-RBAC4AppConfig`.
+  `New-RBAC4AppDistributionGroup` gains `-GroupType Security|Distribution` (default `Security`) and
+  throws when an existing group of the requested name has a different recipient type.
+- Scope groups the module creates (cloud security group, distribution list, Microsoft 365 group) are
+  send-restricted: `RequireSenderAuthenticationEnabled $true` and
+  `AcceptMessagesOnlyFromSendersOrMembers` = the resolved owners (`-ManagedBy`, default
+  `GraphAPI-Dummy-owner`). With no resolvable owner the group is still created, only sender
+  authentication is enforced, and a warning is added. Summaries gain `SendRestricted`;
+  `Set-RBAC4AppEntry` restricts an existing unrestricted group (`SendRestrictionApplied`);
+  `Test-RBAC4AppEntry` reports `SendRestricted` `$false` as a warning (not invalid);
+  `New-RBAC4AppEntry`/`Invoke-RBAC4AppConfig` warn on an existing unrestricted group. A hybrid group
+  is never changed.
+- `New-RBAC4AppConfig` warns (and records in `Runtime.CollectedWarnings`) when a group the module
+  will create keeps the default owner, since the send restriction is skipped if that recipient does
+  not exist.
 - `Get-RBAC4AppApplication`: one `RBAC4App.Application` row per assignee (grouped by
   `RoleAssigneeType` + `RoleAssigneeName`), from piped `Get-RBAC4AppEntry` rows or fetched itself
   with the same parameters. Adds `RoleAssigneeType` and `Warnings`, and warns when an assignee's rows
   disagree on `ServicePrincipalId`. Replaces `Get-RBAC4AppEntry -ByApplication`.
-- `Export-RBAC4AppConfig`: writes piped `Get-RBAC4AppEntry` rows as schema-4.3 configs for
+- `Export-RBAC4AppConfig`: writes piped `Get-RBAC4AppEntry` rows as schema-4.4 configs for
   `Invoke-RBAC4AppConfig` (`-Path`, `-Format`, `-PerApplication`, `-PassThru`, `-Force`;
   `-WhatIf`/`-Confirm`). Replaces `Get-RBAC4AppEntry -ExportConfig`/`-ExportPath`/`-ExportFormat`.
   The module now exports 15 functions.
@@ -97,10 +125,38 @@ No version had been published, so this is a clean break without deprecation shim
   `Get-UnifiedGroup` and `Get-DistributionGroup` cannot find a scope group by its stored name.
 
 ### Changed
+- The helper scripts folder `scripts/` is renamed `utils/` (e.g. `./utils/Show-CoverageGaps.ps1`,
+  `./utils/Export-RBAC4AppStateReport.ps1`); earlier entries below keep the old paths.
+- **Breaking:** config schema is now **4.4**; `Invoke-RBAC4AppConfig` rejects 4.3 (and older)
+  files - regenerate them. `New-RBAC4AppConfig -Repository` still reads 3.0-4.4 state files, and in
+  a pre-4.4 file an absent `RbacScope.AccessGroupType` keeps meaning `DistributionList`.
+- **Breaking:** the default `-AccessGroupType` (and the sparse-config default) is
+  `CloudMailEnabledSecurityGroup`, not `DistributionList`; a `DistributionList` group is now written
+  explicitly in configs. Pass `-AccessGroupType DistributionList` to keep the old behaviour - and
+  **pass it for apps provisioned before 0.9.0**. `Set-RBAC4AppEntry` guards against the silent
+  move: with `-AccessGroupType`/`-AccessGroupName`/`-GroupPrefix` all omitted, an app that still has
+  its `UDLRAo1P-*` list but no `USRACo1P-*` group is left unchanged, with an error and the list in
+  the new `LegacyGroupName` result field (an explicit `-AccessGroupType CloudMailEnabledSecurityGroup`
+  performs the move). `Test-RBAC4AppEntry` reports the same case as a warning with
+  `LegacyGroupName`, and `Remove-RBAC4AppEntry` refuses (`Reason`, `IsRemoved` `$false`,
+  `LegacyGroupName`) and removes nothing - not even the shared management scope.
+- Every `Set-DistributionGroup`, `Add-DistributionGroupMember` and `Remove-DistributionGroup` call
+  passes `-BypassSecurityGroupManagerCheck`: the group's owner (`ManagedBy`, default
+  `GraphAPI-Dummy-owner`) is not the operator, and Exchange Online otherwise refuses changes with
+  "only a manager of the group". The operator needs an Exchange admin role (e.g. Organization
+  Management or Security Group Creation and Membership).
+- **Breaking:** `MailEnabledSecurityGroup` is renamed `HybridMailEnabledSecurityGroup` (reference-only,
+  on-premises/synced) with default prefix `USRAHo1P` (was `USRAo1P`). The old name is still accepted
+  as input; output, generated configs, `Convert-ApplicationAccessPolicyToRBAC`, and the forced
+  `Export-RBAC4AppConfig` fallback use the new name. Existing `USRAo1P-*` groups need an explicit
+  `-AccessGroupName` or `-GroupPrefix USRAo1P`.
+- `Get-RBAC4AppEntry` reports a `MailUniversalSecurityGroup` scope group as
+  `CloudMailEnabledSecurityGroup` when `IsDirSynced` is `$false`, otherwise (synced or unknown) as
+  `HybridMailEnabledSecurityGroup`.
 - **Breaking:** `Export-RBAC4AppConfig` refuses guessed data without `-Force`: an application
   identity inferred from the generated role assignment name, and a scope group that could not be
   read. With `-Force` the latter is exported as a reference-only
-  `AccessGroupType: MailEnabledSecurityGroup` with no members, which `Invoke-RBAC4AppConfig`
+  `AccessGroupType: HybridMailEnabledSecurityGroup` with no members, which `Invoke-RBAC4AppConfig`
   validates but never creates. The reason is recorded in `Runtime.CollectedWarnings` together with
   the rows' own warnings.
 - `Get-RBAC4AppEntry` is a pure read (no `SupportsShouldProcess`), writes each distinct warning once
@@ -140,7 +196,7 @@ No version had been published, so this is a clean break without deprecation shim
   group name than `New-RBAC4AppEntry`). Pass `-Prefix 'UDLRAo1'` to keep the old name.
 - `Convert-ApplicationAccessPolicyToRBAC` now guarantees the migration keeps each policy's current
   scope group: configs record the `ScopeName` verbatim as `AccessGroupName` with
-  `AccessGroupType: MailEnabledSecurityGroup` (reference-only), so `Invoke-RBAC4AppConfig` only
+  `AccessGroupType: HybridMailEnabledSecurityGroup` (reference-only), so `Invoke-RBAC4AppConfig` only
   validates the group and binds the roles to it - it never creates a group, sanitizes or shortens the
   name, or changes members/owners. Previously the default `DistributionList` type made
   `Invoke-RBAC4AppConfig` sanitize the name (e.g. `Even Users` -> `EvenUsers`), create a new

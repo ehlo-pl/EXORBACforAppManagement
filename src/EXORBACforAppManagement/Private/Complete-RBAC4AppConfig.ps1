@@ -5,7 +5,9 @@ function Complete-RBAC4AppConfig {
     # ConvertFrom-RBAC4AppYaml both go through it, so a key left out of a file always means its
     # default while explicitly empty Members and BootstrapMember values remain overrides. An absent
     # AssignmentScope means RecipientGroupScope for a ScopeKind Group config of schema 4.1 or later,
-    # and ManagementScope otherwise ('3.0'/'4.0' predate direct group binding).
+    # and ManagementScope otherwise ('3.0'/'4.0' predate direct group binding). An absent
+    # AccessGroupType means DistributionList before schema 4.4 and CloudMailEnabledSecurityGroup
+    # from 4.4 on (or when the version is unknown).
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
@@ -27,7 +29,9 @@ function Complete-RBAC4AppConfig {
 
     $schemaVersion = [string]$Config.SchemaVersion
     $scopeKind = & $text $scope.ScopeKind $defaults.ScopeKind
-    $accessGroupType = & $text $scope.AccessGroupType $defaults.AccessGroupType
+    $defaultAccessGroupType = if ($schemaVersion -in $script:RBAC4AppConfigDistributionListDefaultSchemaVersions) { 'DistributionList' } else { $defaults.AccessGroupType }
+    # The legacy value MailEnabledSecurityGroup is read as HybridMailEnabledSecurityGroup.
+    $accessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType (& $text $scope.AccessGroupType $defaultAccessGroupType)
     $members = & $list $scope.Members
     $owners = & $list $scope.ManagedBy
     $membersSpecified = $false

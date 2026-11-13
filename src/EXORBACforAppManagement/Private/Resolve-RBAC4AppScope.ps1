@@ -19,7 +19,10 @@ function Resolve-RBAC4AppScope {
     # Get-DistributionGroup - whose RecipientTypeDetails distinguishes a plain distribution list
     # from a mail-enabled security group ('MailUniversalSecurityGroup') - and, when neither finds
     # it, Get-Recipient -Anr (exact Name/DisplayName/Alias match, or a single group hit), typed by
-    # RecipientTypeDetails (GroupMailbox = M365Group).
+    # RecipientTypeDetails (GroupMailbox = M365Group). A mail-enabled security group is
+    # CloudMailEnabledSecurityGroup only when it reports IsDirSynced = $false (Exchange-Online
+    # mastered, so Invoke-RBAC4AppConfig may manage it); a synced one - or one whose IsDirSynced is
+    # unknown - is HybridMailEnabledSecurityGroup (reference-only), the safe default.
     #
     # Results are cached per distinct scope / group name in the caller-supplied $Cache hashtable.
     #
@@ -52,6 +55,14 @@ function Resolve-RBAC4AppScope {
             } | Where-Object { $_ } | Sort-Object -Unique)
     }
 
+    # Mail-enabled security group -> Cloud (IsDirSynced reported $false) or Hybrid (synced/unknown).
+    $securityGroupType = {
+        param($group)
+        $dirSynced = $group.PSObject.Properties['IsDirSynced']
+        if ($dirSynced -and $null -ne $dirSynced.Value -and -not [bool]$dirSynced.Value) { 'CloudMailEnabledSecurityGroup' }
+        else { 'HybridMailEnabledSecurityGroup' }
+    }
+
     function Get-GroupInfo([string] $groupName) {
         $key = "group:$groupName"
         if ($Cache.ContainsKey($key)) { return $Cache[$key] }
@@ -66,7 +77,7 @@ function Resolve-RBAC4AppScope {
         else {
             $dist = Get-DistributionGroup -Identity $groupName -ErrorAction SilentlyContinue
             if ($dist) {
-                $groupType = if ([string]$dist.RecipientTypeDetails -eq 'MailUniversalSecurityGroup') { 'MailEnabledSecurityGroup' } else { 'DistributionList' }
+                $groupType = if ([string]$dist.RecipientTypeDetails -eq 'MailUniversalSecurityGroup') { & $securityGroupType $dist } else { 'DistributionList' }
                 $members = Get-MemberAddress @(Get-DistributionGroupMember -Identity $groupName -ErrorAction SilentlyContinue)
             }
             else {
@@ -94,7 +105,7 @@ function Resolve-RBAC4AppScope {
                             $members = Get-MemberAddress @(Get-UnifiedGroupLinks -Identity $anrIdentity -LinkType Members -ErrorAction SilentlyContinue)
                         }
                         'MailUniversalSecurityGroup' {
-                            $groupType = 'MailEnabledSecurityGroup'
+                            $groupType = & $securityGroupType $anrHit
                             $members = Get-MemberAddress @(Get-DistributionGroupMember -Identity $anrIdentity -ErrorAction SilentlyContinue)
                         }
                         default {

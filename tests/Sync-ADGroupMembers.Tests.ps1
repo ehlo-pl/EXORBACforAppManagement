@@ -1,7 +1,7 @@
 #requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
 BeforeAll {
-    $script:syncScriptPath = Join-Path $PSScriptRoot '..' 'scripts' 'Sync-ADGroupMembers.ps1'
+    $script:syncScriptPath = Join-Path $PSScriptRoot '..' 'utils' 'Sync-ADGroupMembers.ps1'
 }
 
 function global:Get-ADGroup {

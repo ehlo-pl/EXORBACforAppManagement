@@ -93,11 +93,14 @@ function New-RBAC4AppUnifiedGroup {
             Write-Warning -Message ("UnifiedGroup '{0}' already exists; will only add missing members / assignments." -f $Name)
             Write-Verbose -Message ("Unified Group '{0}' already exists; skipping creation." -f $Name)
             Write-Debug -Message ("Existing Unified Group details: DisplayName='{0}'; Identity='{1}'; ManagedBy='{2}'" -f $existingGroup.DisplayName, $existingGroup.Identity, ($existingOwner -join ', '))
+            $sendRestricted = Test-RBAC4AppScopeGroupSendRestriction -Group $existingGroup
+            if ($sendRestricted -eq $false) { Write-Warning -Message (Get-RBAC4AppSendRestrictionWarning -Name $Name) }
             return [pscustomobject]@{
                 Name           = $Name
                 DisplayName    = $existingGroup.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $existingOwner
+                SendRestricted = $sendRestricted
                 ChangeReference = $ChangeReference
                 ChangeReferencePath = $metadataPath
                 AlreadyExisted = $true
@@ -206,6 +209,9 @@ function New-RBAC4AppUnifiedGroup {
             }
             Set-UnifiedGroup @setUnifiedGroupParams
 
+            # --- Send restriction: only the owner(s) may send (skipped with a warning when none resolves).
+            $restriction = Set-RBAC4AppScopeGroupSendRestriction -AccessGroupType 'M365Group' -Name $Name -ManagedBy $ManagedBy
+
             $configuredGroup = Get-UnifiedGroup -Identity $Name -ErrorAction SilentlyContinue
             if ($configuredGroup) {
                 Write-Debug -Message ("[New-UnifiedGroup] Post-creation Set-UnifiedGroup verification:")
@@ -221,6 +227,7 @@ function New-RBAC4AppUnifiedGroup {
                     DisplayName    = $configuredGroup.DisplayName
                     OwnerRequested = @($ManagedBy)
                     OwnerAdded     = $resolvedOwner
+                    SendRestricted = $restriction.SendRestricted
                     ChangeReference = $ChangeReference
                     ChangeReferencePath = $metadataPath
                     AlreadyExisted = $false
@@ -236,6 +243,7 @@ function New-RBAC4AppUnifiedGroup {
                 DisplayName    = $nug.DisplayName
                 OwnerRequested = @($ManagedBy)
                 OwnerAdded     = $resolvedOwner
+                SendRestricted = $restriction.SendRestricted
                 ChangeReference = $ChangeReference
                 ChangeReferencePath = $metadataPath
                 AlreadyExisted = $false

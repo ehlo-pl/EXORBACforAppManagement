@@ -21,7 +21,7 @@ The three functions form a **create → assign → read** flow and share the sam
 | [`Test-RBAC4AppEntry`](#test-rbac4appentry) | validate | Checks an application has every component `New-RBAC4AppEntry` creates (SP, scope source, management scope when `-AssignmentScope ManagementScope`, EXO service principal, role assignments) and returns an `IsValid` summary. |
 | [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | migrate / plan | Writes YAML/JSON RBAC configs from legacy Application Access Policies for later provisioning with `Invoke-RBAC4AppConfig`. |
 | [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | helper | Ensures/creates and configures the scoped Unified Group (used by `New-RBAC4AppEntry` when `-AccessGroupType M365Group`). |
-| `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only distribution list (used by `New-RBAC4AppEntry` when `-AccessGroupType DistributionList`). |
+| `New-RBAC4AppDistributionGroup` | helper | Ensures/creates and configures a scoped Exchange-Online-only mail-enabled security group (`-GroupType Security`, default) or distribution list (`-GroupType Distribution`), restricted so only its owners can send to it (used by `New-RBAC4AppEntry` for `-AccessGroupType CloudMailEnabledSecurityGroup` / `DistributionList`). |
 | [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | helper | Creates the EXO service principal pointer for an Entra app (used by `New-RBAC4AppEntry`). |
 | [`New-RBAC4AppConfig`](#new-rbac4appconfig) | **Graph session** | Resolves the Entra SP via `Get-MgServicePrincipal` and writes a YAML or JSON config file (`-Format`) for `Invoke-RBAC4AppConfig`. No EXO calls. |
 | [`Invoke-RBAC4AppConfig`](#invoke-rbac4appconfig) | **EXO session** | Reads the config (YAML or JSON, auto-detected from the extension) and provisions scope group, EXO service principal, and role assignments. No Graph calls. |
@@ -38,21 +38,21 @@ descriptions, defaults, and aliases.
 
 | Function | Parameter sets | Parameters | `-WhatIf` / `-Confirm` |
 | --- | --- | --- | --- |
-| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | All, ByAppId, ByPolicy | `-AppId <string>`<br>`-Policy <object[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupType {M365Group\|DistributionList}`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json}` | yes |
+| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | All, ByAppId, ByPolicy | `-AppId <string>`<br>`-Policy <object[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupType {M365Group\|DistributionList}`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json\|M365DSC}`<br>`-DscAuthentication {ManagedIdentity\|Certificate}` | yes |
 | [`Get-RBAC4AppEntry`](#get-rbac4appentry) | All, ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-Enabled <bool>`<br>`-RoleAssigneeType {All\|ServicePrincipal\|User\|SecurityGroup\|RoleGroup\|RoleAssignmentPolicy\|ForeignSecurityPrincipal\|LinkedRoleGroup\|Computer}`<br>`-ScopeType <string[]>` (RecipientWriteScope values, or `All`) | yes |
 | [`Get-RBAC4AppApplication`](#get-rbac4appapplication) | FromEntry, All, ByName, ByAppId, BySpObjectId | **`-InputObject <RBAC4App.Entry[]>`** (pipeline, FromEntry)<br>plus the `Get-RBAC4AppEntry` identity and filter parameters | yes |
-| [`Export-RBAC4AppConfig`](#export-rbac4appconfig) | — | **`-InputObject <RBAC4App.Entry[]>`** (pipeline)<br>`-Path <string>`<br>`-Format {Yaml\|Json}`<br>`-PerApplication`<br>`-PassThru`<br>`-Force` | yes |
+| [`Export-RBAC4AppConfig`](#export-rbac4appconfig) | — | **`-InputObject <RBAC4App.Entry[]>`** (pipeline)<br>`-Path <string>`<br>`-Format {Yaml\|Json\|M365DSC}`<br>`-DscAuthentication {ManagedIdentity\|Certificate}`<br>`-PerApplication`<br>`-PassThru`<br>`-Force` | yes |
 | [`Invoke-RBAC4AppConfig`](#invoke-rbac4appconfig) | — | **`-Path <string>`**<br>`-Format {Auto\|Yaml\|Json}` | yes |
-| [`New-RBAC4AppConfig`](#new-rbac4appconfig) | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-AccessGroupType {M365Group\|DistributionList\|MailEnabledSecurityGroup}`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-Members <string[]>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-SeparateScopePerRole`<br>`-ChangeReference <string>`<br>`-OwnerUsername <string>`<br>`-OwnerDisplayName <string>`<br>`-TechnicalContactUsername <string>`<br>`-TechnicalContactDisplayName <string>`<br>`-PCode <string>`<br>`-CmdbId <string>`<br>`-Description <string>`<br>`-NetworkAccessIP4Range <string>`<br>`-NetworkAccessIP6Range <string>`<br>`-NetworkAccessLocation <string>`<br>`-Repository <string>`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json}` | yes |
+| [`New-RBAC4AppConfig`](#new-rbac4appconfig) | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-Members <string[]>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-SeparateScopePerRole`<br>`-ChangeReference <string>`<br>`-OwnerUsername <string>`<br>`-OwnerDisplayName <string>`<br>`-TechnicalContactUsername <string>`<br>`-TechnicalContactDisplayName <string>`<br>`-PCode <string>`<br>`-CmdbId <string>`<br>`-Description <string>`<br>`-NetworkAccessIP4Range <string>`<br>`-NetworkAccessIP6Range <string>`<br>`-NetworkAccessLocation <string>`<br>`-Repository <string>`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json\|M365DSC}`<br>`-DscAuthentication {ManagedIdentity\|Certificate}` | yes |
 | `New-RBAC4AppDistributionGroup` | ByAppName, ByName | **`-AppName <string>`** (required in ByAppName)<br>`-Prefix <string>`<br>**`-Name <string>`** (required in ByName)<br>`-DisplayName <string>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ChangeReference <string>` | yes |
-| [`New-RBAC4AppEntry`](#new-rbac4appentry) | — | `-RegisteredAppName <string>`<br>`-AppId <string>`<br>`-SpObjectId <string>`<br>`-Members <string[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {M365Group\|DistributionList\|MailEnabledSecurityGroup}`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-ChangeReference <string>` | yes |
+| [`New-RBAC4AppEntry`](#new-rbac4appentry) | — | `-RegisteredAppName <string>`<br>`-AppId <string>`<br>`-SpObjectId <string>`<br>`-Members <string[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-ChangeReference <string>` | yes |
 | `New-RBAC4AppManagementScope` | — | **`-Name <string>`**<br>**`-RecipientRestrictionFilter <string>`**<br>`-NoUpdate` | yes |
 | [`New-RBAC4AppUnifiedGroup`](#new-rbac4appunifiedgroup) | — | **`-Name <string>`**<br>`-DisplayName <string>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ChangeReference <string>` | yes |
 | [`New-RegisteredApp`](#new-registeredapp) | — | **`-DisplayName <string>`**<br>`-SignInAudience {AzureADMyOrg\|AzureADMultipleOrgs\|AzureADandPersonalMicrosoftAccount\|PersonalMicrosoftAccount}`<br>`-RedirectUri <string[]>`<br>`-Description <string>`<br>`-RequiredResourceAccess <object[]>`<br>`-SkipServicePrincipal` | yes |
 | [`Register-EXOServicePrincipal`](#register-exoserviceprincipal) | — | **`-AppId <string>`**<br>**`-ObjectId <string>`**<br>**`-DisplayName <string>`** | yes |
-| `Remove-RBAC4AppEntry` | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {M365Group\|DistributionList\|MailEnabledSecurityGroup}`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>` | yes |
-| `Set-RBAC4AppEntry` | — | `-RegisteredAppName <string>`<br>`-AppId <string>`<br>`-SpObjectId <string>`<br>`-Role <string[]>`<br>`-Members <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {M365Group\|DistributionList\|MailEnabledSecurityGroup}`<br>`-BootstrapMember <string>`<br>`-NewGroupPrefix <string>`<br>`-NewGroupName <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-ChangeReference <string>` | yes |
-| [`Test-RBAC4AppEntry`](#test-rbac4appentry) | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-Members <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {M365Group\|DistributionList\|MailEnabledSecurityGroup}`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>` | — |
+| `Remove-RBAC4AppEntry` | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>` | yes |
+| `Set-RBAC4AppEntry` | — | `-RegisteredAppName <string>`<br>`-AppId <string>`<br>`-SpObjectId <string>`<br>`-Role <string[]>`<br>`-Members <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-BootstrapMember <string>`<br>`-NewGroupPrefix <string>`<br>`-NewGroupName <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-ChangeReference <string>` | yes |
+| [`Test-RBAC4AppEntry`](#test-rbac4appentry) | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-Members <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>` | — |
 
 `New-RBAC4AppEntry` and `Set-RBAC4AppEntry` take the application as `-RegisteredAppName`, `-AppId`,
 or `-SpObjectId` (at least one; all three together bootstrap a new Exchange Online service
@@ -186,7 +186,7 @@ Generated files contain **only the entries that are actually used**: keys the se
 ```yaml
 # RBAC4App configuration — generated by New-RBAC4AppConfig
 # Feed to Invoke-RBAC4AppConfig in a session with only ExchangeOnlineManagement connected.
-SchemaVersion: "4.3"
+SchemaVersion: "4.4"
 
 Application:
   AppId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -212,9 +212,9 @@ Every key and the value it takes when absent:
 | `Metadata.ChangeReference` | always | `""` (no change record) |
 | `RbacScope.ScopeKind` | always | `Group` (`Recipients` / `Tag` / `Filter`) |
 | `RbacScope.AssignmentScope` | `ScopeKind: Group` | `RecipientGroupScope` for schema `4.1` or later; `ManagementScope` for `4.0`/`3.0` and every non-Group kind |
-| `RbacScope.AccessGroupType` | `ScopeKind: Group` | `DistributionList` (`M365Group` / `MailEnabledSecurityGroup`) |
-| `RbacScope.AccessGroupName` | `ScopeKind: Group` | generated `"{GroupPrefix}-{DisplayName}"`; required for `MailEnabledSecurityGroup` |
-| `RbacScope.GroupPrefix` | `ScopeKind: Group` without `AccessGroupName` | `UDLRAo1P` / `Um365RAo1P` / `USRAo1P` per `AccessGroupType` |
+| `RbacScope.AccessGroupType` | `ScopeKind: Group` | `CloudMailEnabledSecurityGroup` (`DistributionList` / `M365Group` / `HybridMailEnabledSecurityGroup`); absent in a pre-4.4 file means `DistributionList` |
+| `RbacScope.AccessGroupName` | `ScopeKind: Group` | generated `"{GroupPrefix}-{DisplayName}"`; required for `HybridMailEnabledSecurityGroup` |
+| `RbacScope.GroupPrefix` | `ScopeKind: Group` without `AccessGroupName` | `USRACo1P` / `UDLRAo1P` / `Um365RAo1P` / `USRAHo1P` per `AccessGroupType` |
 | `RbacScope.Members` | `ScopeKind: Group` | `[GraphAPI-Dummy]` |
 | `RbacScope.ManagedBy` | `ScopeKind: Group` | `[GraphAPI-Dummy-owner]` |
 | `RbacScope.BootstrapMember` | `ScopeKind: Group` | `GraphAPI-Dummy` |
@@ -242,7 +242,7 @@ Every key and the value it takes when absent:
 | `Runtime.CollectedErrors` | always (informational) | `[]` |
 | `Runtime.CollectedWarnings` | always (informational) | `[]` |
 
-Files with every key written out are still read unchanged, as long as they are schema 4.3.
+Files with every key written out are still read unchanged, as long as they are schema 4.4.
 
 The `Metadata` section describes the application and carries the optional change reference. Every
 generated config contains the full section, with `""` for each field you did not supply, so the
@@ -302,10 +302,78 @@ New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' -Repository 'C:
   `-AccessGroupType` ignores its `AccessGroupName` and `GroupPrefix`, which belong to the old type.
 - Values from the file are validated like command-line values.
 
-`Invoke-RBAC4AppConfig` accepts only `SchemaVersion: "4.3"`. A config of any earlier version (`"4.2"`,
+`Invoke-RBAC4AppConfig` accepts only `SchemaVersion: "4.4"`. A config of any earlier version (`"4.3"`, `"4.2"`,
 `"4.1"`, `"4.0"`, `"3.0"`, ...) is refused with an error pointing back at `New-RBAC4AppConfig`
 (or `Get-RBAC4AppEntry | Export-RBAC4AppConfig` / `Convert-ApplicationAccessPolicyToRBAC`) to regenerate it.
-State files read by `New-RBAC4AppConfig -Repository` may still be of version 3.0-4.3.
+State files read by `New-RBAC4AppConfig -Repository` may still be of version 3.0-4.4 (in a pre-4.4 file an
+absent `AccessGroupType` means `DistributionList`, the default of those versions).
+
+## Microsoft365DSC output (`-Format M365DSC`)
+
+`New-RBAC4AppConfig`, `Export-RBAC4AppConfig`, and `Convert-ApplicationAccessPolicyToRBAC` accept
+`-Format M365DSC`. They then write the normal YAML config **and**, next to it with the same name, a
+[Microsoft365DSC](https://microsoft365dsc.com) configuration script (`.ps1`) declaring the same
+desired state, so it can be applied and drift-monitored by DSC. Only the `.yml` can be fed to
+`Invoke-RBAC4AppConfig`; the `.ps1` is a second rendering of it.
+
+| Config data | DSC resource |
+| --- | --- |
+| Application | `EXOServicePrincipal` (`<DisplayName>_SP`, as `Register-EXOServicePrincipal`) |
+| Scope group - `CloudMailEnabledSecurityGroup` / `DistributionList` | `EXODistributionGroup` (hidden, closed, sender authentication, send restricted to `ManagedBy`) |
+| Scope group - `M365Group` / `HybridMailEnabledSecurityGroup` | none: the group is only referenced and must already exist |
+| Management scope | `EXOManagementScope` |
+| Each role | `EXOManagementRoleAssignment` (same deterministic name, bound with `CustomResourceScope`) |
+
+What the DSC script does differently from `Invoke-RBAC4AppConfig` (each is also a warning, a `# NOTE`
+in the script, and - for `New-RBAC4AppConfig` - an entry in `Runtime.CollectedWarnings`):
+
+- **Always a management scope.** `EXOManagementRoleAssignment` has no `RecipientGroupScope`, so even
+  a config with `AssignmentScope: RecipientGroupScope` is bound through
+  `MemberOfGroup -eq '<group DN>'`.
+- **The group DN is a parameter.** For `ScopeKind: Group` the Configuration takes
+  `$ScopeGroupDistinguishedName` (one per role, e.g. `$ScopeGroupDistinguishedNameAppMailSend`, with
+  `SeparateScopePerRole`). It is mandatory, except when `Export-RBAC4AppConfig` read the DN from an
+  existing management scope and pre-filled it. A group that does not exist yet has no DN, so the
+  script cannot be compiled for a brand-new group in one step: create the group first (for example
+  with `Invoke-RBAC4AppConfig` on the `.yml`), read its DN
+  (`Get-Recipient -Identity <group> | Select-Object DistinguishedName`), then compile with it.
+- **`Members` is authoritative.** DSC removes members that are not listed; `Invoke-RBAC4AppConfig`
+  only adds. An owner (`ManagedBy`) that does not exist fails the DSC run instead of skipping the
+  send restriction.
+- **`ScopeRecipients` are written as given**, as `PrimarySmtpAddress` values (no `Get-Recipient`
+  lookup happens at generation time): list primary SMTP addresses.
+- **Authentication is a managed identity by default** (`ManagedIdentity = $true` and `$TenantId`,
+  defaulting to the resolved tenant, on every resource), which only runs on a machine that has one
+  (Azure VM, Arc-enabled server, Azure Automation). `-DscAuthentication Certificate` writes
+  app-plus-certificate sign-in instead: the Configuration takes mandatory `$ApplicationId` and
+  `$CertificateThumbprint` parameters (plus `$TenantId`) and runs on any machine whose certificate
+  store holds that app registration's certificate. Either way the identity needs
+  `Exchange.ManageAsApp` and an Exchange admin role, and no credential or secret is written (a
+  thumbprint is not a secret, and it is a parameter, not a value in the file). For Exchange Online
+  pass `-TenantId` as the tenant domain (`contoso.onmicrosoft.com`) when compiling.
+
+```powershell
+$yml, $ps1 = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' `
+                 -ManagedBy 'rbac-owner@contoso.com' -Format M365DSC -OutputPath C:\rbac-configs
+
+. $ps1                                      # defines Configuration RBAC4App_Contoso_Mail_App
+RBAC4App_Contoso_Mail_App -ScopeGroupDistinguishedName 'CN=USRACo1P-ContosoMailApp,OU=...' -OutputPath C:\rbac-mof
+Start-DscConfiguration -Path C:\rbac-mof -Wait -Verbose
+
+# Certificate sign-in instead of a managed identity (workstation, pipeline agent):
+$yml, $ps1 = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Format M365DSC -DscAuthentication Certificate
+. $ps1
+RBAC4App_Contoso_Mail_App -TenantId 'contoso.onmicrosoft.com' -ApplicationId '<DSC app id>' `
+    -CertificateThumbprint '<thumbprint>' -ScopeGroupDistinguishedName 'CN=...' -OutputPath C:\rbac-mof
+
+# Existing tenant state as DSC (the DN is pre-filled for management-scope bound assignments):
+Get-RBAC4AppEntry | Export-RBAC4AppConfig -PerApplication -Format M365DSC -Path C:\rbac-dsc
+```
+
+Application names, group names and filters are written only as single-quoted string literals, so a
+value cannot inject script into the generated file. The resource property names follow the
+Microsoft365DSC documentation; validate the script against your Microsoft365DSC version
+(`Test-DscConfiguration`) before relying on it.
 
 ## Install / import
 
@@ -453,40 +521,75 @@ either kind, plus the management scope if one exists and nothing else uses it.
 
 #### Choosing the scope group type (`-AccessGroupType`)
 
-By default the scope is a freshly-created Exchange-Online-only distribution list.
+By default the scope is a freshly-created Exchange-Online-only (cloud) mail-enabled security group.
 `-AccessGroupType` selects a different group kind — Exchange Online RBAC supports Microsoft 365
 groups, mail-enabled security groups, and distribution lists (direct membership only, nested
 members are out of scope):
 
 | `-AccessGroupType` | Lifecycle | `-AccessGroupName` | `-Members` / `-ManagedBy` / `-BootstrapMember` |
 | --- | --- | --- | --- |
-| `DistributionList` (default) | Creates/configures an EXO-only distribution list | optional (generated from `GroupPrefix`) | applied to the group |
+| `CloudMailEnabledSecurityGroup` (default) | Creates/configures an EXO-only mail-enabled security group (`New-DistributionGroup -Type Security`) | optional (generated from `GroupPrefix`) | applied to the group |
+| `DistributionList` | Creates/configures an EXO-only distribution list | optional (generated from `GroupPrefix`) | applied to the group |
 | `M365Group` | Creates/configures a Unified Group | optional (generated from `GroupPrefix`) | applied to the group |
-| `MailEnabledSecurityGroup` | References an **existing** on-prem/hybrid-synced group (never created or modified) | **required** | all ignored, with a warning (membership and ownership are managed on-premises) |
+| `HybridMailEnabledSecurityGroup` | References an **existing** on-prem/hybrid-synced group (never created or modified) | **required** | all ignored, with a warning (membership and ownership are managed on-premises) |
+
+`MailEnabledSecurityGroup` (the pre-0.9.0 name) is still accepted as input and means
+`HybridMailEnabledSecurityGroup`; output and generated configs use the new name. When reading an
+existing scope group back (`Get-RBAC4AppEntry`), a mail-universal security group with
+`IsDirSynced` `$false` is reported as `CloudMailEnabledSecurityGroup`; a synced one, or one whose
+sync state cannot be read, as `HybridMailEnabledSecurityGroup`.
+
+**Groups the module creates cannot receive mail from just anyone.** On creation every
+`CloudMailEnabledSecurityGroup`, `DistributionList`, and `M365Group` gets
+`RequireSenderAuthenticationEnabled $true` and `AcceptMessagesOnlyFromSendersOrMembers` set to its
+resolved owners (`-ManagedBy`, default `GraphAPI-Dummy-owner`), so only the owner can send to it. An
+owner that does not resolve to a recipient is left out of the allowed senders; if none resolves, the
+group is still created, only sender authentication is enforced, and a warning says so (create the
+owner recipient, then run `Set-RBAC4AppEntry`). `New-RBAC4AppConfig` warns at generation time when a
+group would be created with the default owner. For an **existing** group: `New-RBAC4AppEntry` /
+`Invoke-RBAC4AppConfig` warn when it has no restriction, `Set-RBAC4AppEntry` applies it
+(`SendRestrictionApplied`), and `Test-RBAC4AppEntry` reports `SendRestricted` `$false` as a warning
+(it does not make the entry invalid). A `HybridMailEnabledSecurityGroup` is never changed.
+
+Because the owner is normally not the operator, every `Set-DistributionGroup`,
+`Add-DistributionGroupMember`, and `Remove-DistributionGroup` call passes
+`-BypassSecurityGroupManagerCheck`, which needs an Exchange admin role (for example Organization
+Management). **Apps provisioned before 0.9.0** use a `DistributionList` (`UDLRAo1P-*`): pass
+`-AccessGroupType DistributionList` to `Set-`/`Test-`/`Remove-RBAC4AppEntry` for them. Called with
+the defaults, `Set-RBAC4AppEntry` refuses to touch such an app (it still has its `UDLRAo1P-*` list
+but no `USRACo1P-*` group): it changes nothing and returns an error with the list in
+`LegacyGroupName`. To move the app onto a cloud security group, pass
+`-AccessGroupType CloudMailEnabledSecurityGroup` explicitly. `Test-RBAC4AppEntry` reports the same case as a
+warning, and `Remove-RBAC4AppEntry` refuses and removes nothing; both set `LegacyGroupName`.
 
 When `-AccessGroupName` is omitted, `-GroupPrefix` itself defaults to a value based on
-`-AccessGroupType` — `UDLRAo1P` (DistributionList), `USRAo1P` (MailEnabledSecurityGroup), or
-`Um365RAo1P` (M365Group) — rather than one fixed string; pass `-GroupPrefix` explicitly to
-override it.
+`-AccessGroupType` — `USRACo1P` (CloudMailEnabledSecurityGroup), `UDLRAo1P` (DistributionList),
+`Um365RAo1P` (M365Group), or `USRAHo1P` (HybridMailEnabledSecurityGroup; earlier versions used
+`USRAo1P`, so pass `-AccessGroupName` or `-GroupPrefix USRAo1P` for such existing groups) — rather
+than one fixed string; pass `-GroupPrefix` explicitly to override it.
 
 ```powershell
-# Default: an EXO-only distribution list as the scope:
+# Default: an EXO-only (cloud) mail-enabled security group as the scope:
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -Members 'shared@contoso.com' -Role 'Mail.Send'
+
+# EXO-only distribution list (the default before 0.9.0):
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType DistributionList `
+    -Members 'shared@contoso.com' -Role 'Mail.Send'
 
 # Microsoft 365 group as the scope instead:
 New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType M365Group `
     -Members 'shared@contoso.com' -Role 'Mail.Send'
 
 # Reference an existing on-prem/hybrid-synced mail-enabled security group (not created; members untouched):
-New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType MailEnabledSecurityGroup `
+New-RBAC4AppEntry -RegisteredAppName 'Contoso Mail App' -AccessGroupType HybridMailEnabledSecurityGroup `
     -AccessGroupName 'OnPrem-MailApp-Scope' -Role 'Mail.Send'
 ```
 
 `Set-`, `Test-`, and `Remove-RBAC4AppEntry` and `New-RBAC4AppConfig` accept the same
 `-AccessGroupType` and share the same `-GroupPrefix` naming convention
-(`Convert-ApplicationAccessPolicyToRBAC` always reuses the policy's existing group instead). `Remove-RBAC4AppEntry` never deletes a `MailEnabledSecurityGroup`
+(`Convert-ApplicationAccessPolicyToRBAC` always reuses the policy's existing group instead). `Remove-RBAC4AppEntry` never deletes a `HybridMailEnabledSecurityGroup`
 (it only detaches this app's role assignments) and uses `Remove-DistributionGroup` for a
-`DistributionList`.
+`CloudMailEnabledSecurityGroup` or `DistributionList`.
 
 Returns a summary `[pscustomobject]` (resolved identity, group name, normalized roles, assignment
 names, `Warnings`, `Errors`) and also exports it to `$env:TEMP\<name>_<timestamp>_<8 hex>.clixml`. If that export fails, the summary carries a warning.
@@ -570,7 +673,7 @@ Get-RBAC4AppEntry -Enabled $true | Get-RBAC4AppApplication
 
 ### Export-RBAC4AppConfig
 
-Writes `Get-RBAC4AppEntry` rows as schema 4.3 configs for `Invoke-RBAC4AppConfig` - one per role
+Writes `Get-RBAC4AppEntry` rows as schema 4.4 configs for `Invoke-RBAC4AppConfig` - one per role
 assignment, or one per application (and scope) with `-PerApplication`. `-Path` is a directory
 (default: the current one; one `rbac4app-<name>.yml|.json` file per config, colliding names
 numbered) or a file (several configs become one JSON array). Rows are collected and written once at
@@ -581,7 +684,7 @@ Guessed data is refused (a non-terminating error naming `-Force`) unless `-Force
 - an application identity inferred from the generated role assignment name
   (`ServicePrincipalIdSource` `NameHeuristic`);
 - a scope group that could not be read (`ScopeGroupResolved` `$false`). With `-Force` it is exported
-  as a reference-only `AccessGroupType: MailEnabledSecurityGroup` with no members, which
+  as a reference-only `AccessGroupType: HybridMailEnabledSecurityGroup` with no members, which
   `Invoke-RBAC4AppConfig` validates but never creates.
 
 ```powershell
@@ -609,13 +712,13 @@ Test-RBAC4AppEntry -AppId '11111111-2222-3333-4444-555555555555' -Role 'Mail.Sen
 
 ### Convert-ApplicationAccessPolicyToRBAC
 
-Generates schema 4.3 configs compatible with `New-RBAC4AppConfig` and `Invoke-RBAC4AppConfig`:
+Generates schema 4.4 configs compatible with `New-RBAC4AppConfig` and `Invoke-RBAC4AppConfig`:
 derives roles from the app's granted Microsoft Graph application permissions and binds them
 directly to the group the policy uses today. No Exchange Online objects or policies are modified.
 `DenyAccess` policies and apps without convertible permissions are skipped.
 
 **The migration keeps the current scope groups.** Each config records the policy's `ScopeName`
-verbatim as `AccessGroupName`, with `AccessGroupType: MailEnabledSecurityGroup` (the reference-only
+verbatim as `AccessGroupName`, with `AccessGroupType: HybridMailEnabledSecurityGroup` (the reference-only
 type) and `AssignmentScope: RecipientGroupScope`. `Invoke-RBAC4AppConfig` therefore only checks that
 the group exists (`Get-Recipient -Identity <ScopeName>`, failing if it does not) and assigns the roles
 straight to it with `-RecipientGroupScope`. It never creates a group, never renames, shortens, or
@@ -626,7 +729,7 @@ former `-AccessGroupType`, `-GroupPrefix`, and `-ManagedBy` parameters are still
 
 ```yaml
 RbacScope:
-  AccessGroupType: "MailEnabledSecurityGroup"
+  AccessGroupType: "HybridMailEnabledSecurityGroup"
   AccessGroupName: "EvenUsers"          # the policy's ScopeName, unchanged
 ```
 
@@ -702,13 +805,16 @@ $yml = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
 
 # By SP object id, referencing an existing on-prem group:
 $yml = New-RBAC4AppConfig -SpObjectId '11111111-2222-3333-4444-555555555555' `
-           -Role 'Mail.Send' -AccessGroupType MailEnabledSecurityGroup `
+           -Role 'Mail.Send' -AccessGroupType HybridMailEnabledSecurityGroup `
            -AccessGroupName 'OnPrem-MailApp-Scope' -OutputPath C:\rbac-configs
 
 # Same as the first example, written as JSON instead:
 $json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
            -Role 'Mail.Send' -Members 'shared@contoso.com' -Format Json -OutputPath C:\rbac-configs
 ```
+
+With `-Format M365DSC` it returns two paths - the `.yml` config, then the `.ps1` Microsoft365DSC
+configuration (see [Microsoft365DSC output](#microsoft365dsc-output--format-m365dsc)).
 
 Returns the path to the written config file (`.yml` or `.json`). Pass `-WhatIf` to preview the
 output path and content without writing the file. The config schema is identical between formats —
@@ -772,7 +878,7 @@ CHANGELOG.md                     # version history
 - **Init** installs Pester (>= 5) and PSScriptAnalyzer if missing.
 - **Analyze** runs PSScriptAnalyzer over `src`; fails only on Error-severity findings.
 - **Test** runs Pester, writes `testResults.xml` (NUnit) and `coverage.xml` (JaCoCo), and fails below `-CoverageThreshold` percent code coverage (default 90). Run
-  `./scripts/Show-CoverageGaps.ps1` afterwards to list the files and line numbers the tests miss.
+  `./utils/Show-CoverageGaps.ps1` afterwards to list the files and line numbers the tests miss.
 - **Build** assembles the module into `output/<version>/EXORBACforAppManagement` and validates the manifest.
 
 Tests mock the Graph/EXO cmdlets, so the suite runs without those modules installed (this is what

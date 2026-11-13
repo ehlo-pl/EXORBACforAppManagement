@@ -1,5 +1,5 @@
 ﻿BeforeAll {
-    $script:reportPath = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'scripts') 'resolve-allRoleAssigments.ps1'
+    $script:reportPath = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'utils') 'resolve-allRoleAssigments.ps1'
     $global:ReportTestAssignment = [pscustomobject]@{
         Name = 'AppMailSend-Demo'
         Role = 'Application Mail.Send'

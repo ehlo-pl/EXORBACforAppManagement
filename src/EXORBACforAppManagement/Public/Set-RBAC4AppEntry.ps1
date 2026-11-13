@@ -38,6 +38,14 @@ left in place (use Remove-RBAC4AppEntry to tear it down once it is no longer in 
 not migrated. Switching -ScopeKind (e.g. from Group to Recipients) likewise just rewrites the
 scope's filter.
 
+Applications provisioned before 0.9.0: the default scope group used to be a DistributionList
+('UDLRAo1P-{DisplayName}'); it is now a CloudMailEnabledSecurityGroup ('USRACo1P-{DisplayName}').
+When -AccessGroupType, -AccessGroupName, and -GroupPrefix are all omitted and the application still
+has its 'UDLRAo1P-*' list but no 'USRACo1P-*' group, nothing is changed: the result carries the old
+group in LegacyGroupName and an error asking for -AccessGroupType DistributionList (keep the list) or
+an explicit -AccessGroupType CloudMailEnabledSecurityGroup (create the security group and move the
+role assignments onto it).
+
 For an application that has never been registered in Exchange Online (its service principal pointer
 does not exist yet), none of -RegisteredAppName, -AppId, or -SpObjectId alone is enough to resolve
 it: supply all three together (-AppId, -SpObjectId, and -RegisteredAppName as the display name) to
@@ -74,19 +82,22 @@ Defaults to 'GraphAPI-Dummy-owner' (matching New-RBAC4AppEntry).
 
 .PARAMETER GroupPrefix
 Prefix used when building the current scope group name (matching New-RBAC4AppEntry). When
-omitted, defaults to 'UDLRAo1P' (DistributionList), 'USRAo1P' (MailEnabledSecurityGroup), or
-'Um365RAo1P' (M365Group) based on -AccessGroupType.
+omitted, defaults to 'USRACo1P'
+(CloudMailEnabledSecurityGroup), 'UDLRAo1P' (DistributionList), 'Um365RAo1P' (M365Group), or 'USRAHo1P'
+(HybridMailEnabledSecurityGroup) based on -AccessGroupType.
 
 .PARAMETER AccessGroupName
 Explicit current scope group name to reconcile instead of generating one from GroupPrefix and
-the resolved display name. Required when -AccessGroupType is MailEnabledSecurityGroup.
+the resolved display name. Required when -AccessGroupType is HybridMailEnabledSecurityGroup.
 
 .PARAMETER AccessGroupType
-Kind of group that backs the RBAC scope (M365Group, DistributionList, or
-MailEnabledSecurityGroup). Defaults to DistributionList (matching New-RBAC4AppEntry). A
-MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified, and
--Members, -ManagedBy, and -BootstrapMember are all ignored (membership and ownership are
-managed on-premises).
+Kind of group that backs the RBAC scope (CloudMailEnabledSecurityGroup, DistributionList, M365Group,
+or HybridMailEnabledSecurityGroup). Defaults to CloudMailEnabledSecurityGroup (matching
+New-RBAC4AppEntry). A module-managed group (every type but the hybrid one) that is not
+send-restricted gets the restriction applied (sender authentication required, only the -ManagedBy
+owner(s) may send). A HybridMailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created
+or modified, and -Members, -ManagedBy, and -BootstrapMember are all ignored (membership and
+ownership are managed on-premises). The pre-0.9.0 name MailEnabledSecurityGroup is still accepted for HybridMailEnabledSecurityGroup.
 
 .PARAMETER BootstrapMember
 Optional initial member passed when the scope group must be created. Defaults
@@ -177,7 +188,8 @@ Re-scopes the application's role assignments onto the 'Um365Prod-...' group (cre
 PSCustomObject
 
 A summary object with the resolved identity, the current and target scope group names, management
-scope state, a GroupChanged flag, which components were created, the requested/added members and the
+scope state, a GroupChanged flag, LegacyGroupName (the pre-0.9.0 'UDLRAo1P-*' list that stopped the
+run, else $null), which components were created, the requested/added members and the
 final group membership (MembersFinal), and the role assignments partitioned into created /
 re-scoped / unchanged, an overall IsValid flag, and any Warnings/Errors.
 
@@ -232,8 +244,8 @@ function Set-RBAC4AppEntry {
         [string] $AccessGroupName,
 
         [Parameter()]
-        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'DistributionList',
+        [ValidateSet('CloudMailEnabledSecurityGroup', 'DistributionList', 'M365Group', 'HybridMailEnabledSecurityGroup', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'CloudMailEnabledSecurityGroup',
 
         [Parameter()]
         [string] $BootstrapMember = 'GraphAPI-Dummy',
@@ -313,6 +325,7 @@ function Set-RBAC4AppEntry {
         $AssignmentScope = $assignmentScopeInfo.AssignmentScope
         $isDirectGroup = $AssignmentScope -eq 'RecipientGroupScope'
 
+        $AccessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType $AccessGroupType
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
             $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
@@ -335,8 +348,11 @@ function Set-RBAC4AppEntry {
             CurrentGroupName          = $null
             TargetGroupName           = $null
             GroupChanged              = $false
+            LegacyGroupName           = $null
             ScopeGroupExisted         = $false
             ScopeGroupCreated         = $false
+            SendRestricted            = $null
+            SendRestrictionApplied    = $false
             ExoServicePrincipalName   = $null
             ExoServicePrincipalExisted = $false
             ExoServicePrincipalCreated = $false
@@ -405,23 +421,33 @@ function Set-RBAC4AppEntry {
             $targetGroup = $null
             if ($ScopeKind -eq 'Group') {
                 # --- Determine the current and target scope group names (same name rule as New-RBAC4AppEntry).
-                # A MailEnabledSecurityGroup is on-prem/hybrid-synced: its name is referenced, never generated.
+                # A HybridMailEnabledSecurityGroup is on-prem/hybrid-synced: its name is referenced, never generated.
                 if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
                     $currentGroup = $AccessGroupName
                 }
-                elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                    throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+                elseif ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
+                    throw "-AccessGroupName is required when -AccessGroupType is HybridMailEnabledSecurityGroup."
                 }
                 else {
                     $currentGroup = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName -AppId $sp.AppId
                 }
 
+                # --- Pre-0.9.0 guard: relying on today's default (CloudMailEnabledSecurityGroup) for an
+                # app that still has its pre-0.9.0 'UDLRAo1P-*' list would create a new 'USRACo1P-*'
+                # group and re-scope its role assignments onto it - stop and change nothing.
+                $legacyGroup = Get-RBAC4AppLegacyScopeGroupName -BoundParameters $PSBoundParameters -AccessGroupType $AccessGroupType -CurrentGroupName $currentGroup -DisplayName $sp.DisplayName -AppId $sp.AppId
+                if ($legacyGroup) {
+                    $result.LegacyGroupName = $legacyGroup
+                    $result.CurrentGroupName = $currentGroup
+                    throw ("Scope group '{0}' (a DistributionList, the default before 0.9.0) exists for this application but '{1}' does not; nothing was changed. Pass -AccessGroupType DistributionList to reconcile the existing list, or -AccessGroupType CloudMailEnabledSecurityGroup explicitly to create '{1}' and move the role assignments onto it." -f $legacyGroup, $currentGroup)
+                }
+
                 if ($PSBoundParameters.ContainsKey('NewGroupName')) {
-                    $targetGroup = if ($AccessGroupType -eq 'MailEnabledSecurityGroup') { $NewGroupName } else { Format-RBAC4AppSafeName -Value $NewGroupName -MaxLength $script:RBAC4AppNameMaxLength.Group }
+                    $targetGroup = if ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') { $NewGroupName } else { Format-RBAC4AppSafeName -Value $NewGroupName -MaxLength $script:RBAC4AppNameMaxLength.Group }
                 }
                 elseif ($PSBoundParameters.ContainsKey('NewGroupPrefix')) {
-                    if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                        throw "-NewGroupPrefix cannot be used with -AccessGroupType MailEnabledSecurityGroup; on-prem/hybrid-synced group names are referenced, not generated. Use -NewGroupName with an existing group."
+                    if ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
+                        throw "-NewGroupPrefix cannot be used with -AccessGroupType HybridMailEnabledSecurityGroup; on-prem/hybrid-synced group names are referenced, not generated. Use -NewGroupName with an existing group."
                     }
                     $targetGroup = Get-RBAC4AppScopeGroupName -Prefix $NewGroupPrefix -DisplayName $sp.DisplayName -AppId $sp.AppId
                 }
@@ -434,19 +460,20 @@ function Set-RBAC4AppEntry {
 
                 # --- Ensure the target scope group exists (delegated to New-RBAC4AppScopeGroup; read per type).
                 $group = switch ($AccessGroupType) {
-                    'DistributionList'         { Get-DistributionGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
-                    'MailEnabledSecurityGroup' { Get-Recipient -Identity $targetGroup -ErrorAction SilentlyContinue }
+                    'CloudMailEnabledSecurityGroup' { Get-DistributionGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
+                    'DistributionList'              { Get-DistributionGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
+                    'HybridMailEnabledSecurityGroup' { Get-Recipient -Identity $targetGroup -ErrorAction SilentlyContinue }
                     default                    { Get-UnifiedGroup -Identity $targetGroup -ErrorAction SilentlyContinue }
                 }
-                if ($group -and $AccessGroupType -eq 'MailEnabledSecurityGroup' -and
+                if ($group -and $AccessGroupType -eq 'HybridMailEnabledSecurityGroup' -and
                     ([string]$group.RecipientTypeDetails -notin $script:RBAC4AppSecurityGroupRecipientTypes)) {
-                    throw "Recipient '$targetGroup' was found, but is of type '$([string]$group.RecipientTypeDetails)'. -AccessGroupType MailEnabledSecurityGroup requires a mail-enabled security group ($($script:RBAC4AppSecurityGroupRecipientTypes -join ' or '))."
+                    throw "Recipient '$targetGroup' was found, but is of type '$([string]$group.RecipientTypeDetails)'. -AccessGroupType HybridMailEnabledSecurityGroup requires a mail-enabled security group ($($script:RBAC4AppSecurityGroupRecipientTypes -join ' or '))."
                 }
                 $result.ScopeGroupExisted = [bool]$group
                 if (-not $group) {
-                    if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    if ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
                         # On-prem/hybrid-synced groups cannot be created in the cloud.
-                        $result.Errors += "MailEnabledSecurityGroup '$targetGroup' does not exist and cannot be created (it is mastered on-premises)."
+                        $result.Errors += "HybridMailEnabledSecurityGroup '$targetGroup' does not exist and cannot be created (it is mastered on-premises)."
                     }
                     elseif ($PSCmdlet.ShouldProcess($targetGroup, "Create $AccessGroupType")) {
                         $scopeGroupParams = @{
@@ -459,13 +486,25 @@ function Set-RBAC4AppEntry {
                         if ($PSBoundParameters.ContainsKey('ChangeReference')) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
                         $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
                         foreach ($w in $ugWarnings) {
-                            if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+                            if ([string]$w.Message -like '*already exists*' -or [string]$w.Message -like '*send restriction*') { $result.Warnings += [string]$w.Message }
                         }
                         if ($ugResult) {
                             $result.ScopeGroupCreated = $true
+                            $result.SendRestricted = $ugResult.SendRestricted
                             $group = $ugResult.Group
                             $result.ChangeReferencePath = $ugResult.ChangeReferencePath
                         }
+                    }
+                }
+                elseif ($AccessGroupType -in $script:RBAC4AppCreatableGroupTypes) {
+                    # --- Send restriction (module-managed groups only; never a hybrid group): an
+                    # existing group that can still receive mail is restricted to its owner(s).
+                    $result.SendRestricted = Test-RBAC4AppScopeGroupSendRestriction -Group $group
+                    if ($result.SendRestricted -eq $false) {
+                        $restriction = Set-RBAC4AppScopeGroupSendRestriction -AccessGroupType $AccessGroupType -Name $targetGroup -ManagedBy $ManagedBy
+                        $result.Warnings += @($restriction.Warnings)
+                        $result.SendRestricted = $restriction.SendRestricted
+                        $result.SendRestrictionApplied = $restriction.SendRestricted
                     }
                 }
             }
@@ -504,26 +543,26 @@ function Set-RBAC4AppEntry {
                         if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
                     } | Where-Object { $_ } | Select-Object -Unique)
 
-                # --- MailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
+                # --- HybridMailEnabledSecurityGroup is on-prem/hybrid-synced: it is never created or modified
                 # here, so warn about any group-modifying parameter that was requested but ignored.
-                if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                if ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
                     if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
-                        $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -ManagedBy was ignored."
+                        $skipOwnerMsg = "Ownership of HybridMailEnabledSecurityGroup '$targetGroup' is managed on-premises; -ManagedBy was ignored."
                         $result.Warnings += $skipOwnerMsg
                         Write-Warning -Message $skipOwnerMsg
                     }
                     if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
-                        $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -BootstrapMember was ignored."
+                        $skipBootstrapMsg = "Initial membership of HybridMailEnabledSecurityGroup '$targetGroup' is managed on-premises; -BootstrapMember was ignored."
                         $result.Warnings += $skipBootstrapMsg
                         Write-Warning -Message $skipBootstrapMsg
                     }
                 }
 
                 # --- Members (additive): add any requested member not already in the target scope group.
-                # Skipped for MailEnabledSecurityGroup: membership is mastered on-premises.
-                if ($PSBoundParameters.ContainsKey('Members') -and $AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                # Skipped for HybridMailEnabledSecurityGroup: membership is mastered on-premises.
+                if ($PSBoundParameters.ContainsKey('Members') -and $AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
                     $result.MembersRequested = @($Members | Where-Object { $_ })
-                    $skipMembersMsg = "Membership of MailEnabledSecurityGroup '$targetGroup' is managed on-premises; -Members was ignored."
+                    $skipMembersMsg = "Membership of HybridMailEnabledSecurityGroup '$targetGroup' is managed on-premises; -Members was ignored."
                     $result.Warnings += $skipMembersMsg
                     Write-Warning -Message $skipMembersMsg
                 }
@@ -561,8 +600,8 @@ function Set-RBAC4AppEntry {
                         }
 
                         if ($PSCmdlet.ShouldProcess("$AccessGroupType $targetGroup", "Add member $needle")) {
-                            if ($AccessGroupType -eq 'DistributionList') {
-                                Add-DistributionGroupMember -Identity $targetGroup -Member $needle -ErrorAction Stop
+                            if ($AccessGroupType -in $script:RBAC4AppDistributionGroupTypes) {
+                                Add-DistributionGroupMember -Identity $targetGroup -Member $needle -BypassSecurityGroupManagerCheck -ErrorAction Stop
                             }
                             else {
                                 Add-UnifiedGroupLinks -Identity $targetGroup -LinkType Members -Links $needle -ErrorAction Stop

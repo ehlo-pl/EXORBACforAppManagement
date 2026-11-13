@@ -15,7 +15,7 @@ them to it (-CustomResourceScope).
 The optional Metadata section (contacts, PCode, CMDB ID, description, network access) is validated
 and returned in the result's Metadata property; it never affects provisioning.
 
-Only schema version 4.3 is accepted; a config of any earlier version is rejected with an error
+Only schema version 4.4 is accepted; a config of any earlier version is rejected with an error
 (re-generate it). The ConversionResult and Runtime sections are informational and never affect
 provisioning.
 
@@ -167,7 +167,7 @@ function Invoke-RBAC4AppConfig {
         $spAppId       = $config.Application.AppId
         $spDisplayName = $config.Application.DisplayName
 
-        $AccessGroupType = $config.RbacScope.AccessGroupType
+        $AccessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType ([string]$config.RbacScope.AccessGroupType)
         $GroupPrefix     = $config.RbacScope.GroupPrefix
         $AccessGroupName = $config.RbacScope.AccessGroupName
         $Members         = @($config.RbacScope.Members)
@@ -198,6 +198,10 @@ function Invoke-RBAC4AppConfig {
             return
         }
         $isGroupKind = $ScopeKind -eq 'Group'
+        if ($isGroupKind -and $AccessGroupType -notin $script:RBAC4AppAccessGroupTypes) {
+            Write-Error "Config '$Path' has unsupported RbacScope.AccessGroupType '$AccessGroupType' (expected $($script:RBAC4AppAccessGroupTypes -join ', '))."
+            return
+        }
         if ($separateScopePerRole -and -not $isGroupKind) {
             Write-Error "Config '$Path' has SeparateScopePerRole enabled but ScopeKind is '$ScopeKind'; this option requires ScopeKind Group."
             return
@@ -313,8 +317,8 @@ function Invoke-RBAC4AppConfig {
                         }
                         else { $AccessGroupName }
                     }
-                    elseif ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
-                        throw "-AccessGroupName is required when AccessGroupType is MailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
+                    elseif ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
+                        throw "-AccessGroupName is required when AccessGroupType is HybridMailEnabledSecurityGroup. Re-generate the config with -AccessGroupName set."
                     }
                     else {
                         $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $spDisplayName -Suffix $groupSuffix -AppId $spAppId
@@ -334,7 +338,7 @@ function Invoke-RBAC4AppConfig {
                     if ($ChangeReference) { $scopeGroupParams['ChangeReference'] = $ChangeReference }
                     $ugResult = New-RBAC4AppScopeGroup @scopeGroupParams
                     foreach ($w in $ugWarnings) {
-                        if ([string]$w.Message -like '*already exists*') { $result.Warnings += [string]$w.Message }
+                        if ([string]$w.Message -like '*already exists*' -or [string]$w.Message -like '*send restriction*') { $result.Warnings += [string]$w.Message }
                     }
                     if ($ugResult) {
                         if (-not $result.OwnerAdded) {
@@ -355,19 +359,19 @@ function Invoke-RBAC4AppConfig {
                             if ($_.PrimarySmtpAddress) { [string]$_.PrimarySmtpAddress } else { [string]$_.Name }
                         } | Where-Object { $_ } | Select-Object -Unique)
 
-                    if ($AccessGroupType -eq 'MailEnabledSecurityGroup') {
+                    if ($AccessGroupType -eq 'HybridMailEnabledSecurityGroup') {
                         if ($Members -and ($Members | Where-Object { $_ -and $_ -ne 'GraphAPI-Dummy' })) {
-                            $skipMsg = "Membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; Members from config was ignored."
+                            $skipMsg = "Membership of HybridMailEnabledSecurityGroup '$umGroupName' is managed on-premises; Members from config was ignored."
                             $result.Warnings += $skipMsg
                             Write-Warning $skipMsg
                         }
                         if ($ManagedBy -and (@($ManagedBy) -join ',') -ne 'GraphAPI-Dummy-owner') {
-                            $skipOwnerMsg = "Ownership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; ManagedBy from config was ignored."
+                            $skipOwnerMsg = "Ownership of HybridMailEnabledSecurityGroup '$umGroupName' is managed on-premises; ManagedBy from config was ignored."
                             $result.Warnings += $skipOwnerMsg
                             Write-Warning $skipOwnerMsg
                         }
                         if ($BootstrapMember -and $BootstrapMember -ne 'GraphAPI-Dummy') {
-                            $skipBootstrapMsg = "Initial membership of MailEnabledSecurityGroup '$umGroupName' is managed on-premises; BootstrapMember from config was ignored."
+                            $skipBootstrapMsg = "Initial membership of HybridMailEnabledSecurityGroup '$umGroupName' is managed on-premises; BootstrapMember from config was ignored."
                             $result.Warnings += $skipBootstrapMsg
                             Write-Warning $skipBootstrapMsg
                         }
@@ -381,8 +385,8 @@ function Invoke-RBAC4AppConfig {
                                 continue
                             }
                             if ($PSCmdlet.ShouldProcess("$AccessGroupType $umGroupName", "Add member $($rec.PrimarySmtpAddress)")) {
-                                if ($AccessGroupType -eq 'DistributionList') {
-                                    Add-DistributionGroupMember -Identity $umGroupName -Member $rec.PrimarySmtpAddress -ErrorAction Stop
+                                if ($AccessGroupType -in $script:RBAC4AppDistributionGroupTypes) {
+                                    Add-DistributionGroupMember -Identity $umGroupName -Member $rec.PrimarySmtpAddress -BypassSecurityGroupManagerCheck -ErrorAction Stop
                                 }
                                 else {
                                     Add-UnifiedGroupLinks -Identity $umGroupName -LinkType Members -Links $rec.PrimarySmtpAddress -ErrorAction Stop

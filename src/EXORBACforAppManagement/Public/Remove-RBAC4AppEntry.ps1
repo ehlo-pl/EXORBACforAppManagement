@@ -15,7 +15,7 @@ or -ManagementScopeName), and removes, in order:
      -AssignmentScope of New-/Set-RBAC4AppEntry and New-RBAC4AppConfig, and the pre-0.7.0 model),
   2. the management scope itself, if one exists (skipped while another identity's assignment still
      uses it), and
-  3. for -ScopeKind Group, the scope group itself (never a MailEnabledSecurityGroup).
+  3. for -ScopeKind Group, the scope group itself (never a HybridMailEnabledSecurityGroup).
 
 Before removing anything the function runs two safety checks and ABORTS (removing nothing) if either
 fails:
@@ -46,19 +46,21 @@ Object id of the target service principal. GUID-validated.
 
 .PARAMETER GroupPrefix
 Prefix used when building the scope group name (matching New-RBAC4AppEntry). When omitted,
-defaults to 'UDLRAo1P' (DistributionList), 'USRAo1P' (MailEnabledSecurityGroup), or
-'Um365RAo1P' (M365Group) based on -AccessGroupType.
+defaults to 'USRACo1P'
+(CloudMailEnabledSecurityGroup), 'UDLRAo1P' (DistributionList), 'Um365RAo1P' (M365Group), or 'USRAHo1P'
+(HybridMailEnabledSecurityGroup) based on -AccessGroupType.
 
 .PARAMETER AccessGroupName
 Explicit scope group name to tear down instead of generating one from GroupPrefix and the
-resolved display name. Required when -AccessGroupType is MailEnabledSecurityGroup.
+resolved display name. Required when -AccessGroupType is HybridMailEnabledSecurityGroup.
 
 .PARAMETER AccessGroupType
-Kind of group that backs the RBAC scope (M365Group, DistributionList, or
-MailEnabledSecurityGroup). Defaults to DistributionList (matching New-RBAC4AppEntry). A
-MailEnabledSecurityGroup is on-prem/hybrid-synced and is NEVER deleted by this function - only
-this application's role assignments are detached; a DistributionList is removed with
-Remove-DistributionGroup.
+Kind of group that backs the RBAC scope (CloudMailEnabledSecurityGroup, DistributionList,
+M365Group, or HybridMailEnabledSecurityGroup). Defaults to CloudMailEnabledSecurityGroup (matching
+New-RBAC4AppEntry). A HybridMailEnabledSecurityGroup is on-prem/hybrid-synced and is NEVER deleted by
+this function - only this application's role assignments are detached; a CloudMailEnabledSecurityGroup
+or DistributionList is removed with Remove-DistributionGroup, an M365Group with Remove-UnifiedGroup.
+The pre-0.9.0 name MailEnabledSecurityGroup is still accepted for HybridMailEnabledSecurityGroup.
 
 .PARAMETER ScopeKind
 Kind of management scope that was provisioned (Group default, Recipients, Tag, Filter). Only Group
@@ -98,7 +100,9 @@ PSCustomObject
 
 A summary object with the resolved identity, the scope group name and whether it existed, the
 assignments bound to the management scope or legacy group scope partitioned into own/foreign, the real members found, what was
-removed (AssignmentsRemoved, ManagementScopeRemoved, GroupRemoved), an overall IsRemoved flag, a Reason when removal was
+removed (AssignmentsRemoved, ManagementScopeRemoved, GroupRemoved), LegacyGroupName (set when a defaults-only
+run refused to touch an application that still has its pre-0.9.0 'UDLRAo1P-*' list but no 'USRACo1P-*'
+group - pass -AccessGroupType DistributionList), an overall IsRemoved flag, a Reason when removal was
 refused or skipped, and any Warnings/Errors.
 
 .NOTES
@@ -136,8 +140,8 @@ function Remove-RBAC4AppEntry {
         [string] $AccessGroupName,
 
         [Parameter()]
-        [ValidateSet('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')]
-        [string] $AccessGroupType = 'DistributionList',
+        [ValidateSet('CloudMailEnabledSecurityGroup', 'DistributionList', 'M365Group', 'HybridMailEnabledSecurityGroup', 'MailEnabledSecurityGroup')]
+        [string] $AccessGroupType = 'CloudMailEnabledSecurityGroup',
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
@@ -171,6 +175,7 @@ function Remove-RBAC4AppEntry {
             throw "Parameters -ManagementScopeName and -ManagementScopePrefix cannot be used together."
         }
 
+        $AccessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType $AccessGroupType
         if (-not $PSBoundParameters.ContainsKey('GroupPrefix')) {
             $GroupPrefix = Get-RBAC4AppDefaultGroupPrefix -AccessGroupType $AccessGroupType
         }
@@ -189,6 +194,7 @@ function Remove-RBAC4AppEntry {
             ManagementScopeRemoved = $false
             ScopeGroupName      = $null
             ScopeGroupExisted   = $false
+            LegacyGroupName     = $null
             AssignmentsScoped   = @()
             OwnAssignments      = @()
             ForeignAssignments  = @()
@@ -235,22 +241,35 @@ function Remove-RBAC4AppEntry {
             # relevant for -ScopeKind Group; other kinds have no backing group.
             $umGroupName = $null
             $group = $null
-            $isMesg = ($ScopeKind -eq 'Group' -and $AccessGroupType -eq 'MailEnabledSecurityGroup')
+            $isMesg = ($ScopeKind -eq 'Group' -and $AccessGroupType -eq 'HybridMailEnabledSecurityGroup')
             if ($ScopeKind -eq 'Group') {
                 if ($PSBoundParameters.ContainsKey('AccessGroupName')) {
                     $umGroupName = $AccessGroupName
                 }
                 elseif ($isMesg) {
-                    throw "-AccessGroupName is required when -AccessGroupType is MailEnabledSecurityGroup."
+                    throw "-AccessGroupName is required when -AccessGroupType is HybridMailEnabledSecurityGroup."
                 }
                 else {
                     $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName -AppId $sp.AppId
                 }
                 $result.ScopeGroupName = $umGroupName
 
+                # Pre-0.9.0 guard: with the defaults, an app that still has its 'UDLRAo1P-*' list (the
+                # default before 0.9.0) but no 'USRACo1P-*' group would be torn down against the wrong
+                # group (its management scope could still be removed) - refuse and remove nothing.
+                $legacyGroup = Get-RBAC4AppLegacyScopeGroupName -BoundParameters $PSBoundParameters -AccessGroupType $AccessGroupType -CurrentGroupName $umGroupName -DisplayName $sp.DisplayName -AppId $sp.AppId
+                if ($legacyGroup) {
+                    $result.LegacyGroupName = $legacyGroup
+                    $result.Reason = "Refusing to remove: scope group '$legacyGroup' (a DistributionList, the default before 0.9.0) exists for this application but '$umGroupName' does not; nothing was removed. Re-run with -AccessGroupType DistributionList to tear down the existing list."
+                    $result.IsRemoved = $false
+                    Write-Warning -Message $result.Reason
+                    return
+                }
+
                 $group = switch ($AccessGroupType) {
-                    'DistributionList'         { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
-                    'MailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
+                    'CloudMailEnabledSecurityGroup' { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                    'DistributionList'              { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
+                    'HybridMailEnabledSecurityGroup' { Get-Recipient -Identity $umGroupName -ErrorAction SilentlyContinue }
                     default                    { Get-UnifiedGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
                 }
                 $result.ScopeGroupExisted = [bool]$group
@@ -309,7 +328,7 @@ function Remove-RBAC4AppEntry {
             # --- Real members (ignore the bootstrap placeholder).
             $realMembers = @()
             if ($group) {
-                # Fail closed (except for a never-deleted MailEnabledSecurityGroup): a failed member
+                # Fail closed (except for a never-deleted HybridMailEnabledSecurityGroup): a failed member
                 # read must not look like "no real members" and let the group be deleted.
                 $memberReadAction = if ($isMesg) { 'SilentlyContinue' } else { 'Stop' }
                 try {
@@ -338,7 +357,7 @@ function Remove-RBAC4AppEntry {
             $result.RealMembers = @($realMembers)
 
             # --- Safety gate: abort (remove nothing) when the group / scope is still in use. A
-            # MailEnabledSecurityGroup is exempt: it is on-prem/hybrid-synced and never deleted, so
+            # HybridMailEnabledSecurityGroup is exempt: it is on-prem/hybrid-synced and never deleted, so
             # only this app's assignments (and the scope, when unused) are detached.
             if (-not $isMesg -and ($foreign.Count -gt 0 -or $realMembers.Count -gt 0)) {
                 $target = if ($umGroupName) { "'$umGroupName' / management scope '$scopeName'" } else { "management scope '$scopeName'" }
@@ -387,9 +406,9 @@ function Remove-RBAC4AppEntry {
                 }
             }
 
-            # --- Finally the scope group (Group kind only; a MailEnabledSecurityGroup is never deleted).
+            # --- Finally the scope group (Group kind only; a HybridMailEnabledSecurityGroup is never deleted).
             if ($isMesg) {
-                $result.Reason = "MailEnabledSecurityGroup '$umGroupName' is on-prem/hybrid-synced and was left in place; only this application's role assignments and management scope were detached."
+                $result.Reason = "HybridMailEnabledSecurityGroup '$umGroupName' is on-prem/hybrid-synced and was left in place; only this application's role assignments and management scope were detached."
                 $result.IsRemoved = ($result.Errors.Count -eq 0) -and $removedAny
                 if (-not $result.IsRemoved -and $WhatIfPreference) {
                     $result.Reason = 'WhatIf: no changes were made.'
@@ -398,14 +417,14 @@ function Remove-RBAC4AppEntry {
             }
 
             if ($ScopeKind -eq 'Group') {
-                $groupRemoveAction = if ($AccessGroupType -eq 'DistributionList') { 'Remove-DistributionGroup' } else { 'Remove-UnifiedGroup' }
+                $groupRemoveAction = if ($AccessGroupType -in $script:RBAC4AppDistributionGroupTypes) { 'Remove-DistributionGroup' } else { 'Remove-UnifiedGroup' }
                 if (-not $group) {
                     $result.Warnings += "$AccessGroupType '$umGroupName' did not exist; only role assignments and the management scope (if any) were processed."
                 }
                 elseif ($PSCmdlet.ShouldProcess($umGroupName, $groupRemoveAction)) {
                     try {
-                        if ($AccessGroupType -eq 'DistributionList') {
-                            Remove-DistributionGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop
+                        if ($AccessGroupType -in $script:RBAC4AppDistributionGroupTypes) {
+                            Remove-DistributionGroup -Identity $umGroupName -BypassSecurityGroupManagerCheck -Confirm:$false -ErrorAction Stop
                         }
                         else {
                             Remove-UnifiedGroup -Identity $umGroupName -Confirm:$false -ErrorAction Stop

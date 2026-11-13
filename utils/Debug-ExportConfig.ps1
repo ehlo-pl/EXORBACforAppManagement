@@ -35,10 +35,10 @@ Yaml (default) or Json, passed through to Get-RBAC4AppEntry.
 Also pass -PerApplication to Export-RBAC4AppConfig (one config per application instead of one per assignment).
 
 .EXAMPLE
-Connect-ExchangeOnline; ./scripts/Debug-ExportConfig.ps1
+Connect-ExchangeOnline; ./utils/Debug-ExportConfig.ps1
 
 .EXAMPLE
-./scripts/Debug-ExportConfig.ps1 -ExportPath C:\Temp\export -ByApplication -LogPath C:\Temp\debug.log
+./utils/Debug-ExportConfig.ps1 -ExportPath C:\Temp\export -ByApplication -LogPath C:\Temp\debug.log
 #>
 [CmdletBinding()]
 param(

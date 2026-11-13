@@ -2,7 +2,7 @@
 
 Describe 'Export-RBAC4AppStateReport' {
     BeforeAll {
-        $script:reportScript = Join-Path $PSScriptRoot '..' 'scripts' 'Export-RBAC4AppStateReport.ps1'
+        $script:reportScript = Join-Path $PSScriptRoot '..' 'utils' 'Export-RBAC4AppStateReport.ps1'
 
         $script:writeState = {
             param([string] $Folder, [hashtable] $Files)
@@ -19,7 +19,7 @@ Describe 'Export-RBAC4AppStateReport' {
     It 'scans YAML files recursively and reports values under their schema path' {
         $stateFolder = & $script:writeState 'state' @{
             'app.yaml' = @'
-SchemaVersion: "4.3"
+SchemaVersion: "4.4"
 
 Application:
   AppId: "app-id"
@@ -84,7 +84,7 @@ Metadata:
         $result | Should -Be $outputPath
         $rows.Count | Should -Be 2
         $first = $rows | Where-Object 'Application.AppId' -eq 'app-id'
-        $first.SchemaVersion | Should -Be '4.3'
+        $first.SchemaVersion | Should -Be '4.4'
         $first.'Runtime.GeneratedAt' | Should -Be '2026-11-06T09:00:00Z'
         $first.'ConversionResult.AccessRight' | Should -Be 'RestrictAccess'
         $first.'ConversionResult.DerivedRoles' | Should -Be 'Application Mail.Send'
@@ -118,7 +118,7 @@ Metadata:
     It 'writes every schema field as a column, empty (not defaulted) when the file omits it' {
         $stateFolder = & $script:writeState 'minimal' @{
             'app.yaml' = @'
-SchemaVersion: "4.3"
+SchemaVersion: "4.4"
 Application:
   AppId: "app-id"
 '@
@@ -139,7 +139,7 @@ Application:
     }
 
     It 'covers exactly the schema fields, in schema order after File' {
-        $stateFolder = & $script:writeState 'columns' @{ 'app.yaml' = "SchemaVersion: `"4.3`"`nApplication:`n  AppId: `"app-id`"" }
+        $stateFolder = & $script:writeState 'columns' @{ 'app.yaml' = "SchemaVersion: `"4.4`"`nApplication:`n  AppId: `"app-id`"" }
         $outputPath = Join-Path $TestDrive 'columns.csv'
 
         $null = & $script:reportScript -Path $stateFolder -OutputPath $outputPath
@@ -149,7 +149,7 @@ Application:
         # The completed config shape is the full set of schema fields; Rbac.ChangeReference is the
         # legacy location Complete-RBAC4AppConfig folds into Metadata.ChangeReference.
         $expected = InModuleScope EXORBACforAppManagement {
-            $full = Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = '4.3' })
+            $full = Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = '4.4' })
             foreach ($property in $full.PSObject.Properties) {
                 if ($property.Value -is [pscustomobject]) {
                     foreach ($child in $property.Value.PSObject.Properties) { "$($property.Name).$($child.Name)" }
@@ -168,7 +168,7 @@ Application:
     It 'shows an explicitly empty Members override as []' {
         $stateFolder = & $script:writeState 'members' @{
             'app.yaml' = @'
-SchemaVersion: "4.3"
+SchemaVersion: "4.4"
 Application:
   AppId: "app-id"
 RbacScope:
@@ -186,7 +186,7 @@ RbacScope:
     }
 
     It 'does not write the report with -WhatIf' {
-        $stateFolder = & $script:writeState 'whatif-state' @{ 'app.yaml' = "SchemaVersion: `"4.3`"`nApplication:`n  AppId: `"app-id`"" }
+        $stateFolder = & $script:writeState 'whatif-state' @{ 'app.yaml' = "SchemaVersion: `"4.4`"`nApplication:`n  AppId: `"app-id`"" }
         $outputPath = Join-Path $TestDrive 'whatif.csv'
 
         & $script:reportScript -Path $stateFolder -OutputPath $outputPath -WhatIf
@@ -196,7 +196,7 @@ RbacScope:
 
     It 'skips YAML files that are not state files (e.g. policy exports) with a warning' {
         $stateFolder = & $script:writeState 'mixed' @{
-            'app.yaml' = "SchemaVersion: `"4.3`"`nApplication:`n  AppId: `"app-id`""
+            'app.yaml' = "SchemaVersion: `"4.4`"`nApplication:`n  AppId: `"app-id`""
             'sub/exo-application-access-policies-1.yml' = @'
 Policies:
   - ScopeName: "USRAo1P-x"
@@ -223,7 +223,7 @@ Policies:
     }
 
     It 'uses the repository module even when an older copy without -Raw is already loaded' {
-        $stateFolder = & $script:writeState 'stale' @{ 'app.yaml' = "SchemaVersion: `"4.3`"`nApplication:`n  AppId: `"app-id`"" }
+        $stateFolder = & $script:writeState 'stale' @{ 'app.yaml' = "SchemaVersion: `"4.4`"`nApplication:`n  AppId: `"app-id`"" }
         $stale = New-Module -Name EXORBACforAppManagement -ScriptBlock {
             function ConvertFrom-RBAC4AppYaml { param([string] $Content) }
         } | Import-Module -PassThru -Force

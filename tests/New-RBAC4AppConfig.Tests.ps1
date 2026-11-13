@@ -122,8 +122,8 @@ Describe 'New-RBAC4AppConfig' {
             -OutputPath $TestDrive -Confirm:$false
 
         $content = Get-Content $outFile -Raw
-        # DistributionList is the default and is left out.
-        $content | Should -Not -Match 'AccessGroupType'
+        # DistributionList is no longer the default (CloudMailEnabledSecurityGroup is), so it is written.
+        $content | Should -Match 'AccessGroupType: "DistributionList"'
         $content | Should -Match 'box@contoso\.com'
     }
 
@@ -160,7 +160,7 @@ Describe 'New-RBAC4AppConfig' {
         (Test-Path $outFile) | Should -BeTrue
 
         $parsed = Get-Content $outFile -Raw | ConvertFrom-Json
-        $parsed.SchemaVersion              | Should -Be '4.3'
+        $parsed.SchemaVersion              | Should -Be '4.4'
         # Defaults (ScopeKind Group, AssignmentScope RecipientGroupScope) and unused management scope
         # naming are left out.
         $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ScopeKind'
@@ -169,7 +169,7 @@ Describe 'New-RBAC4AppConfig' {
         $parsed.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'GroupPrefix'
         $parsed.Rbac.PSObject.Properties.Name      | Should -Not -Contain 'ChangeReference'
         $parsed.Metadata.ChangeReference           | Should -Be 'CHG-JSON'
-        $parsed.RbacScope.AccessGroupName  | Should -Be 'UDLRAo1P-Contoso'
+        $parsed.RbacScope.AccessGroupName  | Should -Be 'USRACo1P-Contoso'
         $parsed.Application.TenantId                   | Should -Be 'tenant-id-123'
         $parsed.PSObject.Properties.Name   | Should -Not -Contain 'TenantId'
         $parsed.Application.AppId          | Should -Be 'app-client-id'
@@ -216,7 +216,7 @@ Describe 'New-RBAC4AppConfig' {
             -OutputPath $TestDrive -Confirm:$false
 
         $content = Get-Content $outFile -Raw
-        $content | Should -Match 'SchemaVersion: "4.3"'
+        $content | Should -Match 'SchemaVersion: "4.4"'
         $content | Should -Match 'ScopeKind: "Recipients"'
         $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $content } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
         $parsed.RbacScope.ScopeKind           | Should -Be 'Recipients'
@@ -280,7 +280,7 @@ Describe 'New-RBAC4AppConfig' {
                          'ManagementScope', 'ScopeRecipients', 'ScopeTag', 'ScopeFilter', 'SeparateScopePerRole', 'ChangeReference') {
             $groupSparse | Should -Not -Match $key
         }
-        $group | Should -Match 'AccessGroupName: "UDLRAo1P-Contoso"'
+        $group | Should -Match 'AccessGroupName: "USRACo1P-Contoso"'
 
         $recipients = ((Get-Content $recipientsFile -Raw) -split '(?m)^Metadata:')[0]
         $recipients | Should -Match 'ScopeKind: "Recipients"'
@@ -293,8 +293,8 @@ Describe 'New-RBAC4AppConfig' {
         $parsed = InModuleScope EXORBACforAppManagement -Parameters @{ Content = $group } { param($Content) ConvertFrom-RBAC4AppYaml -Content $Content }
         $parsed.RbacScope.ScopeKind             | Should -Be 'Group'
         $parsed.RbacScope.AssignmentScope       | Should -Be 'RecipientGroupScope'
-        $parsed.RbacScope.AccessGroupType       | Should -Be 'DistributionList'
-        $parsed.RbacScope.GroupPrefix           | Should -Be 'UDLRAo1P'
+        $parsed.RbacScope.AccessGroupType       | Should -Be 'CloudMailEnabledSecurityGroup'
+        $parsed.RbacScope.GroupPrefix           | Should -Be 'USRACo1P'
         @($parsed.RbacScope.Members)            | Should -Be @('GraphAPI-Dummy')
         @($parsed.RbacScope.ManagedBy)          | Should -Be @('GraphAPI-Dummy-owner')
         $parsed.RbacScope.BootstrapMember       | Should -Be 'GraphAPI-Dummy'
@@ -382,7 +382,7 @@ Describe 'New-RBAC4AppConfig' {
         $filter.RbacScope.ScopeFilter | Should -Be "Department -eq 'Sales'"
     }
 
-    It 'writes an explicit -AccessGroupName and leaves it blank for MailEnabledSecurityGroup without one' {
+    It 'writes an explicit -AccessGroupName and leaves it blank for the hybrid group (legacy name accepted) without one' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
         }
@@ -393,8 +393,80 @@ Describe 'New-RBAC4AppConfig' {
 
         (Get-Content -LiteralPath $named -Raw | ConvertFrom-Json).RbacScope.AccessGroupName | Should -Be 'Custom-Group'
         $mesgConfig = Get-Content -LiteralPath $mesg -Raw | ConvertFrom-Json
-        $mesgConfig.RbacScope.AccessGroupType | Should -Be 'MailEnabledSecurityGroup'
+        $mesgConfig.RbacScope.AccessGroupType | Should -Be 'HybridMailEnabledSecurityGroup'
         $mesgConfig.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'AccessGroupName'
+    }
+
+    It 'writes the YAML config plus a Microsoft365DSC script with -Format M365DSC and returns both paths' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = '22222222-2222-2222-2222-222222222222'; AppId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'dsc') -Force
+        $files = @(New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Role 'Mail.Send' -ManagedBy 'owner@contoso.com' -OutputPath $dir.FullName -Format M365DSC -Confirm:$false -WarningAction SilentlyContinue)
+
+        $files.Count | Should -Be 2
+        $files[0] | Should -Match '\.yml$'
+        $files[1] | Should -Be ([System.IO.Path]::ChangeExtension($files[0], '.ps1'))
+        $script = Get-Content -LiteralPath $files[1] -Raw
+        $script | Should -Match 'Configuration RBAC4App_Contoso'
+        $script | Should -Match "EXODistributionGroup 'Group-USRACo1P-Contoso'"
+        $script | Should -Match "ManagedBy\s+= @\('owner@contoso.com'\)"
+        $script | Should -Match "EXOManagementRoleAssignment 'Assignment-AppMailSend-Contoso'"
+        # The YAML is still a normal config and records what DSC does differently.
+        $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $files[0] } { param($Path) ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw) }
+        $config.SchemaVersion | Should -Be '4.4'
+        $config.RbacScope.AccessGroupName | Should -Be 'USRACo1P-Contoso'
+        ($config.Runtime.CollectedWarnings -join ';') | Should -Match 'has no RecipientGroupScope'
+    }
+
+    It 'writes certificate sign-in with -DscAuthentication Certificate and rejects it without -Format M365DSC' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = '22222222-2222-2222-2222-222222222222'; AppId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'dsc-cert') -Force
+        $files = @(New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Format M365DSC -DscAuthentication Certificate -Confirm:$false -WarningAction SilentlyContinue)
+
+        $script = Get-Content -LiteralPath $files[1] -Raw
+        $script | Should -Match 'CertificateThumbprint = \$CertificateThumbprint'
+        $script | Should -Not -Match 'ManagedIdentity'
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -DscAuthentication Certificate -Confirm:$false } | Should -Throw '*only be used with -Format M365DSC*'
+    }
+
+    It 'writes neither file with -Format M365DSC -WhatIf' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = '22222222-2222-2222-2222-222222222222'; AppId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'dsc-whatif') -Force
+        $files = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Format M365DSC -WhatIf -WarningAction SilentlyContinue
+
+        $files | Should -BeNullOrEmpty
+        @(Get-ChildItem -LiteralPath $dir.FullName).Count | Should -Be 0
+    }
+
+    It 'warns (and records it) when a group the module creates keeps the default owner' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'owner-warn') -Force
+        $warn = $null
+        $file = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Format Json -Confirm:$false -WarningVariable warn -WarningAction SilentlyContinue
+
+        (@($warn | ForEach-Object { [string]$_ }) -join ';') | Should -Match "default owner 'GraphAPI-Dummy-owner'"
+        $config = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+        ($config.Runtime.CollectedWarnings -join ';') | Should -Match 'send restriction is skipped'
+    }
+
+    It 'does not warn about the owner for an explicit -ManagedBy, a hybrid group, or a non-Group scope kind' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'owner-nowarn') -Force
+        $w1 = $null; $w2 = $null; $w3 = $null
+        $null = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ManagedBy 'owner@contoso.com' -OutputPath $dir.FullName -Confirm:$false -WarningVariable w1 -WarningAction SilentlyContinue
+        $null = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -AccessGroupType HybridMailEnabledSecurityGroup -AccessGroupName 'OnPrem' -OutputPath $dir.FullName -Confirm:$false -WarningVariable w2 -WarningAction SilentlyContinue
+        $null = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -ScopeKind Recipients -ScopeRecipients 'a@contoso.com' -OutputPath $dir.FullName -Confirm:$false -WarningVariable w3 -WarningAction SilentlyContinue
+
+        foreach ($w in @($w1, $w2, $w3)) { (@($w | ForEach-Object { [string]$_ }) -join ';') | Should -Not -Match 'default owner' }
     }
 
     It 'writes into the current directory when -OutputPath is omitted' {

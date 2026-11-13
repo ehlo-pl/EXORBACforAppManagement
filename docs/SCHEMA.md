@@ -17,8 +17,9 @@
 
 | Version | Specification |
 | --- | --- |
-| 4.3 (current) | [SCHEMA-4.3.md](SCHEMA-4.3.md) |
+| 4.4 (current) | [SCHEMA-4.4.md](SCHEMA-4.4.md) |
+| 4.3 (previous; still read for `-Repository` state files, rejected by `Invoke-RBAC4AppConfig`) | [SCHEMA-4.3.md](SCHEMA-4.3.md) |
 
-The optional machine-readable [JSON Schema](SCHEMA-4.3.schema.json) is separate from the
+The optional machine-readable [JSON Schema](SCHEMA-4.4.schema.json) is separate from the
 documentation. The module does not invoke a JSON Schema validator; `Invoke-RBAC4AppConfig` performs
 its own validation, including checks whose valid values depend on the tenant's `locations.txt`.

@@ -8,7 +8,7 @@ function ConvertTo-RBAC4AppConfigFromEntry {
     #   - a row whose service principal was resolved by the name heuristic
     #     (ServicePrincipalIdSource 'NameHeuristic');
     #   - a Group/GroupDirect scope whose group could not be read (ScopeGroupResolved $false). With
-    #     -Force it is exported as a reference-only MailEnabledSecurityGroup with no members, so
+    #     -Force it is exported as a reference-only HybridMailEnabledSecurityGroup with no members, so
     #     Invoke-RBAC4AppConfig validates the group instead of creating an empty one.
     # Either way the reason lands in the config's Runtime.CollectedWarnings.
     [CmdletBinding()]
@@ -31,7 +31,9 @@ function ConvertTo-RBAC4AppConfigFromEntry {
     $newWarnings = [System.Collections.Generic.List[string]]::new()
     foreach ($w in @($rows | ForEach-Object { $_.Warnings } | Where-Object { $_ } | Select-Object -Unique)) { $configWarnings.Add([string]$w) }
 
-    $result = [pscustomobject]@{ Config = $null; SafeName = $null; Warnings = @(); Error = $null; NeedsForce = $false }
+    # ScopeGroupDistinguishedName: the group DN from a management scope's MemberOfGroup filter, when
+    # the row has one (used only by the Microsoft365DSC rendering).
+    $result = [pscustomobject]@{ Config = $null; SafeName = $null; Warnings = @(); Error = $null; NeedsForce = $false; ScopeGroupDistinguishedName = $null }
     $fail = {
         param([string] $Message, [bool] $NeedsForce = $false)
         $result.Error = $Message
@@ -68,25 +70,31 @@ function ConvertTo-RBAC4AppConfigFromEntry {
     }
 
     $groupName = if ($first.ScopeGroupName) { [string]$first.ScopeGroupName } else { [string]$first.Scope }
-    $accessGroupType = 'DistributionList'
+    $accessGroupType = $script:RBAC4AppConfigDefaults.AccessGroupType
     $members = @()
     if ($scopeKind -eq 'Group') {
         if (-not $groupName) {
             return & $fail ("Cannot export role assignment '{0}' because its scope group name could not be resolved." -f $label)
         }
-        if ($first.ScopeGroupResolved -and $first.ScopeGroupType -in @('M365Group', 'DistributionList', 'MailEnabledSecurityGroup')) {
-            $accessGroupType = [string]$first.ScopeGroupType
+        $resolvedType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType ([string]$first.ScopeGroupType)
+        if ($first.ScopeGroupResolved -and $resolvedType -in $script:RBAC4AppAccessGroupTypes) {
+            $accessGroupType = $resolvedType
             $members = @($first.ScopeMembers | Where-Object { $_ })
         }
         elseif (-not $Force) {
-            return & $fail ("Cannot export role assignment '{0}' without -Force because its scope group '{1}' could not be read (deleted, renamed, or not visible to this session). -Force exports it as a reference-only MailEnabledSecurityGroup that Invoke-RBAC4AppConfig validates but never creates." -f $label, $groupName) $true
+            return & $fail ("Cannot export role assignment '{0}' without -Force because its scope group '{1}' could not be read (deleted, renamed, or not visible to this session). -Force exports it as a reference-only HybridMailEnabledSecurityGroup that Invoke-RBAC4AppConfig validates but never creates." -f $label, $groupName) $true
         }
         else {
-            $accessGroupType = 'MailEnabledSecurityGroup'
-            $msg = "Role assignment '{0}': scope group '{1}' could not be read; exported as reference-only AccessGroupType 'MailEnabledSecurityGroup' with no members - review the config before using it." -f $label, $groupName
+            $accessGroupType = 'HybridMailEnabledSecurityGroup'
+            $msg = "Role assignment '{0}': scope group '{1}' could not be read; exported as reference-only AccessGroupType 'HybridMailEnabledSecurityGroup' with no members - review the config before using it." -f $label, $groupName
             $configWarnings.Add($msg)
             $newWarnings.Add($msg)
         }
+    }
+
+    if ($scopeKind -eq 'Group' -and -not $isGroupDirect -and [string]$first.ScopeFilter) {
+        $parsedFilter = ConvertFrom-RBAC4AppRecipientFilter -Filter ([string]$first.ScopeFilter)
+        if ($parsedFilter.ScopeKind -eq 'Group') { $result.ScopeGroupDistinguishedName = [string]$parsedFilter.GroupDistinguishedName }
     }
 
     $scopeTagAttribute = 'CustomAttribute1'

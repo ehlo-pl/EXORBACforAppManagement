@@ -80,7 +80,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
             param($Path)
             ConvertFrom-RBAC4AppYaml -Content (Get-Content $Path -Raw)
         }
-        $config.SchemaVersion | Should -Be '4.3'
+        $config.SchemaVersion | Should -Be '4.4'
         # The file carries the full conversion result.
         $config.ConversionResult.AppId | Should -Be $r.AppId
         $config.ConversionResult.ResolvedDisplay | Should -Be 'Contoso'
@@ -101,17 +101,45 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 0
     }
 
-    It 'keeps the policy ScopeName group as a reference-only MailEnabledSecurityGroup' {
+    It 'also writes a Microsoft365DSC script with -Format M365DSC and returns it as DscPath' {
+        $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Format M365DSC -Confirm:$false
+
+        $r.Errors | Should -BeNullOrEmpty
+        $r.ConfigPath | Should -Match '\.yml$'
+        $r.DscPath | Should -Be ([System.IO.Path]::ChangeExtension($r.ConfigPath, '.ps1'))
+        $script = Get-Content -LiteralPath $r.DscPath -Raw
+        # The policy's group is only referenced: no group resource, DN supplied at compile time.
+        $script | Should -Not -Match 'EXODistributionGroup'
+        $script | Should -Match '\$ScopeGroupDistinguishedName'
+        $script | Should -Match "EXOManagementRoleAssignment 'Assignment-AppMailR-Contoso'"
+        ($r.Warnings -join ';') | Should -Match 'scope group is only referenced'
+        $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $r.ConfigPath } { param($Path) ConvertFrom-RBAC4AppYaml -Content (Get-Content $Path -Raw) }
+        $config.ConversionResult.PSObject.Properties.Name | Should -Not -Contain 'DscPath'
+
+        $whatIf = Convert-ApplicationAccessPolicyToRBAC -OutputPath (Join-Path $TestDrive 'dsc-whatif') -Format M365DSC -WhatIf
+        $whatIf.DscPath | Should -BeNullOrEmpty
+    }
+
+    It 'passes -DscAuthentication Certificate through and rejects it without -Format M365DSC' {
+        $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Format M365DSC -DscAuthentication Certificate -Confirm:$false
+
+        $script = Get-Content -LiteralPath $r.DscPath -Raw
+        $script | Should -Match 'CertificateThumbprint = \$CertificateThumbprint'
+        $script | Should -Not -Match 'ManagedIdentity'
+        { Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -DscAuthentication Certificate -Confirm:$false } | Should -Throw '*only be used with -Format M365DSC*'
+    }
+
+    It 'keeps the policy ScopeName group as a reference-only HybridMailEnabledSecurityGroup' {
         $r = Convert-ApplicationAccessPolicyToRBAC -Format Json -OutputPath $TestDrive -Confirm:$false
         $config = Get-Content $r.ConfigPath -Raw | ConvertFrom-Json
-        $config.RbacScope.AccessGroupType | Should -Be 'MailEnabledSecurityGroup'
+        $config.RbacScope.AccessGroupType | Should -Be 'HybridMailEnabledSecurityGroup'
         $config.RbacScope.AccessGroupName | Should -BeExactly 'EvenUsers'
         foreach ($key in 'GroupPrefix', 'ManagedBy', 'Members', 'BootstrapMember', 'SeparateScopePerRole') {
             $config.RbacScope.PSObject.Properties.Name | Should -Not -Contain $key
         }
         $config.Application.AppId | Should -Be $r.AppId
         $config.Application.DisplayName | Should -Be 'Contoso'
-        # Absent AssignmentScope means RecipientGroupScope for a Group-kind schema 4.3 config.
+        # Absent AssignmentScope means RecipientGroupScope for a Group-kind schema 4.4 config.
         $config.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'AssignmentScope'
         $r.ConfigPath | Should -Match '\.json$'
     }
@@ -132,7 +160,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
                 if ($Format -eq 'Json') { Complete-RBAC4AppConfig -Config ($content | ConvertFrom-Json) } else { ConvertFrom-RBAC4AppYaml -Content $content }
             }
             $config.RbacScope.AccessGroupName | Should -BeExactly $scopeName
-            $config.RbacScope.AccessGroupType | Should -Be 'MailEnabledSecurityGroup'
+            $config.RbacScope.AccessGroupType | Should -Be 'HybridMailEnabledSecurityGroup'
         }
     }
 
@@ -155,7 +183,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
 
         @($warnings | Where-Object { "$_" -like '*deprecated and ignored*' }).Count | Should -Be 3
         $config = Get-Content $r.ConfigPath -Raw | ConvertFrom-Json
-        $config.RbacScope.AccessGroupType | Should -Be 'MailEnabledSecurityGroup'
+        $config.RbacScope.AccessGroupType | Should -Be 'HybridMailEnabledSecurityGroup'
         $config.RbacScope.AccessGroupName | Should -Be 'EvenUsers'
         $config.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'GroupPrefix'
         $config.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'ManagedBy'
@@ -305,7 +333,7 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         $config = Get-Content $r.ConfigPath -Raw | ConvertFrom-Json
         $completed = InModuleScope EXORBACforAppManagement -Parameters @{ Config = $config } { param($Config) Complete-RBAC4AppConfig -Config $Config }
         $completed.RbacScope.AccessGroupName | Should -Be 'EvenUsers'
-        $completed.RbacScope.AccessGroupType | Should -Be 'MailEnabledSecurityGroup'
+        $completed.RbacScope.AccessGroupType | Should -Be 'HybridMailEnabledSecurityGroup'
         Should -Invoke -ModuleName EXORBACforAppManagement Get-ApplicationAccessPolicy -Times 1 -ParameterFilter {
             $AppId -eq '11111111-1111-1111-1111-111111111111'
         }
