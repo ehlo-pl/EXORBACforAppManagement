@@ -12,8 +12,11 @@ Values are reported exactly as written in each file: a field the file omits is a
 NOT filled with the default Invoke-RBAC4AppConfig would apply). List fields (Rbac.Roles,
 RbacScope.Members, RbacScope.ManagedBy, RbacScope.ScopeRecipients, ConversionResult.DerivedRoles,
 ConversionResult.SkippedPermissions, Runtime.CollectedErrors, Runtime.CollectedWarnings) are joined
-with '; '. A file older than schema 4.3 has its top-level GeneratedAt reported as Runtime.GeneratedAt. An explicitly empty RbacScope.Members list (an
+with '; '. An explicitly empty RbacScope.Members list (an
 override meaning "no members") is shown as '[]' to tell it apart from an omitted one.
+
+Only the current config schema (4.4) is supported: a file that names another SchemaVersion is
+skipped with a warning (a file without a SchemaVersion is read as the current schema).
 
 YAML files without a top-level Application section (for example Application Access Policy exports,
 exo-application-access-policies-*.yml) are skipped with a warning. The script always loads this
@@ -144,6 +147,12 @@ $rows = foreach ($file in $stateFiles) {
         throw "State file '$($file.FullName)' could not be parsed: $($_.Exception.Message)"
     }
 
+    $currentSchema = & $module { $script:RBAC4AppConfigSchemaVersion }
+    if ([string]$config.SchemaVersion -and [string]$config.SchemaVersion -ne $currentSchema) {
+        Write-Warning -Message "Skipping '$($file.FullName)': SchemaVersion '$($config.SchemaVersion)' is not supported (only '$currentSchema')."
+        continue
+    }
+
     $row = [ordered]@{ File = $file.FullName }
     foreach ($field in $schemaFields) {
         $row[$field] = Get-RBAC4AppReportValue -Config $config -FieldPath $field
@@ -153,7 +162,7 @@ $rows = foreach ($file in $stateFiles) {
 
 $rows = @($rows)
 if ($rows.Count -eq 0) {
-    throw "No RBAC4App state files found in '$Path' (YAML files were found, but none has a top-level Application section)."
+    throw "No RBAC4App state files found in '$Path' (YAML files were found, but none is a state file of the supported schema with a top-level Application section)."
 }
 
 if ($PSCmdlet.ShouldProcess($OutputPath, 'Write CSV state report')) {

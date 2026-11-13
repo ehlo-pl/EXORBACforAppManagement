@@ -35,8 +35,8 @@ function Get-RBAC4AppRepositoryState {
     }
 
     $state = Complete-RBAC4AppConfig -Config $parsed
-    if ($state.SchemaVersion -and $state.SchemaVersion -notin $script:RBAC4AppConfigSupportedSchemaVersions) {
-        throw "State file '$path' has unsupported SchemaVersion '$($state.SchemaVersion)'."
+    if ($state.SchemaVersion -and $state.SchemaVersion -ne $script:RBAC4AppConfigSchemaVersion) {
+        throw "State file '$path' has unsupported SchemaVersion '$($state.SchemaVersion)'; only '$($script:RBAC4AppConfigSchemaVersion)' is supported. Update the file to the current schema (docs/SCHEMA-$($script:RBAC4AppConfigSchemaVersion).md)."
     }
     if ($state.Application.AppId -and $state.Application.AppId -ine $AppId) {
         throw "State file '$path' is for AppId '$($state.Application.AppId)', not '$AppId'."

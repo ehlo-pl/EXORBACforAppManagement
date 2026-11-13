@@ -63,5 +63,8 @@ coverage.xml
 *.csv
 *.clixml
 *.json
+# ...except files that belong to the repository: test reference (golden) files and the JSON Schema.
+!tests/fixtures/**/*.json
+!docs/*.schema.json
 *.log
 *.yaml

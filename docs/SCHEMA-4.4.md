@@ -6,17 +6,8 @@ structure and accepts only `SchemaVersion: "4.4"` - a file of an earlier version
 be re-generated. The file is a handoff, not a credential store: it identifies an
 application and describes the Exchange Online RBAC resources to provision.
 
-## Changes from 4.3
-
-- `RbacScope.AccessGroupType` defaults to `CloudMailEnabledSecurityGroup` (was `DistributionList`).
-  Because the writer omits default values, a 4.3 file without `AccessGroupType` meant
-  `DistributionList`; the module's readers still read it that way, while in a 4.4 file the same
-  absence means `CloudMailEnabledSecurityGroup`. A `DistributionList` group is now always written
-  explicitly.
-- `MailEnabledSecurityGroup` is renamed `HybridMailEnabledSecurityGroup` (default prefix `USRAHo1P`,
-  was `USRAo1P`); the old value is accepted on read.
-- New value `CloudMailEnabledSecurityGroup` (default prefix `USRACo1P`).
-- Groups the module creates are restricted so only their owners (`ManagedBy`) can send to them.
+4.4 is the only supported version: no file of another version is read, by any function or script,
+and no key or default of an older layout is honoured.
 
 ## Document shape
 
@@ -131,7 +122,7 @@ Informational: `Invoke-RBAC4AppConfig` never acts on it. When written, every pro
 
 | Property | Type | Meaning |
 | --- | --- | --- |
-| `GeneratedAt` | string | UTC timestamp in ISO 8601 / RFC 3339 form. Before schema 4.3 this was a top-level property; a legacy top-level value is still read into `Runtime.GeneratedAt` by the module's readers (but `Invoke-RBAC4AppConfig` rejects pre-4.4 files). |
+| `GeneratedAt` | string | UTC timestamp in ISO 8601 / RFC 3339 form. |
 | `OperatorUsername` | string | Username of the session that generated the file (`DOMAIN\user` when the account belongs to a domain other than the machine). |
 | `OperatorMachineName` | string | Name of the machine the file was generated on. |
 | `CollectedErrors` | array of strings | Errors the writer collected for this application (e.g. from `Convert-ApplicationAccessPolicyToRBAC`). |

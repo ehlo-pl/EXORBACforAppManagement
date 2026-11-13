@@ -1,13 +1,11 @@
 function Complete-RBAC4AppConfig {
-    # Counterpart of ConvertTo-RBAC4AppConfig's pruning: takes a parsed config (YAML or JSON, any
-    # supported schema version) and returns a full config object with every key present, filling
+    # Counterpart of ConvertTo-RBAC4AppConfig's pruning: takes a parsed config (YAML or JSON, current
+    # schema version only - callers reject any other) and returns a full config object with every key present, filling
     # absent values from $script:RBAC4AppConfigDefaults. Invoke-RBAC4AppConfig and
     # ConvertFrom-RBAC4AppYaml both go through it, so a key left out of a file always means its
     # default while explicitly empty Members and BootstrapMember values remain overrides. An absent
-    # AssignmentScope means RecipientGroupScope for a ScopeKind Group config of schema 4.1 or later,
-    # and ManagementScope otherwise ('3.0'/'4.0' predate direct group binding). An absent
-    # AccessGroupType means DistributionList before schema 4.4 and CloudMailEnabledSecurityGroup
-    # from 4.4 on (or when the version is unknown).
+    # AssignmentScope means RecipientGroupScope for a ScopeKind Group config and ManagementScope
+    # for every other kind.
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
@@ -21,17 +19,15 @@ function Complete-RBAC4AppConfig {
     $metadata = $Config.Metadata
     $runtime = $Config.Runtime
     $conversion = $Config.ConversionResult
-    # Before schema 4.3 GeneratedAt was a top-level key.
-    $generatedAt = if ([string]$runtime.GeneratedAt) { [string]$runtime.GeneratedAt } else { [string]$Config.GeneratedAt }
+    $generatedAt = [string]$runtime.GeneratedAt
 
     $list = { param($Value) @($Value | Where-Object { $null -ne $_ -and [string]$_ -ne '' } | ForEach-Object { [string]$_ }) }
     $text = { param($Value, $Default) if ([string]$Value) { [string]$Value } else { $Default } }
 
     $schemaVersion = [string]$Config.SchemaVersion
     $scopeKind = & $text $scope.ScopeKind $defaults.ScopeKind
-    $defaultAccessGroupType = if ($schemaVersion -in $script:RBAC4AppConfigDistributionListDefaultSchemaVersions) { 'DistributionList' } else { $defaults.AccessGroupType }
     # The legacy value MailEnabledSecurityGroup is read as HybridMailEnabledSecurityGroup.
-    $accessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType (& $text $scope.AccessGroupType $defaultAccessGroupType)
+    $accessGroupType = ConvertTo-RBAC4AppAccessGroupType -AccessGroupType (& $text $scope.AccessGroupType $defaults.AccessGroupType)
     $members = & $list $scope.Members
     $owners = & $list $scope.ManagedBy
     $membersSpecified = $false
@@ -41,7 +37,7 @@ function Complete-RBAC4AppConfig {
         $bootstrapMemberSpecified = $null -ne $scope.PSObject.Properties['BootstrapMember']
     }
     $bootstrapMember = if ($bootstrapMemberSpecified) { [string]$scope.BootstrapMember } else { $defaults.BootstrapMember }
-    $defaultAssignmentScope = if ($scopeKind -eq 'Group' -and $schemaVersion -notin @('3.0', '4.0')) { 'RecipientGroupScope' } else { 'ManagementScope' }
+    $defaultAssignmentScope = if ($scopeKind -eq 'Group') { 'RecipientGroupScope' } else { 'ManagementScope' }
 
     [pscustomobject]@{
         SchemaVersion = $schemaVersion
@@ -49,8 +45,7 @@ function Complete-RBAC4AppConfig {
             AppId       = [string]$app.AppId
             SpObjectId  = [string]$app.SpObjectId
             DisplayName = [string]$app.DisplayName
-            # Older pre-release files carried TenantId as a top-level key.
-            TenantId    = if ([string]$app.TenantId) { [string]$app.TenantId } else { [string]$Config.TenantId }
+            TenantId    = [string]$app.TenantId
         }
         Rbac          = [pscustomobject]@{
             Roles = & $list $rbac.Roles
@@ -81,8 +76,7 @@ function Complete-RBAC4AppConfig {
             PCode                       = [string]$metadata.PCode
             CmdbId                      = [string]$metadata.CmdbId
             Description                 = [string]$metadata.Description
-            # NetworkAccessIPRange (before the IPv4/IPv6 split) was IPv4-only: read it as IP4Range.
-            NetworkAccessIP4Range       = if ([string]$metadata.NetworkAccessIP4Range) { [string]$metadata.NetworkAccessIP4Range } else { [string]$metadata.NetworkAccessIPRange }
+            NetworkAccessIP4Range       = [string]$metadata.NetworkAccessIP4Range
             NetworkAccessIP6Range       = [string]$metadata.NetworkAccessIP6Range
             NetworkAccessLocation       = [string]$metadata.NetworkAccessLocation
         }

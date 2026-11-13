@@ -714,7 +714,7 @@ Describe 'Invoke-RBAC4AppConfig' {
     It 'round-trips through ConvertTo/ConvertFrom yaml helpers correctly' {
         InModuleScope EXORBACforAppManagement {
             $config = [pscustomobject]@{
-                SchemaVersion = '3.0'
+                SchemaVersion = '4.4'
                 GeneratedAt   = '2026-09-20T10:00:00.0000000Z'
                 Application   = [pscustomobject]@{
                     AppId       = 'aaa-bbb'
@@ -753,10 +753,10 @@ Describe 'Invoke-RBAC4AppConfig' {
         }
     }
 
-    It 'round-trips the 4.0 management scope settings through the yaml helpers' {
+    It 'round-trips the management scope settings through the yaml helpers' {
         InModuleScope EXORBACforAppManagement {
             $config = [pscustomobject]@{
-                SchemaVersion = '4.0'
+                SchemaVersion = '4.4'
                 GeneratedAt   = '2026-09-20T10:00:00.0000000Z'
                 Application   = [pscustomobject]@{ AppId = 'aaa'; SpObjectId = 'bbb'; DisplayName = 'App'; TenantId = 'tid-abc' }
                 Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
@@ -778,7 +778,7 @@ Describe 'Invoke-RBAC4AppConfig' {
                 }
             }
             $parsed = ConvertFrom-RBAC4AppYaml -Content (ConvertTo-RBAC4AppYaml -Config $config)
-            $parsed.SchemaVersion                   | Should -Be '4.0'
+            $parsed.SchemaVersion                   | Should -Be '4.4'
             $parsed.RbacScope.ScopeKind             | Should -Be 'Filter'
             $parsed.RbacScope.AssignmentScope       | Should -Be 'ManagementScope'
             $parsed.RbacScope.ManagementScopeName   | Should -Be 'Custom-Scope'
@@ -794,7 +794,7 @@ Describe 'Invoke-RBAC4AppConfig' {
     It 'rejects YAML scalar values containing line breaks' {
         InModuleScope EXORBACforAppManagement {
             $config = [pscustomobject]@{
-                SchemaVersion = '3.0'
+                SchemaVersion = '4.4'
                 GeneratedAt   = '2026-09-20T10:00:00.0000000Z'
                 Application   = [pscustomobject]@{
                     AppId       = 'aaa-bbb'
@@ -819,7 +819,7 @@ Describe 'Invoke-RBAC4AppConfig' {
     It 'derives the default GroupPrefix from AccessGroupType when the YAML omits it' {
         InModuleScope EXORBACforAppManagement {
             $distributionConfig = ConvertFrom-RBAC4AppYaml -Content @'
-SchemaVersion: "2.0"
+SchemaVersion: "4.4"
 Application:
   DisplayName: "Contoso"
 Rbac:
@@ -831,7 +831,7 @@ RbacScope:
             $distributionConfig.RbacScope.GroupPrefix | Should -Be 'UDLRAo1P'
 
             $mesgConfig = ConvertFrom-RBAC4AppYaml -Content @'
-SchemaVersion: "2.0"
+SchemaVersion: "4.4"
 Application:
   DisplayName: "Contoso"
 Rbac:

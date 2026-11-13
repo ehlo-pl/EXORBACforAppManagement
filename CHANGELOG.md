@@ -127,9 +127,13 @@ No version had been published, so this is a clean break without deprecation shim
 ### Changed
 - The helper scripts folder `scripts/` is renamed `utils/` (e.g. `./utils/Show-CoverageGaps.ps1`,
   `./utils/Export-RBAC4AppStateReport.ps1`); earlier entries below keep the old paths.
-- **Breaking:** config schema is now **4.4**; `Invoke-RBAC4AppConfig` rejects 4.3 (and older)
-  files - regenerate them. `New-RBAC4AppConfig -Repository` still reads 3.0-4.4 state files, and in
-  a pre-4.4 file an absent `RbacScope.AccessGroupType` keeps meaning `DistributionList`.
+- **Breaking:** config schema is now **4.4**, and it is the only supported version. Every reader
+  refuses or skips a file that names another `SchemaVersion`: `Invoke-RBAC4AppConfig` (error),
+  `New-RBAC4AppConfig -Repository` (state file error; earlier versions were accepted before), and
+  `utils/Export-RBAC4AppStateReport.ps1` (skipped with a warning). All compatibility reads are
+  removed: a top-level `GeneratedAt` or `TenantId`, `Metadata.NetworkAccessIPRange`, and the
+  version-dependent defaults for `AssignmentScope` and `AccessGroupType` are no longer honoured.
+  `docs/SCHEMA-4.3.*` are removed. Re-generate older files.
 - **Breaking:** the default `-AccessGroupType` (and the sparse-config default) is
   `CloudMailEnabledSecurityGroup`, not `DistributionList`; a `DistributionList` group is now written
   explicitly in configs. Pass `-AccessGroupType DistributionList` to keep the old behaviour - and
@@ -167,24 +171,21 @@ No version had been published, so this is a clean break without deprecation shim
   identity-filtered query (`-AppId`/`-RegisteredAppName`/`-SpObjectId`); they still appear in the
   unfiltered listing with a warning.
 - `Get-RBAC4AppEntry`/`Get-RBAC4AppApplication` `-ScopeType` also accepts `ExclusiveRecipientScope`.
-- Config schema 4.3: `TenantId` moved from the top level into the `Application` section
-  (`Application.TenantId`; still informational, written only when known). The schema version is
-  unchanged because 4.3 was never published. Readers still accept a top-level `TenantId` from
-  earlier pre-release files and map it to `Application.TenantId`; `Invoke-RBAC4AppConfig`'s result
-  `TenantId` and `scripts/Export-RBAC4AppStateReport.ps1`'s column (`Application.TenantId`) follow.
+- `TenantId` moved from the top level into the `Application` section (`Application.TenantId`; still
+  informational, written only when known); a top-level `TenantId` is no longer read.
+  `Invoke-RBAC4AppConfig`'s result `TenantId` and `utils/Export-RBAC4AppStateReport.ps1`'s column
+  (`Application.TenantId`) follow.
 - **Breaking:** `Metadata.NetworkAccessIPRange` is split into `NetworkAccessIP4Range` (IPv4 address
   or CIDR) and `NetworkAccessIP6Range` (IPv6 address or CIDR, prefix 0-128), so IPv4 and IPv6 ranges
   are managed separately; `New-RBAC4AppConfig -NetworkAccessIPRange` is replaced by
   `-NetworkAccessIP4Range`/`-NetworkAccessIP6Range`. A `NetworkAccessIPRange` key in an existing
-  file (always IPv4) is read as `NetworkAccessIP4Range`.
-- **Breaking:** config schema bumped to `4.3`. `GeneratedAt` moved from the top level into the
-  `Runtime` section (a legacy top-level value is still read into `Runtime.GeneratedAt`).
+  file is no longer read.
+- **Breaking:** `GeneratedAt` moved from the top level into the `Runtime` section (a top-level
+  value is no longer read).
   `Convert-ApplicationAccessPolicyToRBAC` writes its full per-policy result into a new
   `ConversionResult` section (`AppId`, `ResolvedDisplay`, `AccessRight`, `ScopeGroup`, `DerivedRoles`,
-  `SkippedPermissions`, `ConfigPath`; warnings/errors in `Runtime`). `Invoke-RBAC4AppConfig` now
-  accepts only schema `4.3` and rejects `4.2`/`4.1`/`4.0`/`3.0` files - re-generate them.
-  `docs/SCHEMA-4.2.*` were replaced by `docs/SCHEMA-4.3.*`.
-- **Breaking:** `scripts/Export-RBAC4AppStateReport.ps1` now writes one column per schema 4.3 field,
+  `SkippedPermissions`, `ConfigPath`; warnings/errors in `Runtime`).
+- **Breaking:** `scripts/Export-RBAC4AppStateReport.ps1` now writes one column per schema 4.4 field,
   named by its full path (`Application.AppId`, `Rbac.Roles`, `RbacScope.ScopeKind`,
   `Metadata.PCode`, `Runtime.OperatorUsername`, ...) in schema order, so every row has the same
   columns. Values are reported as written in each file - an omitted field is an empty cell, not its
