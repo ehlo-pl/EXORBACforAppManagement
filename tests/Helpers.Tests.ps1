@@ -665,12 +665,29 @@ Describe 'ConvertTo-RBAC4AppM365Dsc (Microsoft365DSC rendering)' {
             [pscustomobject]$config
         }
         # Tokens and string literal values of a generated script; the DSC module itself is not needed.
+        # 'Configuration' is a DSC keyword only on Windows PowerShell hosts with DSC available, so
+        # the script is parsed as a plain function instead: on every platform the resource and
+        # property names then tokenize as command names, and anything outside the known DSC
+        # vocabulary (UnexpectedCommands) would be injected code.
+        $script:dscVocabulary = @(
+            'Import-DscResource', 'Node',
+            'EXOServicePrincipal', 'EXODistributionGroup', 'EXOManagementScope', 'EXOManagementRoleAssignment',
+            'AppName', 'DisplayName', 'AppId', 'Identity', 'Ensure', 'ManagedIdentity', 'TenantId',
+            'ApplicationId', 'CertificateThumbprint', 'Name', 'Alias', 'Type', 'ManagedBy', 'Members',
+            'HiddenFromAddressListsEnabled', 'RequireSenderAuthenticationEnabled',
+            'AcceptMessagesOnlyFromSendersOrMembers', 'MemberJoinRestriction', 'MemberDepartRestriction',
+            'RecipientRestrictionFilter', 'DependsOn', 'Role', 'App', 'CustomResourceScope'
+        )
         $script:readDsc = {
             param([string] $Script)
             $tokens = $null; $errors = $null
-            $null = [System.Management.Automation.Language.Parser]::ParseInput($Script, [ref]$tokens, [ref]$errors)
+            $plain = $Script -replace '(?m)^Configuration (?=RBAC4App_)', 'function '
+            $null = [System.Management.Automation.Language.Parser]::ParseInput($plain, [ref]$tokens, [ref]$errors)
+            $commands = @($tokens | Where-Object { $_.TokenFlags -band [System.Management.Automation.Language.TokenFlags]::CommandName } | ForEach-Object { $_.Text } | Sort-Object -Unique)
             [pscustomobject]@{
-                Commands       = @($tokens | Where-Object { $_.TokenFlags -band [System.Management.Automation.Language.TokenFlags]::CommandName } | ForEach-Object { $_.Text } | Sort-Object -Unique)
+                ParseErrors        = @($errors | ForEach-Object { $_.Message })
+                Commands           = $commands
+                UnexpectedCommands = @($commands | Where-Object { $_ -notin $script:dscVocabulary })
                 Strings        = @($tokens | Where-Object { $_ -is [System.Management.Automation.Language.StringToken] } | ForEach-Object { $_.Value })
                 SubExpressions = @($tokens | Where-Object { $_.Kind -eq 'DollarParen' })
             }
@@ -697,7 +714,10 @@ Describe 'ConvertTo-RBAC4AppM365Dsc (Microsoft365DSC rendering)' {
         $r.Script | Should -Not -Match 'Credential|CertificateThumbprint|RecipientGroupScope ='
         ($r.Warnings -join ';') | Should -Match 'has no RecipientGroupScope'
         ($r.Warnings -join ';') | Should -Match 'Members is authoritative'
-        (& $script:readDsc $r.Script).Commands | Should -Be @('Import-DscResource')
+        $parsed = & $script:readDsc $r.Script
+        $parsed.ParseErrors | Should -BeNullOrEmpty
+        $parsed.UnexpectedCommands | Should -BeNullOrEmpty
+        $parsed.Commands | Should -Contain 'Import-DscResource'
     }
 
     It 'renders certificate sign-in with -Authentication Certificate (no managed identity, no secret)' {
@@ -710,7 +730,9 @@ Describe 'ConvertTo-RBAC4AppM365Dsc (Microsoft365DSC rendering)' {
         ([regex]::Matches($r.Script, 'CertificateThumbprint = \$CertificateThumbprint')).Count | Should -Be 4
         ([regex]::Matches($r.Script, 'TenantId              = \$TenantId')).Count | Should -Be 4
         $r.Script | Should -Not -Match 'Credential|CertificatePassword|CertificatePath'
-        (& $script:readDsc $r.Script).Commands | Should -Be @('Import-DscResource')
+        $parsed = & $script:readDsc $r.Script
+        $parsed.ParseErrors | Should -BeNullOrEmpty
+        $parsed.UnexpectedCommands | Should -BeNullOrEmpty
     }
 
     It 'pre-fills a known group DN, and declares a distribution list as Type Distribution' {
@@ -767,7 +789,8 @@ Describe 'ConvertTo-RBAC4AppM365Dsc (Microsoft365DSC rendering)' {
         $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = (& $script:newDscConfig @{} $hostile) } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config }
 
         $parsed = & $script:readDsc $r.Script
-        $parsed.Commands | Should -Be @('Import-DscResource')
+        $parsed.ParseErrors | Should -BeNullOrEmpty
+        $parsed.UnexpectedCommands | Should -BeNullOrEmpty
         $parsed.SubExpressions | Should -BeNullOrEmpty
         $parsed.Strings | Should -Contain ($hostile + '_SP')
         $r.ConfigurationName | Should -Match '^RBAC4App_[A-Za-z0-9_]+$'
