@@ -96,7 +96,7 @@ function ConvertTo-RBAC4AppConfig {
 
     $scope = [ordered]@{}
     if ($ScopeKind -ne $defaults.ScopeKind) { $scope.ScopeKind = $ScopeKind }
-    # Absent means RecipientGroupScope for the Group kind (schema 4.1) and ManagementScope otherwise.
+    # Absent means RecipientGroupScope for the Group kind and ManagementScope otherwise.
     if ($isGroupKind -and $AssignmentScope -ne 'RecipientGroupScope') { $scope.AssignmentScope = $AssignmentScope }
 
     if ($isGroupKind) {

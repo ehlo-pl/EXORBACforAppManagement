@@ -211,8 +211,8 @@ Every key and the value it takes when absent:
 | `Application.TenantId` | always (informational) | `""` |
 | `Metadata.ChangeReference` | always | `""` (no change record) |
 | `RbacScope.ScopeKind` | always | `Group` (`Recipients` / `Tag` / `Filter`) |
-| `RbacScope.AssignmentScope` | `ScopeKind: Group` | `RecipientGroupScope` for schema `4.1` or later; `ManagementScope` for `4.0`/`3.0` and every non-Group kind |
-| `RbacScope.AccessGroupType` | `ScopeKind: Group` | `CloudMailEnabledSecurityGroup` (`DistributionList` / `M365Group` / `HybridMailEnabledSecurityGroup`); absent in a pre-4.4 file means `DistributionList` |
+| `RbacScope.AssignmentScope` | `ScopeKind: Group` | `RecipientGroupScope`; `ManagementScope` for every non-Group kind |
+| `RbacScope.AccessGroupType` | `ScopeKind: Group` | `CloudMailEnabledSecurityGroup` (`DistributionList` / `M365Group` / `HybridMailEnabledSecurityGroup`) |
 | `RbacScope.AccessGroupName` | `ScopeKind: Group` | generated `"{GroupPrefix}-{DisplayName}"`; required for `HybridMailEnabledSecurityGroup` |
 | `RbacScope.GroupPrefix` | `ScopeKind: Group` without `AccessGroupName` | `USRACo1P` / `UDLRAo1P` / `Um365RAo1P` / `USRAHo1P` per `AccessGroupType` |
 | `RbacScope.Members` | `ScopeKind: Group` | `[GraphAPI-Dummy]` |
@@ -236,7 +236,7 @@ Every key and the value it takes when absent:
 | `Metadata.NetworkAccessIP6Range` | always (informational); IPv6 address or CIDR | `""` |
 | `Metadata.NetworkAccessLocation` | always (informational); a name from `locations.txt` | `""` |
 | `ConversionResult.*` | only from `Convert-ApplicationAccessPolicyToRBAC` (informational): `AppId`, `ResolvedDisplay`, `AccessRight`, `ScopeGroup`, `DerivedRoles`, `SkippedPermissions`, `ConfigPath` | not written |
-| `Runtime.GeneratedAt` | always (informational); UTC ISO 8601 timestamp - top-level before schema 4.3 | generation time |
+| `Runtime.GeneratedAt` | always (informational); UTC ISO 8601 timestamp | generation time |
 | `Runtime.OperatorUsername` | always (informational); session user that generated the file | `""` |
 | `Runtime.OperatorMachineName` | always (informational); machine the file was generated on | `""` |
 | `Runtime.CollectedErrors` | always (informational) | `[]` |
@@ -257,7 +257,7 @@ and the errors (`CollectedErrors`) and warnings
 `Export-RBAC4AppConfig` notes there that `SpObjectId` was taken from a role assignment's
 `EffectiveUserName`, or that an unreadable scope group was exported reference-only under `-Force`. Like `Metadata`, it is always written in
 full (each list as `[]` when empty) and is never used for provisioning. `GeneratedAt` lives in this
-section since schema 4.3 (it used to be a top-level key).
+section.
 
 `Convert-ApplicationAccessPolicyToRBAC` also writes a `ConversionResult` section: the full per-policy
 result it returns (`AppId`, `ResolvedDisplay`, `AccessRight`, `ScopeGroup`, `DerivedRoles`,
@@ -302,11 +302,13 @@ New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' -Repository 'C:
   `-AccessGroupType` ignores its `AccessGroupName` and `GroupPrefix`, which belong to the old type.
 - Values from the file are validated like command-line values.
 
-`Invoke-RBAC4AppConfig` accepts only `SchemaVersion: "4.4"`. A config of any earlier version (`"4.3"`, `"4.2"`,
-`"4.1"`, `"4.0"`, `"3.0"`, ...) is refused with an error pointing back at `New-RBAC4AppConfig`
-(or `Get-RBAC4AppEntry | Export-RBAC4AppConfig` / `Convert-ApplicationAccessPolicyToRBAC`) to regenerate it.
-State files read by `New-RBAC4AppConfig -Repository` may still be of version 3.0-4.4 (in a pre-4.4 file an
-absent `AccessGroupType` means `DistributionList`, the default of those versions).
+Only `SchemaVersion: "4.4"` is supported, everywhere. `Invoke-RBAC4AppConfig` refuses a config of
+any other version with an error pointing back at `New-RBAC4AppConfig` (or
+`Get-RBAC4AppEntry | Export-RBAC4AppConfig` / `Convert-ApplicationAccessPolicyToRBAC`) to regenerate
+it; `New-RBAC4AppConfig -Repository` refuses a state file that names another version; and
+`utils/Export-RBAC4AppStateReport.ps1` skips such a file with a warning. No key or default of an
+older layout is read any more (a top-level `GeneratedAt`/`TenantId`, `Metadata.NetworkAccessIPRange`,
+version-dependent defaults).
 
 ## Microsoft365DSC output (`-Format M365DSC`)
 

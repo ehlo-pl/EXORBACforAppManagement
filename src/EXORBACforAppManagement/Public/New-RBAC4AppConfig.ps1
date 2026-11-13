@@ -14,8 +14,8 @@ single session. Invoke-RBAC4AppConfig auto-detects the format from the file exte
 (.json vs .yml/.yaml).
 
 The config uses schema version 4.4: an optional Metadata section carries descriptive application
-details (contacts, PCode, CMDB ID, description, network access) that never affect provisioning. On
-top of the 3.0 group settings, RbacScope carries the
+details (contacts, PCode, CMDB ID, description, network access) that never affect provisioning.
+Next to the group settings, RbacScope carries the
 scope settings (ScopeKind, AssignmentScope, ManagementScopeName/ManagementScopePrefix,
 ScopeRecipients, ScopeTagAttribute, ScopeTagValue, ScopeFilter) that Invoke-RBAC4AppConfig uses to
 bind the role assignments. By default (-ScopeKind Group, -AssignmentScope RecipientGroupScope) the

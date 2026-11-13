@@ -103,10 +103,6 @@ function ConvertFrom-RBAC4AppYaml {
 
     $section = $null
     $listKey = $null
-    # Before schema 4.3 GeneratedAt was a top-level key; it is read into Runtime.GeneratedAt.
-    $legacyGeneratedAt = ''
-    # Older pre-release files carried TenantId as a top-level key; it is read into Application.TenantId.
-    $legacyTenantId = ''
 
     foreach ($line in ($Content -split '\r?\n')) {
         if ($line -match '^\s*#' -or $line -match '^\s*$') { continue }
@@ -143,8 +139,6 @@ function ConvertFrom-RBAC4AppYaml {
             if ($null -eq $section) {
                 switch ($key) {
                     'SchemaVersion' { $config.SchemaVersion = $value }
-                    'GeneratedAt'   { $legacyGeneratedAt    = $value }
-                    'TenantId'      { $legacyTenantId       = $value }
                 }
             }
             elseif ($section -eq 'Application') {
@@ -202,7 +196,6 @@ function ConvertFrom-RBAC4AppYaml {
                     'NetworkAccessIP4Range'       { $config.Metadata.NetworkAccessIP4Range       = $value }
                     'NetworkAccessIP6Range'       { $config.Metadata.NetworkAccessIP6Range       = $value }
                     # Before the IPv4/IPv6 split: an IPv4-only field, kept unless IP4Range is also set.
-                    'NetworkAccessIPRange'        { if (-not $config.Metadata.NetworkAccessIP4Range) { $config.Metadata.NetworkAccessIP4Range = $value } }
                     'NetworkAccessLocation'       { $config.Metadata.NetworkAccessLocation       = $value }
                 }
             }
@@ -226,9 +219,6 @@ function ConvertFrom-RBAC4AppYaml {
             }
         }
     }
-
-    if ($legacyGeneratedAt -and -not $config.Runtime.GeneratedAt) { $config.Runtime.GeneratedAt = $legacyGeneratedAt }
-    if ($legacyTenantId -and -not $config.Application.TenantId) { $config.Application.TenantId = $legacyTenantId }
 
     if ($Raw) { return $config }
 

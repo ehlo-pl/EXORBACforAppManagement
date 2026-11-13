@@ -10,15 +10,15 @@
   `RbacScope.Members` and `RbacScope.BootstrapMember` values are preserved as overrides. The
   `Metadata` section is the exception: it is always written with every property, empty as `""`.
 - `Metadata` is descriptive only. It is returned to the caller but does not affect provisioning.
-- The versioned documents below describe the current schema only. Older versions are mentioned
-  only where needed to explain the current reader's compatibility behavior.
+- Only the current schema version is supported. A file that names another `SchemaVersion` is
+  rejected by `Invoke-RBAC4AppConfig` and by `New-RBAC4AppConfig -Repository`, and skipped by
+  `utils/Export-RBAC4AppStateReport.ps1`; no older layout is read. Re-generate older files.
 
 ## Current version
 
 | Version | Specification |
 | --- | --- |
-| 4.4 (current) | [SCHEMA-4.4.md](SCHEMA-4.4.md) |
-| 4.3 (previous; still read for `-Repository` state files, rejected by `Invoke-RBAC4AppConfig`) | [SCHEMA-4.3.md](SCHEMA-4.3.md) |
+| 4.4 (current, the only supported version) | [SCHEMA-4.4.md](SCHEMA-4.4.md) |
 
 The optional machine-readable [JSON Schema](SCHEMA-4.4.schema.json) is separate from the
 documentation. The module does not invoke a JSON Schema validator; `Invoke-RBAC4AppConfig` performs

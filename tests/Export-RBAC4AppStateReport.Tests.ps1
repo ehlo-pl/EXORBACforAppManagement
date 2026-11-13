@@ -63,8 +63,7 @@ Runtime:
     - "w1"
 '@
             'nested/other.yml' = @'
-SchemaVersion: "4.1"
-GeneratedAt: "2026-01-01T00:00:00Z"
+SchemaVersion: "4.4"
 
 Application:
   AppId: "other-app-id"
@@ -72,17 +71,26 @@ Application:
 
 Metadata:
   CmdbId: "cmdb-123"
-  NetworkAccessIPRange: "10.0.0.0/24"
+  NetworkAccessIP4Range: "10.0.0.0/24"
 '@
-            'ignored.json' = '{"SchemaVersion":"4.2","Application":{"AppId":"ignored"}}'
+            'nested/old.yml' = @'
+SchemaVersion: "4.3"
+Application:
+  AppId: "old-app-id"
+'@
+            'ignored.json' = '{"SchemaVersion":"4.4","Application":{"AppId":"ignored"}}'
         }
         $outputPath = Join-Path $TestDrive 'report.csv'
 
-        $result = & $script:reportScript -Path $stateFolder -OutputPath $outputPath
+        $warn = $null
+        $result = & $script:reportScript -Path $stateFolder -OutputPath $outputPath -WarningVariable warn -WarningAction SilentlyContinue
         $rows = @(Import-Csv -LiteralPath $outputPath)
 
         $result | Should -Be $outputPath
+        # Only the current schema is reported: the 4.3 file is skipped with a warning.
         $rows.Count | Should -Be 2
+        $rows.'Application.AppId' | Should -Not -Contain 'old-app-id'
+        (@($warn | ForEach-Object { [string]$_ }) -join ';') | Should -Match "old\.yml': SchemaVersion '4\.3' is not supported \(only '4\.4'\)"
         $first = $rows | Where-Object 'Application.AppId' -eq 'app-id'
         $first.SchemaVersion | Should -Be '4.4'
         $first.'Runtime.GeneratedAt' | Should -Be '2026-11-06T09:00:00Z'
@@ -107,12 +115,10 @@ Metadata:
         $first.'Runtime.CollectedWarnings' | Should -Be 'w1'
 
         $second = $rows | Where-Object 'Application.AppId' -eq 'other-app-id'
-        $second.SchemaVersion | Should -Be '4.1'
+        $second.SchemaVersion | Should -Be '4.4'
         $second.'Metadata.CmdbId' | Should -Be 'cmdb-123'
-        # Before the IPv4/IPv6 split NetworkAccessIPRange was IPv4-only; it is reported as IP4Range.
         $second.'Metadata.NetworkAccessIP4Range' | Should -Be '10.0.0.0/24'
-        # Before 4.3 GeneratedAt was a top-level key; it is reported as Runtime.GeneratedAt.
-        $second.'Runtime.GeneratedAt' | Should -Be '2026-01-01T00:00:00Z'
+        $second.'Runtime.GeneratedAt' | Should -BeExactly ''
     }
 
     It 'writes every schema field as a column, empty (not defaulted) when the file omits it' {

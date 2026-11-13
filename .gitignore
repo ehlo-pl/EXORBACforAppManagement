@@ -61,4 +61,8 @@ coverage.xml
 *.xlsx
 *.csv
 *.clixml
+# ...except files that belong to the repository: test reference (golden) files and the JSON Schema.
+!tests/fixtures/**/*.json
+!docs/*.schema.json
 *.log
+rbac4app*.yaml

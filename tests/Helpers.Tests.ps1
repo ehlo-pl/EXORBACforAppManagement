@@ -136,7 +136,6 @@ Describe 'ConvertTo-RBAC4AppConfig' {
                 -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P'
 
             $cfg.SchemaVersion | Should -Be $script:RBAC4AppConfigSchemaVersion
-            $script:RBAC4AppConfigSupportedSchemaVersions | Should -Contain $cfg.SchemaVersion
         }
     }
 
@@ -155,24 +154,6 @@ Describe 'ConvertTo-RBAC4AppConfig' {
             $without = ConvertTo-RBAC4AppConfig -AppId 'a' -SpObjectId 's' -DisplayName 'Contoso' `
                 -Roles 'Application Mail.Send' -AccessGroupType DistributionList -GroupPrefix 'UDLRAo1P'
             $without.Application.PSObject.Properties.Name | Should -Not -Contain 'TenantId'
-        }
-    }
-
-    It 'reads a legacy top-level TenantId into Application.TenantId (YAML and JSON)' {
-        InModuleScope EXORBACforAppManagement {
-            $yaml = "SchemaVersion: `"4.4`"`nTenantId: `"legacy-t`"`nApplication:`n  AppId: `"a`"`n  SpObjectId: `"s`"`n  DisplayName: `"App`""
-            $parsed = ConvertFrom-RBAC4AppYaml -Content $yaml
-            $parsed.Application.TenantId | Should -Be 'legacy-t'
-            $parsed.PSObject.Properties.Name | Should -Not -Contain 'TenantId'
-
-            $raw = ConvertFrom-RBAC4AppYaml -Content $yaml -Raw
-            $raw.Application.TenantId | Should -Be 'legacy-t'
-
-            $json = '{"SchemaVersion":"4.4","TenantId":"legacy-t","Application":{"AppId":"a","SpObjectId":"s","DisplayName":"App"}}' | ConvertFrom-Json
-            (Complete-RBAC4AppConfig -Config $json).Application.TenantId | Should -Be 'legacy-t'
-
-            $both = '{"SchemaVersion":"4.4","TenantId":"old","Application":{"AppId":"a","SpObjectId":"s","DisplayName":"App","TenantId":"new"}}' | ConvertFrom-Json
-            (Complete-RBAC4AppConfig -Config $both).Application.TenantId | Should -Be 'new'
         }
     }
 
@@ -196,7 +177,7 @@ Describe 'ConvertTo-RBAC4AppConfig' {
     It 'serializes single-item schema lists as YAML sequences' {
         InModuleScope EXORBACforAppManagement {
             $config = [pscustomobject]@{
-                SchemaVersion = '4.1'
+                SchemaVersion = '4.4'
                 Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'Contoso' }
                 Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send'); ChangeReference = '' }
                 RbacScope     = [pscustomobject]@{
@@ -325,26 +306,26 @@ Describe 'ConvertTo-RBAC4AppConfig' {
             }
         }
 
-        It 'reads an absent AccessGroupType as DistributionList before schema 4.4 and as CloudMailEnabledSecurityGroup from 4.4' {
+        It 'reads only the current layout: no legacy keys and no version-dependent defaults' {
             InModuleScope EXORBACforAppManagement {
-                foreach ($v in @('3.0', '4.0', '4.1', '4.2', '4.3')) {
-                    $old = Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = $v })
-                    $old.RbacScope.AccessGroupType | Should -Be 'DistributionList'
-                    $old.RbacScope.GroupPrefix | Should -Be 'UDLRAo1P'
+                # Keys older schemas used (top-level GeneratedAt/TenantId, Metadata.NetworkAccessIPRange) are ignored.
+                $yaml = "SchemaVersion: `"4.4`"`nGeneratedAt: `"2026-01-01T00:00:00Z`"`nTenantId: `"legacy-t`"`nApplication:`n  AppId: `"a`"`nMetadata:`n  NetworkAccessIPRange: `"10.0.0.0/24`"`n"
+                $parsed = ConvertFrom-RBAC4AppYaml -Content $yaml
+                $parsed.Runtime.GeneratedAt | Should -BeExactly ''
+                $parsed.Application.TenantId | Should -BeExactly ''
+                $parsed.Metadata.NetworkAccessIP4Range | Should -BeExactly ''
+
+                $json = Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = '4.4'; GeneratedAt = 'x'; TenantId = 'legacy-t'; Metadata = [pscustomobject]@{ NetworkAccessIPRange = '10.0.0.0/24' } })
+                $json.Runtime.GeneratedAt | Should -BeExactly ''
+                $json.Application.TenantId | Should -BeExactly ''
+                $json.Metadata.NetworkAccessIP4Range | Should -BeExactly ''
+
+                # Defaults no longer depend on the version a file names.
+                foreach ($v in @('3.0', '4.0', '4.3', '4.4', '')) {
+                    $full = Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = $v })
+                    $full.RbacScope.AccessGroupType | Should -Be 'CloudMailEnabledSecurityGroup'
+                    $full.RbacScope.AssignmentScope | Should -Be 'RecipientGroupScope'
                 }
-                (Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = '4.4' })).RbacScope.AccessGroupType | Should -Be 'CloudMailEnabledSecurityGroup'
-                (Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = '4.3'; RbacScope = [pscustomobject]@{ AccessGroupType = 'MailEnabledSecurityGroup' } })).RbacScope.AccessGroupType | Should -Be 'HybridMailEnabledSecurityGroup'
-            }
-        }
-
-        It 'reads a pre-4.3 top-level GeneratedAt into Runtime.GeneratedAt' {
-            InModuleScope EXORBACforAppManagement {
-                $parsed = ConvertFrom-RBAC4AppYaml -Content "SchemaVersion: `"4.2`"`nGeneratedAt: `"2026-01-01T00:00:00Z`"`nApplication:`n  AppId: `"a`""
-                $parsed.Runtime.GeneratedAt | Should -Be '2026-01-01T00:00:00Z'
-                $parsed.PSObject.Properties.Name | Should -Not -Contain 'GeneratedAt'
-
-                $json = Complete-RBAC4AppConfig -Config ([pscustomobject]@{ SchemaVersion = '4.2'; GeneratedAt = '2026-02-02T00:00:00Z' })
-                $json.Runtime.GeneratedAt | Should -Be '2026-02-02T00:00:00Z'
             }
         }
     }
@@ -475,7 +456,7 @@ Describe 'ConvertTo-RBAC4AppConfig' {
         It 'restores every field as empty for a config without the section' {
             InModuleScope EXORBACforAppManagement {
                 $completed = Complete-RBAC4AppConfig -Config ([pscustomobject]@{
-                        SchemaVersion = '4.1'
+                        SchemaVersion = '4.4'
                         Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }
                         Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
                     })
@@ -487,28 +468,6 @@ Describe 'ConvertTo-RBAC4AppConfig' {
             }
         }
 
-        It 'reads the pre-split NetworkAccessIPRange (IPv4-only) as NetworkAccessIP4Range' {
-            InModuleScope EXORBACforAppManagement {
-                $yaml = "SchemaVersion: `"4.4`"`nApplication:`n  AppId: `"a`"`nMetadata:`n  NetworkAccessIPRange: `"10.0.0.0/24`"`n"
-                $parsed = ConvertFrom-RBAC4AppYaml -Content $yaml
-                $parsed.Metadata.NetworkAccessIP4Range | Should -Be '10.0.0.0/24'
-                $parsed.Metadata.NetworkAccessIP6Range | Should -BeExactly ''
-                $parsed.Metadata.PSObject.Properties.Name | Should -Not -Contain 'NetworkAccessIPRange'
-
-                # An explicit IP4Range wins over the legacy key, in either order.
-                $both = "SchemaVersion: `"4.4`"`nApplication:`n  AppId: `"a`"`nMetadata:`n  NetworkAccessIP4Range: `"10.1.0.0/16`"`n  NetworkAccessIPRange: `"10.0.0.0/24`"`n"
-                (ConvertFrom-RBAC4AppYaml -Content $both).Metadata.NetworkAccessIP4Range | Should -Be '10.1.0.0/16'
-
-                $json = Complete-RBAC4AppConfig -Config ([pscustomobject]@{
-                        SchemaVersion = '4.4'
-                        Application   = [pscustomobject]@{ AppId = 'a'; SpObjectId = 's'; DisplayName = 'C' }
-                        Rbac          = [pscustomobject]@{ Roles = @('Application Mail.Send') }
-                        Metadata      = [pscustomobject]@{ NetworkAccessIPRange = '10.0.0.0/24' }
-                    })
-                $json.Metadata.NetworkAccessIP4Range | Should -Be '10.0.0.0/24'
-                $json.Metadata.PSObject.Properties.Name | Should -Not -Contain 'NetworkAccessIPRange'
-            }
-        }
     }
 
     Context 'Test-RBAC4AppIPRange' {

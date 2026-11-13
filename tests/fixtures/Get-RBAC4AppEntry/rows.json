@@ -169,7 +169,7 @@
     "ScopeKind": "GroupDirect",
     "ScopeFilter": null,
     "ScopeGroupName": "USRAo1P-Litware",
-    "ScopeGroupType": "MailEnabledSecurityGroup",
+    "ScopeGroupType": "HybridMailEnabledSecurityGroup",
     "ScopeGroupResolved": true,
     "ScopeMembers": [
       "cal@litware.com"

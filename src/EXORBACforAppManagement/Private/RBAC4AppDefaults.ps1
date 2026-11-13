@@ -68,15 +68,9 @@ function Get-RBAC4AppDefaultGroupPrefix {
 # Version of the RBAC4App config file schema. Every writer emits it (via ConvertTo-RBAC4AppConfig)
 # and Invoke-RBAC4AppConfig accepts only this version - no compatibility with earlier ones.
 $script:RBAC4AppConfigSchemaVersion = '4.4'
-# Versions the shared reader still understands for non-provisioning uses (the New-RBAC4AppConfig
-# -Repository state file, utils/Export-RBAC4AppStateReport.ps1): '3.0' is read as ScopeKind Group,
-# '3.0'/'4.0' have no RbacScope.AssignmentScope and are read as ManagementScope, before 4.3
-# GeneratedAt was a top-level key (read into Runtime.GeneratedAt), and before 4.4 an absent
-# RbacScope.AccessGroupType meant DistributionList (4.4 made CloudMailEnabledSecurityGroup the
-# default and renamed MailEnabledSecurityGroup to HybridMailEnabledSecurityGroup).
-$script:RBAC4AppConfigSupportedSchemaVersions = @('3.0', '4.0', '4.1', '4.2', '4.3', '4.4')
-# Schema versions whose absent RbacScope.AccessGroupType means DistributionList (the default before 4.4).
-$script:RBAC4AppConfigDistributionListDefaultSchemaVersions = @('3.0', '4.0', '4.1', '4.2', '4.3')
+# The same holds for the New-RBAC4AppConfig -Repository state file and
+# utils/Export-RBAC4AppStateReport.ps1: a file that names another SchemaVersion is refused / skipped.
+# There is no reading of older layouts (legacy keys, version-dependent defaults) anywhere.
 
 # Values a config file falls back to when a key is absent. ConvertTo-RBAC4AppConfig omits any key
 # equal to its default (or empty unless explicitly overridden, or unused by the selected
