@@ -148,6 +148,20 @@ Directory to write the config file into. Defaults to the current working directo
 .PARAMETER Format
 Config file format to write: Yaml (default) or Json. Only changes serialisation and the output
 file extension (.yml vs .json); the config schema and every other parameter are identical.
+M365DSC writes the YAML config plus a Microsoft365DSC configuration script (.ps1, same name) that
+declares the same desired state as EXOServicePrincipal, EXODistributionGroup (cloud security group
+or distribution list only), EXOManagementScope and EXOManagementRoleAssignment resources. The script
+authenticates with a managed identity (no secret is written), always binds through a management
+scope (EXOManagementRoleAssignment has no RecipientGroupScope), and for -ScopeKind Group takes the
+scope group's distinguished name as a mandatory Configuration parameter. Only the .yml can be fed to
+Invoke-RBAC4AppConfig.
+
+.PARAMETER DscAuthentication
+How the Microsoft365DSC script written by -Format M365DSC signs in to Exchange Online:
+ManagedIdentity (default; ManagedIdentity + TenantId on every resource - runs only on a machine with
+a managed identity) or Certificate (ApplicationId + TenantId + CertificateThumbprint Configuration
+parameters - runs on any machine holding the app's certificate). No secret is written either way.
+Only valid with -Format M365DSC.
 
 .EXAMPLE
 $yml = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' -Members 'shared@contoso.com'
@@ -179,6 +193,7 @@ the PCode.
 
 .OUTPUTS
 System.String — the full path of the written config file (.yml or .json, depending on -Format).
+With -Format M365DSC two paths: the .yml config, then the .ps1 Microsoft365DSC configuration.
 #>
 function New-RBAC4AppConfig {
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low', DefaultParameterSetName = 'ByName')]
@@ -313,11 +328,18 @@ function New-RBAC4AppConfig {
         [string] $OutputPath,
 
         [Parameter()]
-        [ValidateSet('Yaml', 'Json')]
-        [string] $Format = 'Yaml'
+        [ValidateSet('Yaml', 'Json', 'M365DSC')]
+        [string] $Format = 'Yaml',
+
+        [Parameter()]
+        [ValidateSet('ManagedIdentity', 'Certificate')]
+        [string] $DscAuthentication = 'ManagedIdentity'
     )
 
     process {
+        if ($PSBoundParameters.ContainsKey('DscAuthentication') -and $Format -ne 'M365DSC') {
+            throw '-DscAuthentication can only be used with -Format M365DSC.'
+        }
         if ($PSBoundParameters.ContainsKey('AccessGroupName') -and $PSBoundParameters.ContainsKey('GroupPrefix')) {
             throw 'Parameters -AccessGroupName and -GroupPrefix cannot be used together.'
         }
@@ -525,7 +547,24 @@ function New-RBAC4AppConfig {
             -NetworkAccessLocation $NetworkAccessLocation `
             -CollectedWarnings @($collectedWarnings)
 
-        # --- Write config file (YAML or JSON, per -Format)
+        # --- Microsoft365DSC rendering (-Format M365DSC): written next to the YAML config. Its notes
+        # (what DSC does differently from Invoke-RBAC4AppConfig) also go into the config's warnings.
+        $dscScript = $null
+        if ($Format -eq 'M365DSC') {
+            try { $dsc = ConvertTo-RBAC4AppM365Dsc -Config $config -Authentication $DscAuthentication }
+            catch {
+                Write-Error "Could not render the Microsoft365DSC configuration: $($_.Exception.Message)"
+                return
+            }
+            foreach ($dscWarning in $dsc.Warnings) {
+                Write-Warning -Message $dscWarning
+                $collectedWarnings.Add([string]$dscWarning)
+            }
+            $config.Runtime.CollectedWarnings = @($collectedWarnings)
+            $dscScript = $dsc.Script
+        }
+
+        # --- Write config file (YAML or JSON, per -Format; YAML for M365DSC)
         $extension = if ($Format -eq 'Json') { 'json' } else { 'yml' }
         $safeName  = Format-RBAC4AppSafeName -Value $sp.DisplayName -MaxLength 40
         # Seconds plus a short random id keep two configs for the same app from overwriting each other.
@@ -540,7 +579,13 @@ function New-RBAC4AppConfig {
         if ($PSCmdlet.ShouldProcess($outFile, "Write RBAC4App config ($Format)")) {
             [System.IO.File]::WriteAllText($outFile, $serialized, [System.Text.Encoding]::UTF8)
             Write-Verbose "Config written to '$outFile'."
-            return $outFile
+            $outFile
+            if ($dscScript) {
+                $dscFile = [System.IO.Path]::ChangeExtension($outFile, '.ps1')
+                [System.IO.File]::WriteAllText($dscFile, $dscScript, [System.Text.Encoding]::UTF8)
+                Write-Verbose "Microsoft365DSC configuration written to '$dscFile'."
+                $dscFile
+            }
         }
     }
 }

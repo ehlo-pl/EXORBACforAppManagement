@@ -36,7 +36,18 @@ extension, is not an existing directory) receives the single config, or a JSON a
 them when there are several; its extension follows -Format.
 
 .PARAMETER Format
-Yaml (default, .yml) or Json (.json).
+Yaml (default, .yml), Json (.json), or M365DSC: the YAML config plus a Microsoft365DSC configuration
+script (.ps1, same name) declaring the service principal, scope group, management scope and role
+assignments. The DSC script authenticates with a managed identity, always binds through a management
+scope (EXOManagementRoleAssignment has no RecipientGroupScope) and, for a group scope, takes the
+group's distinguished name as a parameter (pre-filled when the row's management scope filter has it).
+
+.PARAMETER DscAuthentication
+How the Microsoft365DSC script written by -Format M365DSC signs in to Exchange Online:
+ManagedIdentity (default; ManagedIdentity + TenantId on every resource - runs only on a machine with
+a managed identity) or Certificate (ApplicationId + TenantId + CertificateThumbprint Configuration
+parameters - runs on any machine holding the app's certificate). No secret is written either way.
+Only valid with -Format M365DSC.
 
 .PARAMETER PerApplication
 Build one config per application (and scope) instead of one per role assignment.
@@ -63,7 +74,8 @@ Get-RBAC4AppEntry | Export-RBAC4AppConfig -PerApplication -WhatIf
 Shows which files would be written.
 
 .OUTPUTS
-None by default. With -PassThru, one [pscustomobject] per config written: Path, Config.
+None by default. With -PassThru, one [pscustomobject] per config written: Path, Config, DscPath
+(the .ps1 written by -Format M365DSC, else $null).
 
 .NOTES
 SupportsShouldProcess (ConfirmImpact Low). Existing files with the same name are overwritten.
@@ -85,8 +97,12 @@ function Export-RBAC4AppConfig {
         [string] $Path,
 
         [Parameter()]
-        [ValidateSet('Yaml', 'Json')]
+        [ValidateSet('Yaml', 'Json', 'M365DSC')]
         [string] $Format = 'Yaml',
+
+        [Parameter()]
+        [ValidateSet('ManagedIdentity', 'Certificate')]
+        [string] $DscAuthentication = 'ManagedIdentity',
 
         [Parameter()]
         [switch] $PerApplication,
@@ -99,6 +115,9 @@ function Export-RBAC4AppConfig {
     )
 
     begin {
+        if ($PSBoundParameters.ContainsKey('DscAuthentication') -and $Format -ne 'M365DSC') {
+            throw '-DscAuthentication can only be used with -Format M365DSC.'
+        }
         $rows = [System.Collections.Generic.List[object]]::new()
     }
 
@@ -146,7 +165,7 @@ function Export-RBAC4AppConfig {
             $built.Add($result)
         }
 
-        $written = Write-RBAC4AppConfigFile -Export @($built) -Path $Path -Format $Format
+        $written = Write-RBAC4AppConfigFile -Export @($built) -Path $Path -Format $Format -DscAuthentication $DscAuthentication
         if ($PassThru) { $written }
     }
 }

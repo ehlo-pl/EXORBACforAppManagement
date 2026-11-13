@@ -101,6 +101,34 @@ Describe 'Convert-ApplicationAccessPolicyToRBAC' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-RBAC4AppEntry -Times 0
     }
 
+    It 'also writes a Microsoft365DSC script with -Format M365DSC and returns it as DscPath' {
+        $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Format M365DSC -Confirm:$false
+
+        $r.Errors | Should -BeNullOrEmpty
+        $r.ConfigPath | Should -Match '\.yml$'
+        $r.DscPath | Should -Be ([System.IO.Path]::ChangeExtension($r.ConfigPath, '.ps1'))
+        $script = Get-Content -LiteralPath $r.DscPath -Raw
+        # The policy's group is only referenced: no group resource, DN supplied at compile time.
+        $script | Should -Not -Match 'EXODistributionGroup'
+        $script | Should -Match '\$ScopeGroupDistinguishedName'
+        $script | Should -Match "EXOManagementRoleAssignment 'Assignment-AppMailR-Contoso'"
+        ($r.Warnings -join ';') | Should -Match 'scope group is only referenced'
+        $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $r.ConfigPath } { param($Path) ConvertFrom-RBAC4AppYaml -Content (Get-Content $Path -Raw) }
+        $config.ConversionResult.PSObject.Properties.Name | Should -Not -Contain 'DscPath'
+
+        $whatIf = Convert-ApplicationAccessPolicyToRBAC -OutputPath (Join-Path $TestDrive 'dsc-whatif') -Format M365DSC -WhatIf
+        $whatIf.DscPath | Should -BeNullOrEmpty
+    }
+
+    It 'passes -DscAuthentication Certificate through and rejects it without -Format M365DSC' {
+        $r = Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -Format M365DSC -DscAuthentication Certificate -Confirm:$false
+
+        $script = Get-Content -LiteralPath $r.DscPath -Raw
+        $script | Should -Match 'CertificateThumbprint = \$CertificateThumbprint'
+        $script | Should -Not -Match 'ManagedIdentity'
+        { Convert-ApplicationAccessPolicyToRBAC -OutputPath $TestDrive -DscAuthentication Certificate -Confirm:$false } | Should -Throw '*only be used with -Format M365DSC*'
+    }
+
     It 'keeps the policy ScopeName group as a reference-only HybridMailEnabledSecurityGroup' {
         $r = Convert-ApplicationAccessPolicyToRBAC -Format Json -OutputPath $TestDrive -Confirm:$false
         $config = Get-Content $r.ConfigPath -Raw | ConvertFrom-Json

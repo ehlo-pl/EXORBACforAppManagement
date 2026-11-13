@@ -31,7 +31,9 @@ function ConvertTo-RBAC4AppConfigFromEntry {
     $newWarnings = [System.Collections.Generic.List[string]]::new()
     foreach ($w in @($rows | ForEach-Object { $_.Warnings } | Where-Object { $_ } | Select-Object -Unique)) { $configWarnings.Add([string]$w) }
 
-    $result = [pscustomobject]@{ Config = $null; SafeName = $null; Warnings = @(); Error = $null; NeedsForce = $false }
+    # ScopeGroupDistinguishedName: the group DN from a management scope's MemberOfGroup filter, when
+    # the row has one (used only by the Microsoft365DSC rendering).
+    $result = [pscustomobject]@{ Config = $null; SafeName = $null; Warnings = @(); Error = $null; NeedsForce = $false; ScopeGroupDistinguishedName = $null }
     $fail = {
         param([string] $Message, [bool] $NeedsForce = $false)
         $result.Error = $Message
@@ -88,6 +90,11 @@ function ConvertTo-RBAC4AppConfigFromEntry {
             $configWarnings.Add($msg)
             $newWarnings.Add($msg)
         }
+    }
+
+    if ($scopeKind -eq 'Group' -and -not $isGroupDirect -and [string]$first.ScopeFilter) {
+        $parsedFilter = ConvertFrom-RBAC4AppRecipientFilter -Filter ([string]$first.ScopeFilter)
+        if ($parsedFilter.ScopeKind -eq 'Group') { $result.ScopeGroupDistinguishedName = [string]$parsedFilter.GroupDistinguishedName }
     }
 
     $scopeTagAttribute = 'CustomAttribute1'

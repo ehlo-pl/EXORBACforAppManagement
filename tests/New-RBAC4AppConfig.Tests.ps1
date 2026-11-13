@@ -397,6 +397,52 @@ Describe 'New-RBAC4AppConfig' {
         $mesgConfig.RbacScope.PSObject.Properties.Name | Should -Not -Contain 'AccessGroupName'
     }
 
+    It 'writes the YAML config plus a Microsoft365DSC script with -Format M365DSC and returns both paths' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = '22222222-2222-2222-2222-222222222222'; AppId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'dsc') -Force
+        $files = @(New-RBAC4AppConfig -RegisteredAppName 'Contoso' -Role 'Mail.Send' -ManagedBy 'owner@contoso.com' -OutputPath $dir.FullName -Format M365DSC -Confirm:$false -WarningAction SilentlyContinue)
+
+        $files.Count | Should -Be 2
+        $files[0] | Should -Match '\.yml$'
+        $files[1] | Should -Be ([System.IO.Path]::ChangeExtension($files[0], '.ps1'))
+        $script = Get-Content -LiteralPath $files[1] -Raw
+        $script | Should -Match 'Configuration RBAC4App_Contoso'
+        $script | Should -Match "EXODistributionGroup 'Group-USRACo1P-Contoso'"
+        $script | Should -Match "ManagedBy\s+= @\('owner@contoso.com'\)"
+        $script | Should -Match "EXOManagementRoleAssignment 'Assignment-AppMailSend-Contoso'"
+        # The YAML is still a normal config and records what DSC does differently.
+        $config = InModuleScope EXORBACforAppManagement -Parameters @{ Path = $files[0] } { param($Path) ConvertFrom-RBAC4AppYaml -Content (Get-Content -LiteralPath $Path -Raw) }
+        $config.SchemaVersion | Should -Be '4.4'
+        $config.RbacScope.AccessGroupName | Should -Be 'USRACo1P-Contoso'
+        ($config.Runtime.CollectedWarnings -join ';') | Should -Match 'has no RecipientGroupScope'
+    }
+
+    It 'writes certificate sign-in with -DscAuthentication Certificate and rejects it without -Format M365DSC' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = '22222222-2222-2222-2222-222222222222'; AppId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'dsc-cert') -Force
+        $files = @(New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Format M365DSC -DscAuthentication Certificate -Confirm:$false -WarningAction SilentlyContinue)
+
+        $script = Get-Content -LiteralPath $files[1] -Raw
+        $script | Should -Match 'CertificateThumbprint = \$CertificateThumbprint'
+        $script | Should -Not -Match 'ManagedIdentity'
+        { New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -DscAuthentication Certificate -Confirm:$false } | Should -Throw '*only be used with -Format M365DSC*'
+    }
+
+    It 'writes neither file with -Format M365DSC -WhatIf' {
+        Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
+            [pscustomobject]@{ Id = '22222222-2222-2222-2222-222222222222'; AppId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Contoso' }
+        }
+        $dir = New-Item -ItemType Directory -Path (Join-Path $TestDrive 'dsc-whatif') -Force
+        $files = New-RBAC4AppConfig -RegisteredAppName 'Contoso' -OutputPath $dir.FullName -Format M365DSC -WhatIf -WarningAction SilentlyContinue
+
+        $files | Should -BeNullOrEmpty
+        @(Get-ChildItem -LiteralPath $dir.FullName).Count | Should -Be 0
+    }
+
     It 'warns (and records it) when a group the module creates keeps the default owner' {
         Mock -ModuleName EXORBACforAppManagement Get-MgServicePrincipal {
             [pscustomobject]@{ Id = 'sp-id'; AppId = 'app-id'; DisplayName = 'Contoso' }

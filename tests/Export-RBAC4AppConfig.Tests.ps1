@@ -71,6 +71,61 @@ Describe 'Export-RBAC4AppConfig' {
         @($config.RbacScope.Members) | Should -Contain 'shared@tailspin.com'
     }
 
+    It 'writes a Microsoft365DSC script next to the YAML config with -Format M365DSC' {
+        $written = @(Get-RBAC4AppEntry | Export-RBAC4AppConfig -Path $TestDrive -Format M365DSC -PassThru -WarningAction SilentlyContinue)
+
+        $written.Count | Should -Be 1
+        $written[0].Path | Should -Be (Join-Path $TestDrive 'rbac4app-AppMailboxSettings-Tailspin.yml')
+        $written[0].DscPath | Should -Be (Join-Path $TestDrive 'rbac4app-AppMailboxSettings-Tailspin.ps1')
+        $script = Get-Content -LiteralPath $written[0].DscPath -Raw
+        $script | Should -Match 'Configuration RBAC4App_Tailspin'
+        $script | Should -Match "EXODistributionGroup 'Group-UDLRAo1P-Tailspin'"
+        $script | Should -Match "Type\s+= 'Distribution'"
+        $script | Should -Match "Members\s+= @\('GraphAPI-Dummy', 'shared@tailspin.com'\)"
+        # A group-bound assignment carries no DN, so the parameter stays mandatory.
+        $script | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s+\[System\.String\]\s+\$ScopeGroupDistinguishedName'
+        (Read-RBAC4AppTestConfig $written[0].Path).SchemaVersion | Should -Be '4.4'
+    }
+
+    It 'pre-fills the group DN in the Microsoft365DSC script for a management-scope bound assignment' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            [pscustomobject]@{ Name = 'AppMailSend-Tailspin'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Tailspin_SP'; RoleAssigneeType = 'ServicePrincipal'; CustomRecipientWriteScope = $null; CustomResourceScope = 'MSRAo1P-Tailspin'; RecipientWriteScope = 'CustomRecipientScope'; Enabled = $true; Guid = [guid]::NewGuid(); Identity = 'AppMailSend-Tailspin'; EffectiveUserName = $null; App = $null }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementScope { [pscustomobject]@{ Name = 'MSRAo1P-Tailspin'; RecipientFilter = "MemberOfGroup -eq 'CN=UDLRAo1P-Tailspin,OU=tailspin,DC=prod'" } }
+        Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ Name = 'UDLRAo1P-Tailspin'; DisplayName = 'UDLRAo1P-Tailspin'; RecipientTypeDetails = 'MailUniversalDistributionGroup' } }
+
+        $written = @(Get-RBAC4AppEntry | Export-RBAC4AppConfig -Path $TestDrive -Format M365DSC -PassThru -WarningAction SilentlyContinue)
+
+        $script = Get-Content -LiteralPath $written[0].DscPath -Raw
+        $script | Should -Match ([regex]::Escape("`$ScopeGroupDistinguishedName = 'CN=UDLRAo1P-Tailspin,OU=tailspin,DC=prod'"))
+        $script | Should -Match "CustomResourceScope = 'MSRAo1P-Tailspin'"
+    }
+
+    It 'writes one .ps1 with a uniquely named Configuration per config for a single-file -Path, and nothing under -WhatIf' {
+        $rows = @(Get-RBAC4AppEntry)
+        $target = Join-Path $TestDrive 'dsc-all.yml'
+        $written = @(@($rows[0], $rows[0]) | Export-RBAC4AppConfig -Path $target -Format M365DSC -PassThru -WarningAction SilentlyContinue)
+
+        $written[0].DscPath | Should -Be (Join-Path $TestDrive 'dsc-all.ps1')
+        $script = Get-Content -LiteralPath $written[0].DscPath -Raw
+        $script | Should -Match 'Configuration RBAC4App_Tailspin\s'
+        $script | Should -Match 'Configuration RBAC4App_Tailspin_2\s'
+
+        $whatIfTarget = Join-Path $TestDrive 'dsc-whatif'
+        $rows | Export-RBAC4AppConfig -Path "$whatIfTarget\" -Format M365DSC -WhatIf -WarningAction SilentlyContinue
+        Test-Path -LiteralPath $whatIfTarget | Should -BeFalse
+    }
+
+    It 'passes -DscAuthentication Certificate through and rejects it without -Format M365DSC' {
+        $rows = @(Get-RBAC4AppEntry)
+        $written = @($rows | Export-RBAC4AppConfig -Path (Join-Path $TestDrive 'cert') -Format M365DSC -DscAuthentication Certificate -PassThru -WarningAction SilentlyContinue)
+
+        $script = Get-Content -LiteralPath $written[0].DscPath -Raw
+        $script | Should -Match 'ApplicationId         = \$ApplicationId'
+        $script | Should -Not -Match 'ManagedIdentity'
+        { $rows | Export-RBAC4AppConfig -Path $TestDrive -DscAuthentication Certificate } | Should -Throw '*only be used with -Format M365DSC*'
+    }
+
     It 'writes nothing to the pipeline without -PassThru, and Path/Config per file with it' {
         $quiet = Get-RBAC4AppEntry | Export-RBAC4AppConfig -Path (Join-Path $TestDrive 'quiet')
         $quiet | Should -BeNullOrEmpty

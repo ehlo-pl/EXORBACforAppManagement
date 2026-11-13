@@ -11,6 +11,17 @@ All notable changes to this project are documented here. The format is based on
 No version had been published, so this is a clean break without deprecation shims.
 
 ### Added
+- `-Format M365DSC` on `New-RBAC4AppConfig`, `Export-RBAC4AppConfig` and
+  `Convert-ApplicationAccessPolicyToRBAC`: writes the YAML config plus a Microsoft365DSC
+  configuration script (`.ps1`, same name) with `EXOServicePrincipal`, `EXODistributionGroup`
+  (cloud security group / distribution list; other group types are only referenced),
+  `EXOManagementScope` and `EXOManagementRoleAssignment` resources. The script authenticates with a
+  managed identity, or with `-DscAuthentication Certificate` through `ApplicationId` /
+  `CertificateThumbprint` parameters (no secret is written either way), always binds through a management scope (the DSC resource has no
+  `RecipientGroupScope`), and takes the scope group's distinguished name as a Configuration
+  parameter (pre-filled by `Export-RBAC4AppConfig` when known). `New-RBAC4AppConfig` returns both
+  paths; `Export-RBAC4AppConfig -PassThru` and the `Convert-` result gain `DscPath`. The config
+  schema is unchanged (4.4).
 - `-AccessGroupType CloudMailEnabledSecurityGroup`: an Exchange-Online-only mail-enabled security
   group created by `New-DistributionGroup -Type Security` (default prefix `USRACo1P`). Accepted by
   `New-`/`Set-`/`Test-`/`Remove-RBAC4AppEntry`, `New-RBAC4AppConfig`, and `Invoke-RBAC4AppConfig`.

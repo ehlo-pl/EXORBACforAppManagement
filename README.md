@@ -38,12 +38,12 @@ descriptions, defaults, and aliases.
 
 | Function | Parameter sets | Parameters | `-WhatIf` / `-Confirm` |
 | --- | --- | --- | --- |
-| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | All, ByAppId, ByPolicy | `-AppId <string>`<br>`-Policy <object[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupType {M365Group\|DistributionList}`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json}` | yes |
+| [`Convert-ApplicationAccessPolicyToRBAC`](#convert-applicationaccesspolicytorbac) | All, ByAppId, ByPolicy | `-AppId <string>`<br>`-Policy <object[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupType {M365Group\|DistributionList}`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json\|M365DSC}`<br>`-DscAuthentication {ManagedIdentity\|Certificate}` | yes |
 | [`Get-RBAC4AppEntry`](#get-rbac4appentry) | All, ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-Enabled <bool>`<br>`-RoleAssigneeType {All\|ServicePrincipal\|User\|SecurityGroup\|RoleGroup\|RoleAssignmentPolicy\|ForeignSecurityPrincipal\|LinkedRoleGroup\|Computer}`<br>`-ScopeType <string[]>` (RecipientWriteScope values, or `All`) | yes |
 | [`Get-RBAC4AppApplication`](#get-rbac4appapplication) | FromEntry, All, ByName, ByAppId, BySpObjectId | **`-InputObject <RBAC4App.Entry[]>`** (pipeline, FromEntry)<br>plus the `Get-RBAC4AppEntry` identity and filter parameters | yes |
-| [`Export-RBAC4AppConfig`](#export-rbac4appconfig) | — | **`-InputObject <RBAC4App.Entry[]>`** (pipeline)<br>`-Path <string>`<br>`-Format {Yaml\|Json}`<br>`-PerApplication`<br>`-PassThru`<br>`-Force` | yes |
+| [`Export-RBAC4AppConfig`](#export-rbac4appconfig) | — | **`-InputObject <RBAC4App.Entry[]>`** (pipeline)<br>`-Path <string>`<br>`-Format {Yaml\|Json\|M365DSC}`<br>`-DscAuthentication {ManagedIdentity\|Certificate}`<br>`-PerApplication`<br>`-PassThru`<br>`-Force` | yes |
 | [`Invoke-RBAC4AppConfig`](#invoke-rbac4appconfig) | — | **`-Path <string>`**<br>`-Format {Auto\|Yaml\|Json}` | yes |
-| [`New-RBAC4AppConfig`](#new-rbac4appconfig) | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-Members <string[]>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-SeparateScopePerRole`<br>`-ChangeReference <string>`<br>`-OwnerUsername <string>`<br>`-OwnerDisplayName <string>`<br>`-TechnicalContactUsername <string>`<br>`-TechnicalContactDisplayName <string>`<br>`-PCode <string>`<br>`-CmdbId <string>`<br>`-Description <string>`<br>`-NetworkAccessIP4Range <string>`<br>`-NetworkAccessIP6Range <string>`<br>`-NetworkAccessLocation <string>`<br>`-Repository <string>`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json}` | yes |
+| [`New-RBAC4AppConfig`](#new-rbac4appconfig) | ByName, ByAppId, BySpObjectId | **`-RegisteredAppName <string>`** (required in ByName)<br>**`-AppId <string>`** (required in ByAppId)<br>**`-SpObjectId <string>`** (required in BySpObjectId)<br>`-Role <string[]>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-Members <string[]>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-SeparateScopePerRole`<br>`-ChangeReference <string>`<br>`-OwnerUsername <string>`<br>`-OwnerDisplayName <string>`<br>`-TechnicalContactUsername <string>`<br>`-TechnicalContactDisplayName <string>`<br>`-PCode <string>`<br>`-CmdbId <string>`<br>`-Description <string>`<br>`-NetworkAccessIP4Range <string>`<br>`-NetworkAccessIP6Range <string>`<br>`-NetworkAccessLocation <string>`<br>`-Repository <string>`<br>`-OutputPath <string>`<br>`-Format {Yaml\|Json\|M365DSC}`<br>`-DscAuthentication {ManagedIdentity\|Certificate}` | yes |
 | `New-RBAC4AppDistributionGroup` | ByAppName, ByName | **`-AppName <string>`** (required in ByAppName)<br>`-Prefix <string>`<br>**`-Name <string>`** (required in ByName)<br>`-DisplayName <string>`<br>`-ManagedBy <string[]>`<br>`-BootstrapMember <string>`<br>`-ChangeReference <string>` | yes |
 | [`New-RBAC4AppEntry`](#new-rbac4appentry) | — | `-RegisteredAppName <string>`<br>`-AppId <string>`<br>`-SpObjectId <string>`<br>`-Members <string[]>`<br>`-Role <string[]>`<br>`-ManagedBy <string[]>`<br>`-GroupPrefix <string>`<br>`-AccessGroupName <string>`<br>`-AccessGroupType {CloudMailEnabledSecurityGroup\|DistributionList\|M365Group\|HybridMailEnabledSecurityGroup}`<br>`-BootstrapMember <string>`<br>`-ScopeKind {Group\|Recipients\|Tag\|Filter}`<br>`-AssignmentScope {RecipientGroupScope\|ManagementScope}`<br>`-ManagementScopeName <string>`<br>`-ManagementScopePrefix <string>`<br>`-ScopeRecipients <string[]>`<br>`-ScopeTagAttribute <string>`<br>`-ScopeTagValue <string>`<br>`-ScopeFilter <string>`<br>`-ChangeReference <string>` | yes |
 | `New-RBAC4AppManagementScope` | — | **`-Name <string>`**<br>**`-RecipientRestrictionFilter <string>`**<br>`-NoUpdate` | yes |
@@ -307,6 +307,73 @@ New-RBAC4AppConfig -AppId '11111111-2222-3333-4444-555555555555' -Repository 'C:
 (or `Get-RBAC4AppEntry | Export-RBAC4AppConfig` / `Convert-ApplicationAccessPolicyToRBAC`) to regenerate it.
 State files read by `New-RBAC4AppConfig -Repository` may still be of version 3.0-4.4 (in a pre-4.4 file an
 absent `AccessGroupType` means `DistributionList`, the default of those versions).
+
+## Microsoft365DSC output (`-Format M365DSC`)
+
+`New-RBAC4AppConfig`, `Export-RBAC4AppConfig`, and `Convert-ApplicationAccessPolicyToRBAC` accept
+`-Format M365DSC`. They then write the normal YAML config **and**, next to it with the same name, a
+[Microsoft365DSC](https://microsoft365dsc.com) configuration script (`.ps1`) declaring the same
+desired state, so it can be applied and drift-monitored by DSC. Only the `.yml` can be fed to
+`Invoke-RBAC4AppConfig`; the `.ps1` is a second rendering of it.
+
+| Config data | DSC resource |
+| --- | --- |
+| Application | `EXOServicePrincipal` (`<DisplayName>_SP`, as `Register-EXOServicePrincipal`) |
+| Scope group - `CloudMailEnabledSecurityGroup` / `DistributionList` | `EXODistributionGroup` (hidden, closed, sender authentication, send restricted to `ManagedBy`) |
+| Scope group - `M365Group` / `HybridMailEnabledSecurityGroup` | none: the group is only referenced and must already exist |
+| Management scope | `EXOManagementScope` |
+| Each role | `EXOManagementRoleAssignment` (same deterministic name, bound with `CustomResourceScope`) |
+
+What the DSC script does differently from `Invoke-RBAC4AppConfig` (each is also a warning, a `# NOTE`
+in the script, and - for `New-RBAC4AppConfig` - an entry in `Runtime.CollectedWarnings`):
+
+- **Always a management scope.** `EXOManagementRoleAssignment` has no `RecipientGroupScope`, so even
+  a config with `AssignmentScope: RecipientGroupScope` is bound through
+  `MemberOfGroup -eq '<group DN>'`.
+- **The group DN is a parameter.** For `ScopeKind: Group` the Configuration takes
+  `$ScopeGroupDistinguishedName` (one per role, e.g. `$ScopeGroupDistinguishedNameAppMailSend`, with
+  `SeparateScopePerRole`). It is mandatory, except when `Export-RBAC4AppConfig` read the DN from an
+  existing management scope and pre-filled it. A group that does not exist yet has no DN, so the
+  script cannot be compiled for a brand-new group in one step: create the group first (for example
+  with `Invoke-RBAC4AppConfig` on the `.yml`), read its DN
+  (`Get-Recipient -Identity <group> | Select-Object DistinguishedName`), then compile with it.
+- **`Members` is authoritative.** DSC removes members that are not listed; `Invoke-RBAC4AppConfig`
+  only adds. An owner (`ManagedBy`) that does not exist fails the DSC run instead of skipping the
+  send restriction.
+- **`ScopeRecipients` are written as given**, as `PrimarySmtpAddress` values (no `Get-Recipient`
+  lookup happens at generation time): list primary SMTP addresses.
+- **Authentication is a managed identity by default** (`ManagedIdentity = $true` and `$TenantId`,
+  defaulting to the resolved tenant, on every resource), which only runs on a machine that has one
+  (Azure VM, Arc-enabled server, Azure Automation). `-DscAuthentication Certificate` writes
+  app-plus-certificate sign-in instead: the Configuration takes mandatory `$ApplicationId` and
+  `$CertificateThumbprint` parameters (plus `$TenantId`) and runs on any machine whose certificate
+  store holds that app registration's certificate. Either way the identity needs
+  `Exchange.ManageAsApp` and an Exchange admin role, and no credential or secret is written (a
+  thumbprint is not a secret, and it is a parameter, not a value in the file). For Exchange Online
+  pass `-TenantId` as the tenant domain (`contoso.onmicrosoft.com`) when compiling.
+
+```powershell
+$yml, $ps1 = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Role 'Mail.Send' `
+                 -ManagedBy 'rbac-owner@contoso.com' -Format M365DSC -OutputPath C:\rbac-configs
+
+. $ps1                                      # defines Configuration RBAC4App_Contoso_Mail_App
+RBAC4App_Contoso_Mail_App -ScopeGroupDistinguishedName 'CN=USRACo1P-ContosoMailApp,OU=...' -OutputPath C:\rbac-mof
+Start-DscConfiguration -Path C:\rbac-mof -Wait -Verbose
+
+# Certificate sign-in instead of a managed identity (workstation, pipeline agent):
+$yml, $ps1 = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' -Format M365DSC -DscAuthentication Certificate
+. $ps1
+RBAC4App_Contoso_Mail_App -TenantId 'contoso.onmicrosoft.com' -ApplicationId '<DSC app id>' `
+    -CertificateThumbprint '<thumbprint>' -ScopeGroupDistinguishedName 'CN=...' -OutputPath C:\rbac-mof
+
+# Existing tenant state as DSC (the DN is pre-filled for management-scope bound assignments):
+Get-RBAC4AppEntry | Export-RBAC4AppConfig -PerApplication -Format M365DSC -Path C:\rbac-dsc
+```
+
+Application names, group names and filters are written only as single-quoted string literals, so a
+value cannot inject script into the generated file. The resource property names follow the
+Microsoft365DSC documentation; validate the script against your Microsoft365DSC version
+(`Test-DscConfiguration`) before relying on it.
 
 ## Install / import
 
@@ -745,6 +812,9 @@ $yml = New-RBAC4AppConfig -SpObjectId '11111111-2222-3333-4444-555555555555' `
 $json = New-RBAC4AppConfig -RegisteredAppName 'Contoso Mail App' `
            -Role 'Mail.Send' -Members 'shared@contoso.com' -Format Json -OutputPath C:\rbac-configs
 ```
+
+With `-Format M365DSC` it returns two paths - the `.yml` config, then the `.ps1` Microsoft365DSC
+configuration (see [Microsoft365DSC output](#microsoft365dsc-output--format-m365dsc)).
 
 Returns the path to the written config file (`.yml` or `.json`). Pass `-WhatIf` to preview the
 output path and content without writing the file. The config schema is identical between formats —

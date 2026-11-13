@@ -651,3 +651,138 @@ Describe 'Get-RBAC4AppLegacyScopeGroupName (pre-0.9.0 guard)' {
         }
     }
 }
+
+Describe 'ConvertTo-RBAC4AppM365Dsc (Microsoft365DSC rendering)' {
+    BeforeAll {
+        $script:newDscConfig = {
+            param([hashtable] $Scope = @{}, [string] $DisplayName = 'Contoso', [string[]] $Roles = @('Application Mail.Send'))
+            $config = [ordered]@{
+                SchemaVersion = '4.4'
+                Application   = [pscustomobject]@{ AppId = '11111111-1111-1111-1111-111111111111'; SpObjectId = '22222222-2222-2222-2222-222222222222'; DisplayName = $DisplayName; TenantId = 'tenant-1' }
+                Rbac          = [pscustomobject]@{ Roles = $Roles }
+            }
+            if ($Scope.Count -gt 0) { $config.RbacScope = [pscustomobject]$Scope }
+            [pscustomobject]$config
+        }
+        # Tokens and string literal values of a generated script; the DSC module itself is not needed.
+        $script:readDsc = {
+            param([string] $Script)
+            $tokens = $null; $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseInput($Script, [ref]$tokens, [ref]$errors)
+            [pscustomobject]@{
+                Commands       = @($tokens | Where-Object { $_.TokenFlags -band [System.Management.Automation.Language.TokenFlags]::CommandName } | ForEach-Object { $_.Text } | Sort-Object -Unique)
+                Strings        = @($tokens | Where-Object { $_ -is [System.Management.Automation.Language.StringToken] } | ForEach-Object { $_.Value })
+                SubExpressions = @($tokens | Where-Object { $_.Kind -eq 'DollarParen' })
+            }
+        }
+    }
+
+    It 'renders the default group config: SP, security group, management scope over a DN parameter, assignment' {
+        $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = (& $script:newDscConfig) } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config }
+
+        $r.ConfigurationName | Should -Be 'RBAC4App_Contoso'
+        $r.Script | Should -Match 'Configuration RBAC4App_Contoso'
+        $r.Script | Should -Match "EXOServicePrincipal 'SP-Contoso-"
+        $r.Script | Should -Match "AppName\s+= 'Contoso_SP'"
+        $r.Script | Should -Match "EXODistributionGroup 'Group-USRACo1P-Contoso'"
+        $r.Script | Should -Match "Type\s+= 'Security'"
+        $r.Script | Should -Match "AcceptMessagesOnlyFromSendersOrMembers = @\('GraphAPI-Dummy-owner'\)"
+        $r.Script | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s+\[System\.String\]\s+\$ScopeGroupDistinguishedName'
+        $r.Script | Should -Match ([regex]::Escape('RecipientRestrictionFilter = ("MemberOfGroup -eq ''{0}''" -f $ScopeGroupDistinguishedName.Replace("''", "''''"))'))
+        $r.Script | Should -Match "EXOManagementRoleAssignment 'Assignment-AppMailSend-Contoso'"
+        $r.Script | Should -Match "CustomResourceScope = 'MSRAo1P-Contoso'"
+        $r.Script | Should -Match "App\s+= '22222222-2222-2222-2222-222222222222'"
+        $r.Script | Should -Match '\$TenantId = ''tenant-1'''
+        ([regex]::Matches($r.Script, 'ManagedIdentity = \$true')).Count | Should -Be 4
+        $r.Script | Should -Not -Match 'Credential|CertificateThumbprint|RecipientGroupScope ='
+        ($r.Warnings -join ';') | Should -Match 'has no RecipientGroupScope'
+        ($r.Warnings -join ';') | Should -Match 'Members is authoritative'
+        (& $script:readDsc $r.Script).Commands | Should -Be @('Import-DscResource')
+    }
+
+    It 'renders certificate sign-in with -Authentication Certificate (no managed identity, no secret)' {
+        $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = (& $script:newDscConfig) } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config -Authentication Certificate }
+
+        $r.Script | Should -Not -Match 'ManagedIdentity'
+        $r.Script | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s+\[System\.String\]\s+\$ApplicationId'
+        $r.Script | Should -Match '\[Parameter\(Mandatory = \$true\)\]\s+\[System\.String\]\s+\$CertificateThumbprint'
+        ([regex]::Matches($r.Script, 'ApplicationId         = \$ApplicationId')).Count | Should -Be 4
+        ([regex]::Matches($r.Script, 'CertificateThumbprint = \$CertificateThumbprint')).Count | Should -Be 4
+        ([regex]::Matches($r.Script, 'TenantId              = \$TenantId')).Count | Should -Be 4
+        $r.Script | Should -Not -Match 'Credential|CertificatePassword|CertificatePath'
+        (& $script:readDsc $r.Script).Commands | Should -Be @('Import-DscResource')
+    }
+
+    It 'pre-fills a known group DN, and declares a distribution list as Type Distribution' {
+        $config = & $script:newDscConfig @{ AccessGroupType = 'DistributionList'; AssignmentScope = 'ManagementScope'; Members = @('a@contoso.com') }
+        $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = $config } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config -ScopeGroupDistinguishedName "CN=O'Brien,DC=prod" }
+
+        $r.Script | Should -Match ([regex]::Escape('$ScopeGroupDistinguishedName = ''CN=O''''Brien,DC=prod'''))
+        $r.Script | Should -Match "Type\s+= 'Distribution'"
+        $r.Script | Should -Match "Members\s+= @\('GraphAPI-Dummy', 'a@contoso.com'\)"
+        ($r.Warnings -join ';') | Should -Not -Match 'has no RecipientGroupScope'
+    }
+
+    It 'only references a <Type> group (no EXODistributionGroup resource)' -TestCases @(
+        @{ Type = 'HybridMailEnabledSecurityGroup'; Name = 'OnPrem-Scope' }
+        @{ Type = 'M365Group'; Name = '' }
+    ) {
+        param($Type, $Name)
+        $scope = @{ AccessGroupType = $Type }
+        if ($Name) { $scope.AccessGroupName = $Name }
+        $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = (& $script:newDscConfig $scope) } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config }
+
+        $r.Script | Should -Not -Match 'EXODistributionGroup'
+        $r.Script | Should -Match 'EXOManagementScope'
+        ($r.Warnings -join ';') | Should -Match "$Type scope group is only referenced"
+    }
+
+    It 'renders Recipients, Tag and Filter scopes as literal filters without a DN parameter' {
+        $cases = @(
+            @{ Scope = @{ ScopeKind = 'Recipients'; ScopeRecipients = @('b@contoso.com', "o'x@contoso.com") }; Filter = "(PrimarySmtpAddress -eq 'b@contoso.com') -or (PrimarySmtpAddress -eq 'o''x@contoso.com')" }
+            @{ Scope = @{ ScopeKind = 'Tag'; ScopeTagAttribute = 'CustomAttribute3' }; Filter = "CustomAttribute3 -eq 'MSRAo1P-Contoso'" }
+            @{ Scope = @{ ScopeKind = 'Filter'; ScopeFilter = "Department -eq 'Sales'" }; Filter = "Department -eq 'Sales'" }
+        )
+        foreach ($case in $cases) {
+            $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = (& $script:newDscConfig $case.Scope) } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config }
+            $r.Script | Should -Not -Match 'ScopeGroupDistinguishedName'
+            $r.Script | Should -Not -Match 'EXODistributionGroup'
+            (& $script:readDsc $r.Script).Strings | Should -Contain $case.Filter
+        }
+    }
+
+    It 'gives every role its own group, scope and DN parameter with SeparateScopePerRole' {
+        $config = & $script:newDscConfig @{ SeparateScopePerRole = $true } 'Contoso' @('Application Mail.Send', 'Application Calendars.Read')
+        $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = $config } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config }
+
+        $r.Script | Should -Match '\$ScopeGroupDistinguishedNameAppMailSend'
+        $r.Script | Should -Match '\$ScopeGroupDistinguishedNameAppCldR'
+        $r.Script | Should -Match "EXODistributionGroup 'Group-USRACo1P-Contoso-AppMailSend'"
+        $r.Script | Should -Match "EXOManagementScope 'Scope-MSRAo1P-Contoso-AppCldR'"
+        $r.Script | Should -Match "Name\s+= 'AppCldR-Contoso'[\s\S]*?CustomResourceScope = 'MSRAo1P-Contoso-AppCldR'"
+    }
+
+    It 'keeps a hostile display name inert (one string literal, no command, no subexpression)' {
+        $hostile = "Con'toso `$(Remove-Item x) `"; Stop-Process -Id 1 #`r`nInvoke-Expression 'x' " + [char]0x2019 + '; calc'
+        $r = InModuleScope EXORBACforAppManagement -Parameters @{ Config = (& $script:newDscConfig @{} $hostile) } { param($Config) ConvertTo-RBAC4AppM365Dsc -Config $Config }
+
+        $parsed = & $script:readDsc $r.Script
+        $parsed.Commands | Should -Be @('Import-DscResource')
+        $parsed.SubExpressions | Should -BeNullOrEmpty
+        $parsed.Strings | Should -Contain ($hostile + '_SP')
+        $r.ConfigurationName | Should -Match '^RBAC4App_[A-Za-z0-9_]+$'
+    }
+
+    It 'refuses a config without roles, with an unknown role, or with an invalid configuration name' {
+        InModuleScope EXORBACforAppManagement -Parameters @{ New = $script:newDscConfig } {
+            param($New)
+            { ConvertTo-RBAC4AppM365Dsc -Config (& $New @{} 'Contoso' @()) } | Should -Throw '*no Rbac.Roles*'
+            { ConvertTo-RBAC4AppM365Dsc -Config (& $New @{} 'Contoso' @('Application Bogus')) } | Should -Throw '*not a known application role*'
+            { ConvertTo-RBAC4AppM365Dsc -Config (& $New) -ConfigurationName 'bad name;x' } | Should -Throw '*Invalid -ConfigurationName*'
+            { ConvertTo-RBAC4AppM365Dsc -Config (& $New @{ AccessGroupType = 'HybridMailEnabledSecurityGroup' }) } | Should -Throw '*AccessGroupName is required*'
+            (ConvertTo-RBAC4AppM365Dsc -Config (& $New @{} '!!!')).ConfigurationName | Should -Be 'RBAC4App_11111111111111111111111111111111'
+            ConvertTo-RBAC4AppDscLiteral -Value $true | Should -Be '$true'
+            ConvertTo-RBAC4AppDscLiteral -Value $false | Should -Be '$false'
+        }
+    }
+}

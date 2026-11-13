@@ -59,8 +59,17 @@ is validated but never created or modified.
 Directory to write config files into. Defaults to the current working directory.
 
 .PARAMETER Format
-Config format: Yaml (default, .yml) or Json (.json). Files use the rbac4app prefix,
+Config format: Yaml (default, .yml), Json (.json), or M365DSC (the YAML config plus a
+Microsoft365DSC configuration script, .ps1, same name; its path is returned as DscPath. The policy's
+group is only referenced there and its distinguished name is a Configuration parameter). Files use the rbac4app prefix,
 sanitized application and source group names, AppId, timestamp, and a unique suffix.
+
+.PARAMETER DscAuthentication
+How the Microsoft365DSC script written by -Format M365DSC signs in to Exchange Online:
+ManagedIdentity (default; ManagedIdentity + TenantId on every resource - runs only on a machine with
+a managed identity) or Certificate (ApplicationId + TenantId + CertificateThumbprint Configuration
+parameters - runs on any machine holding the app's certificate). No secret is written either way.
+Only valid with -Format M365DSC.
 
 .EXAMPLE
 Convert-ApplicationAccessPolicyToRBAC -WhatIf -Verbose
@@ -124,11 +133,18 @@ function Convert-ApplicationAccessPolicyToRBAC {
         [string] $OutputPath,
 
         [Parameter()]
-        [ValidateSet('Yaml', 'Json')]
-        [string] $Format = 'Yaml'
+        [ValidateSet('Yaml', 'Json', 'M365DSC')]
+        [string] $Format = 'Yaml',
+
+        [Parameter()]
+        [ValidateSet('ManagedIdentity', 'Certificate')]
+        [string] $DscAuthentication = 'ManagedIdentity'
     )
 
     begin {
+        if ($PSBoundParameters.ContainsKey('DscAuthentication') -and $Format -ne 'M365DSC') {
+            throw '-DscAuthentication can only be used with -Format M365DSC.'
+        }
         if (-not $OutputPath) { $OutputPath = (Get-Location).Path }
         $OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
         $legacyRoleMap = Get-LegacyScopeRoleMap
@@ -189,6 +205,7 @@ function Convert-ApplicationAccessPolicyToRBAC {
                 DerivedRoles       = @()
                 SkippedPermissions = @()
                 ConfigPath         = $null
+                DscPath            = $null
                 Warnings           = @()
                 Errors             = @()
             }
@@ -269,6 +286,8 @@ function Convert-ApplicationAccessPolicyToRBAC {
                 # result fields (ConfigPath = the file being written) and Runtime its Warnings/Errors.
                 $conversionResult = [pscustomobject]$result
                 $conversionResult.ConfigPath = $outFile
+                # DscPath is a result field only; the config's ConversionResult section keeps its schema.
+                $conversionResult.PSObject.Properties.Remove('DscPath')
                 $config = ConvertTo-RBAC4AppConfig `
                     -TenantId $tenantId `
                     -AppId ([string]$sp.AppId) -SpObjectId ([string]$sp.Id) -DisplayName ([string]$sp.DisplayName) `
@@ -282,10 +301,23 @@ function Convert-ApplicationAccessPolicyToRBAC {
                     -ConversionResult $conversionResult
                 $serialized = if ($Format -eq 'Json') { $config | ConvertTo-Json -Depth 6 } else { ConvertTo-RBAC4AppYaml -Config $config }
 
+                $dscScript = $null
+                if ($Format -eq 'M365DSC') {
+                    $dsc = ConvertTo-RBAC4AppM365Dsc -Config $config -Authentication $DscAuthentication
+                    foreach ($dscWarning in $dsc.Warnings) { $result.Warnings += $dscWarning }
+                    $dscScript = $dsc.Script
+                }
+
                 if ($PSCmdlet.ShouldProcess($outFile, "Write RBAC4App config ($Format) from Application Access Policy")) {
                     [System.IO.File]::WriteAllText($outFile, $serialized, [System.Text.Encoding]::UTF8)
                     $result.ConfigPath = $outFile
                     Write-Verbose "Config written to '$outFile'."
+                    if ($dscScript) {
+                        $dscFile = [System.IO.Path]::ChangeExtension($outFile, '.ps1')
+                        [System.IO.File]::WriteAllText($dscFile, $dscScript, [System.Text.Encoding]::UTF8)
+                        $result.DscPath = $dscFile
+                        Write-Verbose "Microsoft365DSC configuration written to '$dscFile'."
+                    }
                 }
 
                 [pscustomobject]$result

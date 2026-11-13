@@ -100,6 +100,18 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
   separate PowerShell sessions. `New-RBAC4AppConfig` is the Graph half: resolves the Entra SP and
   writes a config file (schema version `4.4` - `Invoke-RBAC4AppConfig` accepts only `4.4`; `New-RBAC4AppConfig -Repository` state files may still be 3.0-4.4, and in a pre-4.4 file an absent `AccessGroupType` means `DistributionList`; top-level `Rbac:`/`RbacScope:` sections, a `Metadata:` section for descriptive fields and `ChangeReference`, `TenantId` inside `Application:` (informational; a legacy top-level key is still read), a `Runtime:` section holding `GeneratedAt` (top-level before 4.3), and - from `Convert-ApplicationAccessPolicyToRBAC` only - a `ConversionResult:` section) in
   either format via `-Format` - YAML (default, `.yml`) or JSON (`.json`), same schema either way.
+  `-Format M365DSC` (also on `Export-RBAC4AppConfig` and `Convert-ApplicationAccessPolicyToRBAC`)
+  writes the YAML plus a Microsoft365DSC configuration script (`.ps1`, same name) rendered by the
+  private `ConvertTo-RBAC4AppM365Dsc` (pure, no EXO/Graph call): `EXOServicePrincipal`,
+  `EXODistributionGroup` (Cloud/DistributionList only; M365/Hybrid groups are only referenced),
+  `EXOManagementScope`, `EXOManagementRoleAssignment`. It always binds through a management scope
+  (the DSC resource has no `RecipientGroupScope`), takes the group DN as a Configuration parameter
+  (pre-filled by `Export-` when the row's scope filter has it), authenticates with
+  `ManagedIdentity` + `TenantId` (default) or - `-DscAuthentication Certificate`, valid only with
+  `-Format M365DSC` - `ApplicationId`/`TenantId`/`CertificateThumbprint` parameters, and emits every value through `ConvertTo-RBAC4AppDscLiteral`
+  (single-quoted, quotes doubled - never write a value into the script any other way).
+  `New-RBAC4AppConfig` then returns two paths (`.yml`, `.ps1`); `Export-`'s `-PassThru` rows and
+  `Convert-`'s result carry `DscPath`.
   `Invoke-RBAC4AppConfig` is the EXO half: reads that file in an Exchange-Online-only session
   (auto-detecting YAML vs. JSON from the `-Path` extension, or forced via its own `-Format`) and
   provisions everything (scope group, EXO SP pointer, role assignments), calling no Graph cmdlet at
@@ -167,7 +179,8 @@ src/EXORBACforAppManagement/
                                  # Get-RBAC4AppServicePrincipalIndex, Resolve-RBAC4AppAssignee,
                                  # Test-RBAC4AppAssigneeMatch, ConvertTo-RBAC4AppEntryRow,
                                  # ConvertTo-RBAC4AppApplicationRow,
-                                 # ConvertTo-RBAC4AppConfigFromEntry, Write-RBAC4AppConfigFile
+                                 # ConvertTo-RBAC4AppConfigFromEntry, Write-RBAC4AppConfigFile,
+                                 # ConvertTo-RBAC4AppM365Dsc (+ ConvertTo-RBAC4AppDscLiteral; -Format M365DSC)
 tests/                           # Pester v5 tests (one *.Tests.ps1 per area)
 build.ps1                        # Init / Clean / Analyze / Test / Build tasks
 PSScriptAnalyzerSettings.psd1    # analyzer config (build fails only on Error severity)
