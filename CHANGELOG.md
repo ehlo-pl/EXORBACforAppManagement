@@ -126,8 +126,9 @@ No version had been published, so this is a clean break without deprecation shim
   move: with `-AccessGroupType`/`-AccessGroupName`/`-GroupPrefix` all omitted, an app that still has
   its `UDLRAo1P-*` list but no `USRACo1P-*` group is left unchanged, with an error and the list in
   the new `LegacyGroupName` result field (an explicit `-AccessGroupType CloudMailEnabledSecurityGroup`
-  performs the move). `Test-`/`Remove-RBAC4AppEntry` have no guard and look for the
-  `USRACo1P-*` name.
+  performs the move). `Test-RBAC4AppEntry` reports the same case as a warning with
+  `LegacyGroupName`, and `Remove-RBAC4AppEntry` refuses (`Reason`, `IsRemoved` `$false`,
+  `LegacyGroupName`) and removes nothing - not even the shared management scope.
 - Every `Set-DistributionGroup`, `Add-DistributionGroupMember` and `Remove-DistributionGroup` call
   passes `-BypassSecurityGroupManagerCheck`: the group's owner (`ManagedBy`, default
   `GraphAPI-Dummy-owner`) is not the operator, and Exchange Online otherwise refuses changes with

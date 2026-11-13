@@ -492,7 +492,8 @@ Management). **Apps provisioned before 0.9.0** use a `DistributionList` (`UDLRAo
 the defaults, `Set-RBAC4AppEntry` refuses to touch such an app (it still has its `UDLRAo1P-*` list
 but no `USRACo1P-*` group): it changes nothing and returns an error with the list in
 `LegacyGroupName`. To move the app onto a cloud security group, pass
-`-AccessGroupType CloudMailEnabledSecurityGroup` explicitly.
+`-AccessGroupType CloudMailEnabledSecurityGroup` explicitly. `Test-RBAC4AppEntry` reports the same case as a
+warning, and `Remove-RBAC4AppEntry` refuses and removes nothing; both set `LegacyGroupName`.
 
 When `-AccessGroupName` is omitted, `-GroupPrefix` itself defaults to a value based on
 `-AccessGroupType` — `USRACo1P` (CloudMailEnabledSecurityGroup), `UDLRAo1P` (DistributionList),

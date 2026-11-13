@@ -100,7 +100,9 @@ PSCustomObject
 
 A summary object with the resolved identity, the scope group name and whether it existed, the
 assignments bound to the management scope or legacy group scope partitioned into own/foreign, the real members found, what was
-removed (AssignmentsRemoved, ManagementScopeRemoved, GroupRemoved), an overall IsRemoved flag, a Reason when removal was
+removed (AssignmentsRemoved, ManagementScopeRemoved, GroupRemoved), LegacyGroupName (set when a defaults-only
+run refused to touch an application that still has its pre-0.9.0 'UDLRAo1P-*' list but no 'USRACo1P-*'
+group - pass -AccessGroupType DistributionList), an overall IsRemoved flag, a Reason when removal was
 refused or skipped, and any Warnings/Errors.
 
 .NOTES
@@ -192,6 +194,7 @@ function Remove-RBAC4AppEntry {
             ManagementScopeRemoved = $false
             ScopeGroupName      = $null
             ScopeGroupExisted   = $false
+            LegacyGroupName     = $null
             AssignmentsScoped   = @()
             OwnAssignments      = @()
             ForeignAssignments  = @()
@@ -250,6 +253,18 @@ function Remove-RBAC4AppEntry {
                     $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName -AppId $sp.AppId
                 }
                 $result.ScopeGroupName = $umGroupName
+
+                # Pre-0.9.0 guard: with the defaults, an app that still has its 'UDLRAo1P-*' list (the
+                # default before 0.9.0) but no 'USRACo1P-*' group would be torn down against the wrong
+                # group (its management scope could still be removed) - refuse and remove nothing.
+                $legacyGroup = Get-RBAC4AppLegacyScopeGroupName -BoundParameters $PSBoundParameters -AccessGroupType $AccessGroupType -CurrentGroupName $umGroupName -DisplayName $sp.DisplayName -AppId $sp.AppId
+                if ($legacyGroup) {
+                    $result.LegacyGroupName = $legacyGroup
+                    $result.Reason = "Refusing to remove: scope group '$legacyGroup' (a DistributionList, the default before 0.9.0) exists for this application but '$umGroupName' does not; nothing was removed. Re-run with -AccessGroupType DistributionList to tear down the existing list."
+                    $result.IsRemoved = $false
+                    Write-Warning -Message $result.Reason
+                    return
+                }
 
                 $group = switch ($AccessGroupType) {
                     'CloudMailEnabledSecurityGroup' { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }

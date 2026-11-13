@@ -432,21 +432,14 @@ function Set-RBAC4AppEntry {
                     $currentGroup = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName -AppId $sp.AppId
                 }
 
-                # --- Pre-0.9.0 guard: before 0.9.0 the default scope group was a DistributionList
-                # ('UDLRAo1P-*'). Relying on today's default (CloudMailEnabledSecurityGroup) for such an
-                # app would create a new 'USRACo1P-*' group and re-scope its role assignments onto it, so
-                # stop unless the caller chose the group type/name/prefix explicitly. Once the cloud group
-                # exists the app has been moved deliberately and the guard no longer applies.
-                $usesGroupDefaults = -not ($PSBoundParameters.ContainsKey('AccessGroupType') -or
-                    $PSBoundParameters.ContainsKey('AccessGroupName') -or $PSBoundParameters.ContainsKey('GroupPrefix'))
-                if ($usesGroupDefaults -and $AccessGroupType -eq 'CloudMailEnabledSecurityGroup') {
-                    $legacyGroup = Get-RBAC4AppScopeGroupName -Prefix (Get-RBAC4AppDefaultGroupPrefix -AccessGroupType 'DistributionList') -DisplayName $sp.DisplayName -AppId $sp.AppId
-                    if ((Get-DistributionGroup -Identity $legacyGroup -ErrorAction SilentlyContinue) -and
-                        -not (Get-DistributionGroup -Identity $currentGroup -ErrorAction SilentlyContinue)) {
-                        $result.LegacyGroupName = $legacyGroup
-                        $result.CurrentGroupName = $currentGroup
-                        throw ("Scope group '{0}' (a DistributionList, the default before 0.9.0) exists for this application but '{1}' does not; nothing was changed. Pass -AccessGroupType DistributionList to reconcile the existing list, or -AccessGroupType CloudMailEnabledSecurityGroup explicitly to create '{1}' and move the role assignments onto it." -f $legacyGroup, $currentGroup)
-                    }
+                # --- Pre-0.9.0 guard: relying on today's default (CloudMailEnabledSecurityGroup) for an
+                # app that still has its pre-0.9.0 'UDLRAo1P-*' list would create a new 'USRACo1P-*'
+                # group and re-scope its role assignments onto it - stop and change nothing.
+                $legacyGroup = Get-RBAC4AppLegacyScopeGroupName -BoundParameters $PSBoundParameters -AccessGroupType $AccessGroupType -CurrentGroupName $currentGroup -DisplayName $sp.DisplayName -AppId $sp.AppId
+                if ($legacyGroup) {
+                    $result.LegacyGroupName = $legacyGroup
+                    $result.CurrentGroupName = $currentGroup
+                    throw ("Scope group '{0}' (a DistributionList, the default before 0.9.0) exists for this application but '{1}' does not; nothing was changed. Pass -AccessGroupType DistributionList to reconcile the existing list, or -AccessGroupType CloudMailEnabledSecurityGroup explicitly to create '{1}' and move the role assignments onto it." -f $legacyGroup, $currentGroup)
                 }
 
                 if ($PSBoundParameters.ContainsKey('NewGroupName')) {

@@ -367,6 +367,34 @@ Describe 'Test-RBAC4AppEntry -AccessGroupType' {
         ($r.Warnings -join ';') | Should -Not -Match 'send restriction'
     }
 
+    It 'pre-0.9.0 guard: warns (LegacyGroupName) when only the UDLRAo1P list exists and the defaults are used' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            if ($Identity -eq 'UDLRAo1P-Contoso') { [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; DistinguishedName = $script:GroupDn; AcceptMessagesOnlyFromSendersOrMembers = @('GraphAPI-Dummy-owner') } }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+
+        $r = Test-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -WarningAction SilentlyContinue
+
+        $r.LegacyGroupName | Should -Be 'UDLRAo1P-Contoso'
+        $r.ScopeGroupName | Should -Be 'USRACo1P-Contoso'
+        ($r.Warnings -join ';') | Should -Match "Scope group 'UDLRAo1P-Contoso' \(a DistributionList, the default before 0\.9\.0\).*-AccessGroupType DistributionList"
+        $r.IsValid | Should -BeFalse
+    }
+
+    It 'pre-0.9.0 guard: does not apply with an explicit -AccessGroupType DistributionList' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            if ($Identity -eq 'UDLRAo1P-Contoso') { [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; DistinguishedName = $script:GroupDn; AcceptMessagesOnlyFromSendersOrMembers = @('GraphAPI-Dummy-owner') } }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @() }
+
+        $r = Test-RBAC4AppEntry -AssignmentScope ManagementScope -RegisteredAppName 'Contoso' -AccessGroupType DistributionList
+
+        $r.LegacyGroupName | Should -BeNullOrEmpty
+        $r.ScopeGroupName | Should -Be 'UDLRAo1P-Contoso'
+        $r.ScopeGroupExists | Should -BeTrue
+        ($r.Warnings -join ';') | Should -Not -Match 'default before 0\.9\.0'
+    }
+
     It 'HybridMailEnabledSecurityGroup: reads existence via Get-Recipient and flags the named group when missing' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { }   # group not found
 

@@ -121,7 +121,9 @@ PSCustomObject
 A summary object with the resolved identity, per-component existence flags
 (ServicePrincipalExists, ScopeGroupExists, ExoServicePrincipalExists, ManagementScopeExists,
 ManagementScopeFilterMatches), the expected/found/missing/legacy-scoped role assignments, optional membership results, an overall IsValid flag, a Missing list, and any
-Warnings/Errors.
+Warnings/Errors. LegacyGroupName is set (with a warning) when the defaults were used and the
+application still has its pre-0.9.0 'UDLRAo1P-*' distribution list but no 'USRACo1P-*' group; re-run
+with -AccessGroupType DistributionList to validate that list.
 
 SpObjectId comes from the resolved Exchange Online service principal. When it is empty (often an
 incomplete Connect-MgGraph / directory read), the object id (GUID) found in an expected role
@@ -245,6 +247,7 @@ function Test-RBAC4AppEntry {
             ServicePrincipalExists  = $false
             ScopeGroupName          = $null
             ScopeGroupExists        = $false
+            LegacyGroupName         = $null
             SendRestricted          = $null
             ExoServicePrincipalName = $null
             ExoServicePrincipalExists = $false
@@ -339,6 +342,15 @@ function Test-RBAC4AppEntry {
                 $umGroupName = Get-RBAC4AppScopeGroupName -Prefix $GroupPrefix -DisplayName $sp.DisplayName -AppId $sp.AppId
             }
             $result.ScopeGroupName = $umGroupName
+            # Pre-0.9.0 guard: with the defaults, an app that still has its 'UDLRAo1P-*' list (the
+            # default before 0.9.0) but no 'USRACo1P-*' group is checked against the wrong group.
+            $legacyGroup = Get-RBAC4AppLegacyScopeGroupName -BoundParameters $PSBoundParameters -AccessGroupType $AccessGroupType -CurrentGroupName $umGroupName -DisplayName $sp.DisplayName -AppId $sp.AppId
+            if ($legacyGroup) {
+                $result.LegacyGroupName = $legacyGroup
+                $legacyMsg = "Scope group '$legacyGroup' (a DistributionList, the default before 0.9.0) exists for this application but '$umGroupName' does not; this run checked '$umGroupName'. Re-run with -AccessGroupType DistributionList to validate the existing list."
+                $result.Warnings += $legacyMsg
+                Write-Warning -Message $legacyMsg
+            }
             $group = switch ($AccessGroupType) {
                 'CloudMailEnabledSecurityGroup' { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }
                 'DistributionList'              { Get-DistributionGroup -Identity $umGroupName -ErrorAction SilentlyContinue }

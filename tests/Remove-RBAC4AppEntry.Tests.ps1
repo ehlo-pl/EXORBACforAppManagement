@@ -286,6 +286,37 @@ Describe 'Remove-RBAC4AppEntry -AccessGroupType' {
         Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Remove-UnifiedGroup -Times 0
     }
 
+    It 'pre-0.9.0 guard: refuses and removes nothing when only the UDLRAo1P list exists and the defaults are used' {
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            if ($Identity -eq 'UDLRAo1P-Contoso') { [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' } }
+        }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -Confirm:$false -WarningAction SilentlyContinue
+
+        $r.LegacyGroupName | Should -Be 'UDLRAo1P-Contoso'
+        $r.IsRemoved | Should -BeFalse
+        $r.Reason | Should -Match "Refusing to remove: scope group 'UDLRAo1P-Contoso'.*-AccessGroupType DistributionList"
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Get-ManagementRoleAssignment -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Remove-DistributionGroup -Times 0
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Remove-ManagementRoleAssignment -Times 0
+    }
+
+    It 'pre-0.9.0 guard: tears the list down with an explicit -AccessGroupType DistributionList' {
+        Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {
+            @([pscustomobject]@{ Name = 'AppMailSend-Contoso'; Role = 'Application Mail.Send'; RoleAssigneeName = 'Contoso_SP'; RecipientWriteScope = 'Group'; CustomRecipientWriteScope = $null; CustomResourceScope = 'UDLRAo1P-Contoso_20d5848c-4d61-4b82-a44f-205adc37321f' })
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroup {
+            if ($Identity -eq 'UDLRAo1P-Contoso') { [pscustomobject]@{ DisplayName = $Identity; Identity = $Identity; RecipientTypeDetails = 'MailUniversalDistributionGroup' } }
+        }
+        Mock -ModuleName EXORBACforAppManagement Get-DistributionGroupMember { @([pscustomobject]@{ PrimarySmtpAddress = $null; Name = 'GraphAPI-Dummy' }) }
+
+        $r = Remove-RBAC4AppEntry -RegisteredAppName 'Contoso' -AccessGroupType DistributionList -Confirm:$false
+
+        $r.LegacyGroupName | Should -BeNullOrEmpty
+        $r.IsRemoved | Should -BeTrue
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName Remove-DistributionGroup -Times 1 -Exactly -ParameterFilter { $Identity -eq 'UDLRAo1P-Contoso' }
+    }
+
     It 'HybridMailEnabledSecurityGroup: detaches assignments but never deletes the group, even with a foreign assignment' {
         Mock -ModuleName EXORBACforAppManagement Get-Recipient { [pscustomobject]@{ RecipientTypeDetails = 'MailUniversalSecurityGroup'; DisplayName = 'OnPrem-Scope'; ManagedBy = @() } }
         Mock -ModuleName EXORBACforAppManagement Get-ManagementRoleAssignment {

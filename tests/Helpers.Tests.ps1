@@ -626,3 +626,28 @@ Describe 'Resolve-RBAC4AppScope security group type (IsDirSynced)' {
         }
     }
 }
+
+Describe 'Get-RBAC4AppLegacyScopeGroupName (pre-0.9.0 guard)' {
+    BeforeAll {
+        function global:Get-DistributionGroup { param([string]$Identity) }
+    }
+
+    It 'returns the UDLRAo1P name only for defaults, an existing list, and a missing cloud group' {
+        InModuleScope EXORBACforAppManagement {
+            Mock Get-DistributionGroup { if ($Identity -eq 'UDLRAo1P-Contoso') { [pscustomobject]@{ Name = $Identity } } }
+            $common = @{ AccessGroupType = 'CloudMailEnabledSecurityGroup'; CurrentGroupName = 'USRACo1P-Contoso'; DisplayName = 'Contoso'; AppId = 'a' }
+
+            Get-RBAC4AppLegacyScopeGroupName -BoundParameters @{} @common | Should -Be 'UDLRAo1P-Contoso'
+            foreach ($explicit in 'AccessGroupType', 'AccessGroupName', 'GroupPrefix') {
+                Get-RBAC4AppLegacyScopeGroupName -BoundParameters @{ $explicit = 'x' } @common | Should -BeNullOrEmpty
+            }
+            Get-RBAC4AppLegacyScopeGroupName -BoundParameters @{} -AccessGroupType M365Group -CurrentGroupName 'Um365RAo1P-Contoso' -DisplayName 'Contoso' -AppId 'a' | Should -BeNullOrEmpty
+
+            Mock Get-DistributionGroup { [pscustomobject]@{ Name = $Identity } }
+            Get-RBAC4AppLegacyScopeGroupName -BoundParameters @{} @common | Should -BeNullOrEmpty
+
+            Mock Get-DistributionGroup { }
+            Get-RBAC4AppLegacyScopeGroupName -BoundParameters @{} @common | Should -BeNullOrEmpty
+        }
+    }
+}

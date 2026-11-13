@@ -90,7 +90,8 @@ Public functions (each in its own file under `src/EXORBACforAppManagement/Public
   different scoping group (created if needed; old group left in place, members not migrated). A
   pre-0.9.0 guard stops a defaults-only run (no `-AccessGroupType`/`-AccessGroupName`/`-GroupPrefix`)
   for an app that still has its `UDLRAo1P-*` distribution list but no `USRACo1P-*` group: no
-  change, an error, and `LegacyGroupName` set. Returns
+  change, an error, and `LegacyGroupName` set (private `Get-RBAC4AppLegacyScopeGroupName`, shared
+  with `Test-` - warning - and `Remove-` - refusal, nothing removed). Returns
   a `[pscustomobject]` with current/target group names, a `GroupChanged` flag, created-component and
   member add flags, role assignments partitioned into created/re-scoped/unchanged, and an overall
   `IsValid`. `SupportsShouldProcess` (`ConfirmImpact='High'`).
@@ -161,6 +162,7 @@ src/EXORBACforAppManagement/
                                  # Test-RBAC4AppIPRange (Metadata.NetworkAccessIP4Range/IP6Range),
                                  # ConvertTo-RBAC4AppAccessGroupType, Set-/Test-RBAC4AppScopeGroupSendRestriction,
                                  # Get-RBAC4AppSendRestrictionWarning (scope group send restriction),
+                                 # Get-RBAC4AppLegacyScopeGroupName (pre-0.9.0 UDLRAo1P guard),
                                  # Get-RBAC4AppEntry pipeline: Get-RBAC4AppAssignmentSet,
                                  # Get-RBAC4AppServicePrincipalIndex, Resolve-RBAC4AppAssignee,
                                  # Test-RBAC4AppAssigneeMatch, ConvertTo-RBAC4AppEntryRow,
