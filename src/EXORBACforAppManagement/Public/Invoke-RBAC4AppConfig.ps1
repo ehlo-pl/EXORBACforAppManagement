@@ -293,6 +293,10 @@ function Invoke-RBAC4AppConfig {
         }
 
         try {
+            # --- Fail before provisioning anything when the role-gated EXO cmdlets are missing
+            # (typically the Exchange Administrator role is not activated in PIM).
+            Assert-RBAC4AppExoCommand -Name 'Get-ServicePrincipal', 'New-ServicePrincipal', 'New-ManagementRoleAssignment'
+
             $rolesNormalized = @($rolesNormalized)
             $result.RolesNormalized = @($rolesNormalized)
             $scopeRoleItems = if ($separateScopePerRole) { @($rolesNormalized | Select-Object -Unique) } else { @('SharedScope') }

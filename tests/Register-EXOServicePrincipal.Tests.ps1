@@ -86,6 +86,49 @@ Describe 'Register-EXOServicePrincipal' {
         $warnings | Should -BeNullOrEmpty
     }
 
+    It 'skips creation and returns the existing service principal when one already matches by ObjectId' {
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { @([pscustomobject]@{ DisplayName = 'Other_SP'; AppId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; ObjectId = $script:ObjectId }) }
+        Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { throw 'should not be called' }
+
+        $warnings = $null
+        $r = Register-EXOServicePrincipal -AppId $script:AppId -ObjectId $script:ObjectId -DisplayName 'Contoso_SP' -Confirm:$false -WarningVariable warnings -WarningAction SilentlyContinue
+
+        $r.ObjectId | Should -Be $script:ObjectId
+        ($warnings -join ';') | Should -Match 'already exists'
+        ($warnings -join ';') | Should -Match 'AppId differs'
+        Should -Invoke -ModuleName EXORBACforAppManagement -CommandName New-ServicePrincipal -Times 0
+    }
+
+    It 'uses the existing service principal when New-ServicePrincipal fails because it already exists' {
+        $script:spReads = 0
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            $script:spReads++
+            if ($script:spReads -eq 1) { @() }
+            else { @([pscustomobject]@{ DisplayName = 'Contoso_SP'; AppId = $script:AppId; ObjectId = $script:ObjectId }) }
+        }
+        Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { throw 'A service principal with this AppId already exists' }
+
+        $warnings = $null
+        $r = Register-EXOServicePrincipal -AppId $script:AppId -ObjectId $script:ObjectId -DisplayName 'Contoso_SP' -Confirm:$false -WarningVariable warnings -WarningAction SilentlyContinue
+
+        $r.AppId | Should -Be $script:AppId
+        ($warnings -join ';') | Should -Match 'using it'
+        ($warnings -join ';') | Should -Not -Match 'AppId differs'
+    }
+
+    It 'still throws when New-ServicePrincipal fails and the re-read cannot be done' {
+        $script:spReads = 0
+        Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal {
+            $script:spReads++
+            if ($script:spReads -eq 1) { @() } else { throw 'EXO unavailable' }
+        }
+        Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { throw 'insufficient privileges' }
+
+        {
+            Register-EXOServicePrincipal -AppId $script:AppId -ObjectId $script:ObjectId -DisplayName 'Contoso_SP' -Confirm:$false
+        } | Should -Throw '*Failed to create Exchange Online service principal*insufficient privileges*'
+    }
+
     It 'throws instead of attempting a blind create when the service principal directory cannot be read' {
         Mock -ModuleName EXORBACforAppManagement Get-ServicePrincipal { throw 'EXO unavailable' }
         Mock -ModuleName EXORBACforAppManagement New-ServicePrincipal { }

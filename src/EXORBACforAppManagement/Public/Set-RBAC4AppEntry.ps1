@@ -373,6 +373,10 @@ function Set-RBAC4AppEntry {
         }
 
         try {
+            # --- Fail before changing anything when the role-gated EXO cmdlets are missing
+            # (typically the Exchange Administrator role is not activated in PIM).
+            Assert-RBAC4AppExoCommand -Name 'Get-ServicePrincipal', 'New-ManagementRoleAssignment'
+
             # --- Resolve the service principal against the Exchange Online service principal
             # pointer already registered via Register-EXOServicePrincipal, New-RBAC4AppEntry, or
             # Invoke-RBAC4AppConfig. Preference order when more than one identifier is supplied:
@@ -515,11 +519,11 @@ function Set-RBAC4AppEntry {
                 }
             }
 
-            # --- Ensure the Exchange Online service principal pointer (matched by AppId, then name).
+            # --- Ensure the Exchange Online service principal pointer (matched by AppId, ObjectId, then name).
             $exoSpDisplay = "{0}_SP" -f $sp.DisplayName
             $result.ExoServicePrincipalName = $exoSpDisplay
             $exoSp = @(Get-ServicePrincipal -ErrorAction SilentlyContinue) |
-                Where-Object { $_ -and (($_.AppId -eq $sp.AppId) -or ($_.DisplayName -eq $exoSpDisplay)) } |
+                Where-Object { $_ -and (($_.AppId -eq $sp.AppId) -or ($_.ObjectId -eq $sp.Id) -or ($_.DisplayName -eq $exoSpDisplay)) } |
                 Select-Object -First 1
             if ($exoSp) {
                 $result.ExoServicePrincipalExisted = $true

@@ -14,7 +14,10 @@ function Get-RBAC4AppServicePrincipalIndex {
         [object[]] $Directory
     )
 
-    $all = if ($PSBoundParameters.ContainsKey('Directory')) { @($Directory | Where-Object { $_ }) } else { @(Get-ServicePrincipal -ErrorAction Stop | Where-Object { $_ }) }
+    $all = if ($PSBoundParameters.ContainsKey('Directory')) { @($Directory | Where-Object { $_ }) } else {
+        Assert-RBAC4AppExoCommand -Name 'Get-ServicePrincipal'
+        @(Get-ServicePrincipal -ErrorAction Stop | Where-Object { $_ })
+    }
     $byObjectId = @{}
     foreach ($sp in $all) {
         if ($sp.ObjectId) { $byObjectId[[string]$sp.ObjectId] = $sp }

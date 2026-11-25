@@ -41,7 +41,10 @@ function Resolve-RBAC4AppServicePrincipal {
 
     # Fail closed: a failed directory read must surface as an error, not as "not found" (which
     # would send New-/Set-RBAC4AppEntry down the bootstrap path against an unread directory).
-    $all = if ($PSBoundParameters.ContainsKey('Directory')) { @($Directory) } else { @(Get-ServicePrincipal -ErrorAction Stop) }
+    $all = if ($PSBoundParameters.ContainsKey('Directory')) { @($Directory) } else {
+        Assert-RBAC4AppExoCommand -Name 'Get-ServicePrincipal'
+        @(Get-ServicePrincipal -ErrorAction Stop)
+    }
 
     $matchesRes = @(
         switch ($PSCmdlet.ParameterSetName) {

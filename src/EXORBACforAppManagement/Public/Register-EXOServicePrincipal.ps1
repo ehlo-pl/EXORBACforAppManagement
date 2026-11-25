@@ -8,9 +8,13 @@ New-ServicePrincipal) that links an Entra (Azure AD) application registration in
 so it can receive application RBAC role assignments exists. Exchange treats this object as a
 pointer to the existing Entra service principal.
 
-Existence is checked first by AppId: if a matching EXO service principal already exists, creation is
-skipped, a warning is written, and the existing object is returned - New-ServicePrincipal is never
-called against an AppId that already has one. A conflicting existing pointer that already uses the
+Existence is checked first by AppId, then by ObjectId: if a matching EXO service principal already
+exists, creation is skipped, a warning is written, and the existing object is returned -
+New-ServicePrincipal is never called against an AppId/ObjectId that already has one. If
+New-ServicePrincipal still fails and a re-read then finds a pointer for that AppId or ObjectId (for
+example one created concurrently), that existing pointer is returned with a warning instead of an
+error. A warning also notes when a pointer matched by ObjectId carries a different AppId. A
+conflicting existing pointer that already uses the
 requested DisplayName for a different AppId is treated as an error instead of returning the wrong
 record. This makes the function safe to call unconditionally, the same way
 New-RBAC4AppUnifiedGroup/New-RBAC4AppDistributionGroup are.
@@ -60,17 +64,38 @@ function Register-EXOServicePrincipal {
         [string] $DisplayName
     )
 
+    begin {
+        # Existing pointer for this application: AppId match first, then the SP ObjectId (the value
+        # role assignments bind to via New-ManagementRoleAssignment -App).
+        function Find-ExistingPointer {
+            param([object[]] $Directory)
+            $byAppId = $Directory | Where-Object { $_ -and ([string]$_.AppId -eq $AppId) } | Select-Object -First 1
+            if ($byAppId) { return $byAppId }
+            $Directory | Where-Object { $_ -and ([string]$_.ObjectId -eq $ObjectId) } | Select-Object -First 1
+        }
+
+        function Write-ExistingPointerWarning {
+            param([object] $Existing, [string] $Reason)
+            $message = "Exchange Online service principal '{0}' (AppId '{1}', ObjectId '{2}') {3}." -f `
+                [string]$Existing.DisplayName, [string]$Existing.AppId, [string]$Existing.ObjectId, $Reason
+            if ([string]$Existing.AppId -and ([string]$Existing.AppId -ne $AppId)) {
+                $message += " Note: its AppId differs from the requested '$AppId'."
+            }
+            Write-Warning -Message $message
+        }
+    }
+
     process {
-        # --- Skip creation if a matching EXO service principal already exists by AppId.
+        # --- Skip creation if a matching EXO service principal already exists by AppId or ObjectId.
         # Fail closed: if the directory cannot be read, the existence and name-conflict checks below
         # would be skipped, so the read failure is surfaced instead of attempting a blind create.
+        # Both cmdlets need an active Exchange Administrator role (PIM); fail early with that hint.
+        Assert-RBAC4AppExoCommand -Name 'Get-ServicePrincipal', 'New-ServicePrincipal'
         try { $allServicePrincipals = @(Get-ServicePrincipal -ErrorAction Stop) }
         catch { throw "Failed to read Exchange Online service principals: $($_.Exception.Message)" }
-        $existing = $allServicePrincipals |
-            Where-Object { $_ -and ($_.AppId -eq $AppId) } |
-            Select-Object -First 1
+        $existing = Find-ExistingPointer -Directory $allServicePrincipals
         if ($existing) {
-            Write-Warning -Message "Exchange Online service principal '$DisplayName' (AppId '$AppId') already exists; skipping creation."
+            Write-ExistingPointerWarning -Existing $existing -Reason 'already exists; skipping creation'
             return $existing
         }
 
@@ -87,7 +112,17 @@ function Register-EXOServicePrincipal {
                 return New-ServicePrincipal -AppId $AppId -ObjectId $ObjectId -DisplayName $DisplayName -ErrorAction Stop
             }
             catch {
-                throw "Failed to create Exchange Online service principal '$DisplayName' (AppId '$AppId'): $($_.Exception.Message)"
+                $createError = $_.Exception.Message
+                # A create that failed because a pointer for this AppId/ObjectId already exists
+                # (created concurrently, or not visible in the first read) is fine: use that one.
+                $existing = $null
+                try { $existing = Find-ExistingPointer -Directory @(Get-ServicePrincipal -ErrorAction Stop) }
+                catch { $existing = $null }
+                if ($existing) {
+                    Write-ExistingPointerWarning -Existing $existing -Reason "already exists (New-ServicePrincipal: $createError); using it"
+                    return $existing
+                }
+                throw "Failed to create Exchange Online service principal '$DisplayName' (AppId '$AppId'): $createError"
             }
         }
     }

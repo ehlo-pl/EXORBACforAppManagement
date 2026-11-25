@@ -362,6 +362,10 @@ function New-RBAC4AppEntry {
         }
 
         try {
+            # --- Fail before creating anything when the role-gated EXO cmdlets are missing
+            # (typically the Exchange Administrator role is not activated in PIM).
+            Assert-RBAC4AppExoCommand -Name 'Get-ServicePrincipal', 'New-ManagementRoleAssignment'
+
             # --- Resolve the service principal against the Exchange Online service principal
             # pointer already registered via Register-EXOServicePrincipal, New-RBAC4AppEntry, or
             # Invoke-RBAC4AppConfig. Preference order when more than one identifier is supplied:

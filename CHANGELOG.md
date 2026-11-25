@@ -11,6 +11,17 @@ All notable changes to this project are documented here. The format is based on
 No version had been published, so this is a clean break without deprecation shims.
 
 ### Added
+- Pre-flight check for role-gated Exchange Online cmdlets (private `Assert-RBAC4AppExoCommand`):
+  when `Get-ServicePrincipal`, `New-ServicePrincipal` or `New-ManagementRoleAssignment` is missing
+  from the session, `New-`/`Set-RBAC4AppEntry`, `Invoke-RBAC4AppConfig`,
+  `Register-EXOServicePrincipal` and every service principal lookup fail before changing anything
+  with a message pointing at the cause - the Exchange Administrator role not activated in PIM (or no
+  Exchange Online connection) - and the fix: activate it, then reconnect.
+- `Register-EXOServicePrincipal` reuses an existing Exchange Online service principal pointer matched
+  by AppId *or* ObjectId (before: AppId only), and when `New-ServicePrincipal` fails it re-reads the
+  directory and returns a pointer that now exists for that AppId/ObjectId with a warning instead of
+  an error (it still throws when none is found). `Set-RBAC4AppEntry`'s pointer check also matches by
+  ObjectId.
 - `-Format M365DSC` on `New-RBAC4AppConfig`, `Export-RBAC4AppConfig` and
   `Convert-ApplicationAccessPolicyToRBAC`: writes the YAML config plus a Microsoft365DSC
   configuration script (`.ps1`, same name) with `EXOServicePrincipal`, `EXODistributionGroup`
